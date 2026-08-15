@@ -1396,6 +1396,45 @@ export const OPENAI_IMAGES_MANIFEST: ProviderManifest = {
   idempotency: 'Generation requests carry a deterministic seed and our asset id so a retry is detectable.',
 };
 
+export const FOUNDRY_SITEGEN_MANIFEST: ProviderManifest = {
+  id: 'foundry_sitegen',
+  displayName: 'Foundry Site Generator (Anthropic-backed)',
+  tier: 'external',
+  summary:
+    'First-party storefront generator: one strict emit_files tool call on the Anthropic Messages API ' +
+    'produces real static site files. Priority-2 fallback for site.generate while the Lovable OAuth token ' +
+    'is absent. Files are persisted by the calling service and deployed to Render; this generator hosts ' +
+    'nothing and returns no preview URL.',
+  docs: [{ url: 'https://docs.claude.com/en/api/overview', verifiedOn: VERIFIED }],
+  authMethod: 'api_key_header',
+  secrets: [SECRETS.anthropicApiKey],
+  baseUrls: { production: 'https://api.anthropic.com' },
+  capabilities: [
+    {
+      capability: 'site.generate',
+      priority: 2,
+      evidence: {
+        kind: 'documented_api',
+        detail: 'POST /v1/messages with strict tool use emitting storefront files',
+      },
+    },
+  ],
+  rateLimit: { requestsPerWindow: 1000, windowMs: 60_000, note: 'shares the Anthropic key; tier dependent, 429 carries retry-after' },
+  liveProbe: {
+    description: 'POST /v1/messages with max_tokens=1 and a one-token prompt — smallest possible real call',
+    mutatesState: false,
+  },
+  failureBehaviour:
+    'Inherits the Messages API taxonomy: overloaded_error and 5xx are retried, invalid_request_error is ' +
+    'terminal. An emit_files payload that fails schema validation (zero files, empty content, path ' +
+    'traversal) is a ProviderContractError — never coerced into a fabricated storefront.',
+  retryStrategy: 'Standard policy honouring retry-after. One generation call per build attempt; the caller owns retries.',
+  idempotency:
+    'Inference is stateless and generated projects live in memory for the build that created them. ' +
+    'site.generate is keyed on the caller\'s idempotency ledger (site.generate:{siteId}), so a retried ' +
+    'build job replays the recorded files rather than generating twice.',
+};
+
 export const PIONEER_MANIFEST: ProviderManifest = {
   id: 'pioneer',
   displayName: 'Pioneer by Fastino Labs',
@@ -1519,6 +1558,7 @@ export const ALL_MANIFESTS: readonly ProviderManifest[] = [
   SHIPPO_MANIFEST,
   ALIBABA_MANIFEST,
   OPENAI_IMAGES_MANIFEST,
+  FOUNDRY_SITEGEN_MANIFEST,
   BRAVE_SEARCH_MANIFEST,
   REDDIT_MANIFEST,
 ];

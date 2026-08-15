@@ -16,7 +16,7 @@ Company `co_01M03F7RQW2M6540BY2GZHCFBW`: Workflows `tickCompanyLoop` **COMPLETED
 | Pioneer inference | **403** `card_required`: `To run inference on Pioneer, subscribe to the Hobby or Pro plan at https://agent.pioneer.ai/billing.` | Confirm billing actually authorizes inference. Then probe GLiNER2-PII + GLiGuard. Catalog is not a prize-method pass. |
 | Terac launch | Org credit **$0** | Add credit at https://terac.com/rishabh-bansal/settings/finance (billing access required; others get 404). |
 | Dodo | **HTTP 401** on `GET /products` | Issue a working key. Physical goods stay refused. |
-| Lovable | no OAuth (`LOVABLE_OAUTH_ACCESS_TOKEN` missing); promo code globally dead | Reissued promo + OAuth from allowlisted client. |
+| Lovable | no OAuth (`LOVABLE_OAUTH_ACCESS_TOKEN` missing); promo code globally dead | Reissued promo + OAuth from allowlisted client. Lovable stays priority 1; `site.generate` now has a first-party priority-2 fallback (`foundry_sitegen`, Anthropic-backed), so the build phase is gated on `ANTHROPIC_API_KEY` rather than solely on this OAuth. |
 | Egoist | `VendorApprovalRequiredError` (by design) | Request access at https://ego.ist/developers. Do not invent REST. |
 
 ---

@@ -24,6 +24,7 @@ import {
   CloudflareAdapter,
   DodoAdapter,
   EgoistAdapter,
+  FoundrySitegenAdapter,
   GoogleAdsAdapter,
   ImageGenerationAdapter,
   LinqAdapter,
@@ -87,6 +88,8 @@ function adapterFactories(): Partial<Record<string, AdapterFactory>> {
     // Model inference
     anthropic: (ctx: AdapterContext) => new AnthropicAdapter(ctx),
     openai_images: (ctx: AdapterContext) => new ImageGenerationAdapter(ctx),
+    // First-party site.generate fallback (Anthropic-backed); priority 2 behind Lovable.
+    foundry_sitegen: (ctx: AdapterContext) => new FoundrySitegenAdapter(ctx),
 
     // Payments
     stripe: (ctx: AdapterContext) => new StripeAdapter(ctx),

@@ -109,7 +109,7 @@ Four entry points converge on one queue → worker → service → provider spin
 
 ### Providers
 
-Every adapter extends `ProviderAdapter` and implements exactly two things: a `ProviderManifest` and a non-destructive `probe()`. 24 manifests (14 sponsor, 10 external); the factory map lives outside the package in `packages/runtime/src/context.ts`, so a provider with a manifest but no factory shows up at `/readiness/providers` as unimplemented rather than failing inside a job.
+Every adapter extends `ProviderAdapter` and implements exactly two things: a `ProviderManifest` and a non-destructive `probe()`. 25 manifests (14 sponsor, 11 external); the factory map lives outside the package in `packages/runtime/src/context.ts`, so a provider with a manifest but no factory shows up at `/readiness/providers` as unimplemented rather than failing inside a job.
 
 **Adapters never call `fetch` directly.** `ProviderHttpClient` centralises retry, circuit breaker, client-side token-bucket rate limiting, error classification (401/403 → auth, 429 → rate-limited with `retry-after`, ≥500 → unavailable), and Zod validation of every response — a mismatch is a `ProviderContractError`, never coerced. Retryability is derived, so an unkeyed POST is never retried. SDK-based adapters (Anthropic, Stripe) set the SDK's own retries to 0 and translate into the same taxonomy.
 

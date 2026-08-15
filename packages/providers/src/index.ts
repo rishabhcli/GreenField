@@ -25,6 +25,7 @@ export { MetaAdsAdapter } from './meta-ads/index.js';
 export * from './replay/index.js';
 export * from './resend/index.js';
 export * from './shippo/index.js';
+export * from './sitegen/index.js';
 export * from './sourcing/index.js';
 export * from './terac/index.js';
 export * from './solari/index.js';

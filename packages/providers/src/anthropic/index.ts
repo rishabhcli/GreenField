@@ -100,6 +100,109 @@ export interface CompleteInput {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * The Messages API only accepts tool names matching `^[a-zA-Z0-9_-]{1,128}$`,
+ * but canonical tool names are dotted (`company.get_state`) and must stay that
+ * way everywhere else — the org chart, PolicyGate and the tool registry all
+ * key on them. So names are rewritten at this boundary only, and `toCanonical`
+ * (sanitized → canonical) lets the result map `tool_use` blocks back. Colliding
+ * names get a deterministic `_2`, `_3`… suffix that survives truncation, so
+ * the mapping stays bijective and a resumed run re-derives identical names.
+ */
+export function sanitizeToolNames(tools: readonly ToolDefinition[]): {
+  tools: ToolDefinition[];
+  toCanonical: Map<string, string>;
+} {
+  const MAX_NAME_LENGTH = 128;
+  const toCanonical = new Map<string, string>();
+  const sanitized: ToolDefinition[] = [];
+
+  for (const tool of tools) {
+    const base = tool.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    let name = base.slice(0, MAX_NAME_LENGTH);
+    for (let n = 2; toCanonical.has(name); n += 1) {
+      const suffix = `_${n}`;
+      name = base.slice(0, MAX_NAME_LENGTH - suffix.length) + suffix;
+    }
+    toCanonical.set(name, tool.name);
+    sanitized.push(name === tool.name ? tool : { ...tool, name });
+  }
+
+  return { tools: sanitized, toCanonical };
+}
+
+/**
+ * JSON Schema keywords Anthropic's strict custom-tool validator rejects with a
+ * 400 ("For 'integer' type, properties exclusiveMinimum, maximum are not
+ * supported"). Zod's `toJSONSchema` emits them from `.positive()`, `.max()`,
+ * `.url()` and friends, and the hand-written catalog schemas use `maxItems`.
+ */
+const UNSUPPORTED_TOOL_SCHEMA_KEYWORDS = new Set([
+  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+  'minLength', 'maxLength', 'pattern', 'format',
+  'minItems', 'maxItems', 'uniqueItems', 'default',
+  'minProperties', 'maxProperties', 'patternProperties', 'propertyNames',
+  'contains', 'minContains', 'maxContains',
+]);
+
+/**
+ * Strips the keywords above from every node of a tool input schema before it
+ * reaches the API. The constraint is not lost: it is appended to the node's
+ * `description` so the model still sees the limit, and the tool registry's
+ * server-side zod validation still enforces it at execution time. The caller's
+ * schema is never mutated.
+ */
+export function sanitizeToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const clone = structuredClone(schema) as Record<string, unknown>;
+  stripUnsupportedKeywords(clone);
+  return clone;
+}
+
+function stripUnsupportedKeywords(node: Record<string, unknown>): void {
+  const notes: string[] = [];
+  for (const key of Object.keys(node)) {
+    if (!UNSUPPORTED_TOOL_SCHEMA_KEYWORDS.has(key)) continue;
+    notes.push(`${key} ${formatConstraintValue(node[key])}`);
+    delete node[key];
+  }
+  if (notes.length > 0) {
+    const note = `Constraints: ${notes.join('; ')}.`;
+    node.description =
+      typeof node.description === 'string' && node.description.length > 0
+        ? `${node.description} ${note}`
+        : note;
+  }
+
+  for (const mapKey of ['properties', '$defs']) {
+    const map = node[mapKey];
+    if (!isRecord(map)) continue;
+    for (const child of Object.values(map)) {
+      if (isRecord(child)) stripUnsupportedKeywords(child);
+    }
+  }
+  const items = node['items'];
+  if (Array.isArray(items)) {
+    for (const child of items) if (isRecord(child)) stripUnsupportedKeywords(child);
+  } else if (isRecord(items)) {
+    stripUnsupportedKeywords(items);
+  }
+  for (const branchKey of ['anyOf', 'oneOf', 'allOf']) {
+    const branches = node[branchKey];
+    if (!Array.isArray(branches)) continue;
+    for (const child of branches) if (isRecord(child)) stripUnsupportedKeywords(child);
+  }
+}
+
+function formatConstraintValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export class AnthropicAdapter extends ProviderAdapter {
   override readonly manifest = ANTHROPIC_MANIFEST;
   #client: Anthropic | undefined;
@@ -156,10 +259,16 @@ export class AnthropicAdapter extends ProviderAdapter {
     this.assertActivated();
     const client = this.#anthropic();
 
+    const safeTools = input.tools
+      ? sanitizeToolNames(
+          input.tools.map((t) => ({ ...t, inputSchema: sanitizeToolSchema(t.inputSchema) })),
+        )
+      : undefined;
+
     const cached = applyPromptCache({
       system: input.system,
       cacheSystemPrompt: input.cacheSystemPrompt,
-      tools: input.tools,
+      tools: safeTools?.tools,
       messages: input.messages,
     });
 
@@ -194,10 +303,10 @@ export class AnthropicAdapter extends ProviderAdapter {
       client.messages.create(params, input.signal ? { signal: input.signal } : {}),
     );
 
-    return this.#toResult(response);
+    return this.#toResult(response, safeTools?.toCanonical);
   }
 
-  #toResult(response: Anthropic.Message): CompletionResult {
+  #toResult(response: Anthropic.Message, toCanonical?: ReadonlyMap<string, string>): CompletionResult {
     const usage = this.#usage(response);
 
     // Refusal is checked before content is read: the classifiers can decline
@@ -224,9 +333,12 @@ export class AnthropicAdapter extends ProviderAdapter {
       .map((b) => b.text)
       .join('');
 
+    // `content` keeps the sanitized names the API saw — those blocks are echoed
+    // back verbatim on the next loop iteration. Only this convenience array,
+    // which callers use to execute tools by name, is mapped back to canonical.
     const toolUses = response.content
       .filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-      .map((b) => ({ id: b.id, name: b.name, input: b.input }));
+      .map((b) => ({ id: b.id, name: toCanonical?.get(b.name) ?? b.name, input: b.input }));
 
     return {
       model: response.model,

@@ -46,6 +46,9 @@ export const PROVIDER_IDS = [
   'shippo',
   'alibaba',
   'openai_images',
+  // First-party site generator backed by the Anthropic Messages API. Fallback
+  // for site.generate while the Lovable OAuth token is absent.
+  'foundry_sitegen',
   // Required business capabilities no sponsor covers
   'brave_search',
   'reddit',
