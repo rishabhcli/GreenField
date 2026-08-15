@@ -30,7 +30,12 @@ export * from './terac/index.js';
 export * from './solari/index.js';
 export { SuperserveAdapter } from './superserve/index.js';
 export * as Superserve from './superserve/index.js';
-export { DodoAdapter, mapDodoEventToOrderTransition, refusePhysicalGoods } from './dodo/index.js';
+export {
+  DodoAdapter,
+  mapDodoEventToOrderTransition,
+  refusePhysicalGoods,
+  dodoRefundLedgerId,
+} from './dodo/index.js';
 export { WhopAdapter, mapWhopEventToOrderTransition, WHOP_API_VERSION_DATE } from './whop/index.js';
 export { LovableAdapter } from './lovable/index.js';
 export { Sandbox0Adapter } from './sandbox0/index.js';

@@ -4,6 +4,9 @@
  * Creating a company seeds one actor per org-chart role (the policy gate
  * requires a handle) and enqueues the first loop tick. Missing live keys do
  * not block creation; the loop records blocked phases instead.
+ *
+ * Mutators require the operator bearer. GET company / loop / opportunities
+ * stay public and do not return `config` or risk limits.
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -16,6 +19,7 @@ import {
   prizeTrackSnapshot,
 } from '@foundry/services';
 import type { AppContext, Services } from '@foundry/runtime';
+import { requireOperator } from '../auth.js';
 
 const CreateCompany = z.object({
   name: z.string().min(1),
@@ -65,6 +69,7 @@ export async function registerCompanyRoutes(
   services: Services,
 ): Promise<void> {
   app.post<{ Body: unknown }>('/api/companies', async (request, reply) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const parsed = CreateCompany.safeParse(request.body);
     if (!parsed.success) {
       return sendFoundryError(
@@ -164,6 +169,7 @@ export async function registerCompanyRoutes(
   });
 
   app.put<{ Params: { id: string }; Body: unknown }>('/api/companies/:id/config', async (request, reply) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const parsed = UpdateConfig.safeParse(request.body);
     if (!parsed.success) {
       return sendFoundryError(
@@ -211,11 +217,13 @@ export async function registerCompanyRoutes(
   });
 
   app.post<{ Params: { id: string } }>('/api/companies/:id/loop/tick', async (request) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const tick = await services.loop.tick(request.params.id);
     return tick;
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>('/api/companies/:id/research', async (request, reply) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const body = CollectResearch.parse(request.body);
     const jobId = await ctx.queues.enqueue('research.collect', {
       companyId: request.params.id,

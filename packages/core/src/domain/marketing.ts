@@ -8,6 +8,7 @@
  */
 
 import { z } from 'zod';
+import { ValidationError } from '../errors.js';
 
 /* -------------------------------------------------------------------------- */
 /* Creative                                                                    */
@@ -151,7 +152,7 @@ export function summariseReview(
 
   // A single reject from a paid domain expert is enough to block spend; the
   // system is optimising for money, and a policy-violating ad costs the account.
-  if (counts.reject > 0 && counts.reject >= approved.length / 2) {
+  if (counts.reject > 0) {
     return { verdict: 'rejected', meanScores };
   }
   if (counts.approve > counts.approve_with_changes && counts.reject === 0) {
@@ -525,6 +526,12 @@ export const DEFAULT_ARM_POLICY: ArmDecisionPolicy = {
  * never justify scaling.
  */
 export function decideArm(input: ArmDecisionInput, policy: ArmDecisionPolicy = DEFAULT_ARM_POLICY): ArmDecision {
+  if (!Number.isFinite(input.unitContributionMinor) || input.unitContributionMinor <= 0) {
+    throw new ValidationError(
+      'unitContributionMinor must be a positive modelled contribution from economics; refusing to decide spend on a zero or invented contribution.',
+      { unitContributionMinor: input.unitContributionMinor },
+    );
+  }
   const { snapshot: m, armId } = input;
   const d = deriveMetrics(m);
 

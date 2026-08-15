@@ -6,6 +6,7 @@ import {
   budgetRemainingMinor,
   budgetUtilisation,
   canonicalAuditPayload,
+  capabilityAvailableForAuthority,
   evaluatePolicy,
   type Actor,
   type Budget,
@@ -125,6 +126,26 @@ describe('capability availability', () => {
     const result = evaluatePolicy(input({ capabilityAvailable: false }));
     expect(result.outcome).toBe('deny');
     expect(result.reasons[0]?.code).toBe('capability_unavailable');
+  });
+
+  it('spend, contact and publish authorities require live_verified, not merely usable', () => {
+    const unverified = { state: 'configured_unverified' as const, usable: true };
+    expect(capabilityAvailableForAuthority('ads.create_campaign', unverified)).toBe(false);
+    expect(capabilityAvailableForAuthority('supplier.contact', unverified)).toBe(false);
+    expect(capabilityAvailableForAuthority('brand.publish', unverified)).toBe(false);
+    expect(capabilityAvailableForAuthority('messaging.send_marketing', unverified)).toBe(false);
+    expect(capabilityAvailableForAuthority('ads.create_campaign', { state: 'live_verified', usable: true })).toBe(
+      true,
+    );
+  });
+
+  it('read-only authorities may proceed when the capability is usable but unverified', () => {
+    const unverified = { state: 'configured_unverified' as const, usable: true };
+    expect(capabilityAvailableForAuthority('research.collect', unverified)).toBe(true);
+    expect(capabilityAvailableForAuthority('payments.configure', unverified)).toBe(true);
+    expect(capabilityAvailableForAuthority('research.collect', { state: 'blocked_missing_credentials', usable: false })).toBe(
+      false,
+    );
   });
 });
 

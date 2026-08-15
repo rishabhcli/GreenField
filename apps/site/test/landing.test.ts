@@ -127,16 +127,17 @@ describe('landing site', () => {
       (m) => m[1] ?? '',
     );
 
-    it('reaches the submitted Payment Link and never mints a second one', () => {
-      expect(checkoutHrefs.length).toBeGreaterThanOrEqual(3);
+    it('reaches the submitted Payment Link for founding access and never mints a second one', () => {
+      expect(checkoutHrefs.length).toBeGreaterThanOrEqual(1);
       for (const href of checkoutHrefs) {
         expect(href.startsWith(`${PAYMENT_LINK}?`) || href === PAYMENT_LINK).toBe(true);
       }
     });
 
-    it('tags every checkout link with a tier for webhook attribution', () => {
+    it('tags founding checkout with a tier for webhook attribution', () => {
       const tiers = checkoutHrefs.map((href) => new URL(href).searchParams.get('client_reference_id'));
-      expect(new Set(tiers)).toEqual(new Set(['tier_backer', 'tier_founding', 'tier_operator']));
+      expect(tiers).toContain('tier_founding');
+      expect(tiers).not.toContain(null);
     });
 
     it('opens checkout without leaking window.opener', () => {
@@ -149,6 +150,13 @@ describe('landing site', () => {
       expect(pricing).toContain('$99');
       expect(pricing).toContain('customer-chooses-price');
       expect(pricing).toContain('you get');
+    });
+
+    it('posts Backer/Operator checkout to the deployed API origin', () => {
+      expect(html).toContain('data-api="https://foundry-api-8ih0.onrender.com"');
+      expect(js).toContain('https://foundry-api-8ih0.onrender.com');
+      expect(js).toContain('/api/checkout');
+      expect(js).not.toContain('customer-chooses-price');
     });
   });
 

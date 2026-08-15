@@ -19,6 +19,7 @@
 
 import {
   evaluatePolicy,
+  capabilityAvailableForAuthority,
   toActor,
   type Authority,
   type BudgetScope,
@@ -126,10 +127,13 @@ export class PolicyGate {
       ),
     ]);
 
-    // A capability whose provider is not activated cannot be exercised, no
-    // matter what authority the actor holds.
+    // Spend, contact and publish require live_verified. Read-only probes may
+    // still proceed when the capability is merely usable (configured_unverified).
     const capabilityAvailable = request.capability
-      ? this.providers.capabilities.isUsable(request.capability)
+      ? capabilityAvailableForAuthority(
+          request.authority,
+          this.providers.capabilities.resolveCapability(request.capability),
+        )
       : true;
 
     const evaluation = evaluatePolicy({

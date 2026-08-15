@@ -1,9 +1,12 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
+import { registerErrorHandler } from '../src/errors.js';
 import { registerCompanyRoutes } from '../src/routes/company.js';
 import type { AppContext, Services } from '@foundry/runtime';
 
 const EXISTING_ID = 'co_01M03F7RQW2M6540BY2GZHCFBW';
+const OPERATOR = 'correct-token';
+const operatorHeaders = { authorization: `Bearer ${OPERATOR}` };
 
 const validBody = {
   name: 'GreenField',
@@ -14,6 +17,7 @@ const validBody = {
 
 function ctxWithCompany(existing: { id: string } | undefined): AppContext {
   return {
+    config: { operatorApiToken: OPERATOR },
     repos: {
       companies: {
         first: async () => existing,
@@ -40,6 +44,7 @@ describe('POST /api/companies', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/companies',
+      headers: operatorHeaders,
       payload: validBody,
     });
 
@@ -58,6 +63,7 @@ describe('POST /api/companies', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/companies',
+      headers: operatorHeaders,
       payload: { name: '', mission: 'x', ownerName: 'x', ownerEmail: 'not-an-email' },
     });
 
@@ -77,6 +83,7 @@ describe('PUT /api/companies/:id/config', () => {
     });
     const app = Fastify();
     const ctx = {
+      config: { operatorApiToken: OPERATOR },
       repos: {
         companies: {
           first: async () => ({ id: EXISTING_ID }),
@@ -91,11 +98,78 @@ describe('PUT /api/companies/:id/config', () => {
     const response = await app.inject({
       method: 'PUT',
       url: `/api/companies/${EXISTING_ID}/config`,
+      headers: operatorHeaders,
       payload: { config },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ companyId: EXISTING_ID, updated: true });
+    await app.close();
+  });
+});
+
+describe('company mutators require operator auth', () => {
+  async function appWithAuth(token = 'correct-token') {
+    const app = Fastify({ logger: false });
+    registerErrorHandler(app);
+    const ctx = {
+      ...ctxWithCompany({ id: EXISTING_ID }),
+      config: { operatorApiToken: token },
+    } as unknown as AppContext;
+    await registerCompanyRoutes(app, ctx, {
+      loop: {
+        tick: async () => {
+          throw new Error('loop.tick must not run without operator auth');
+        },
+      },
+    } as unknown as Services);
+    return app;
+  }
+
+  it('returns 403 for POST /api/companies without a bearer token', async () => {
+    const app = await appWithAuth();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/companies',
+      payload: validBody,
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe('policy_denied');
+    await app.close();
+  });
+
+  it('returns 403 for PUT /api/companies/:id/config without a bearer token', async () => {
+    const app = await appWithAuth();
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/companies/${EXISTING_ID}/config`,
+      payload: { config: {} },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe('policy_denied');
+    await app.close();
+  });
+
+  it('returns 403 for POST /api/companies/:id/loop/tick without a bearer token', async () => {
+    const app = await appWithAuth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/companies/${EXISTING_ID}/loop/tick`,
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe('policy_denied');
+    await app.close();
+  });
+
+  it('returns 403 for POST /api/companies/:id/research without a bearer token', async () => {
+    const app = await appWithAuth();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/companies/${EXISTING_ID}/research`,
+      payload: { query: 'standing desks', sourceKinds: ['blog_post'] },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe('policy_denied');
     await app.close();
   });
 });

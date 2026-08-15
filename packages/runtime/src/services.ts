@@ -26,6 +26,7 @@ import {
   MarketingCreativeService,
   MarketingExperimentService,
   AudienceSegmentService,
+  LinqOutreachService,
   OpportunityScoreService,
   QaOrchestrationService,
   ReconciliationService,
@@ -57,6 +58,7 @@ export function buildServices(ctx: AppContext): Services {
     dispatcher: ctx.dispatcher,
     publicBaseUrl: ctx.config.publicBaseUrl,
     environment: ctx.config.environment,
+    renderStorefrontServiceId: ctx.config.renderStorefrontServiceId,
   };
 
   return {
@@ -78,6 +80,7 @@ export function buildServices(ctx: AppContext): Services {
     creative: new MarketingCreativeService(deps),
     experiments: new MarketingExperimentService(deps),
     audience: new AudienceSegmentService(deps),
+    outreach: new LinqOutreachService(deps),
     support: new SupportInboxService(deps),
     legal: new LegalDocumentService(deps),
     fulfilment: new FulfilmentService(deps),

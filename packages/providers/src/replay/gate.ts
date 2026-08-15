@@ -17,6 +17,15 @@
 import type { CriticalFlow, Defect, DefectSeverity, QaRunKind, QaRunStatus } from '@foundry/core';
 import type { ReplayBug, ReplayExploration, ReplayJourney, ReplayProject, ReplayProjectTiming } from './schemas.js';
 
+/** Persisted on the QA run when Replay lost recordings or infra-failed. */
+export const REPLAY_RECORDING_LOST = 'recording-lost';
+
+const INFRA_FAILURE = /recording[-_ ]lost|infra[-_ ]failed/i;
+
+export function looksLikeReplayInfraFailure(value: unknown): boolean {
+  return typeof value === 'string' && INFRA_FAILURE.test(value);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Exploration status                                                         */
 /* -------------------------------------------------------------------------- */
@@ -145,6 +154,15 @@ export function flowFromBug(bug: ReplayBug): CriticalFlow | null {
 /** Same heuristic applied to a journey, used to estimate flow *coverage* (see `toQaRunAndDefects`). */
 function flowFromJourney(journey: ReplayJourney): CriticalFlow | null {
   return matchFlow(journey.name, journey.description);
+}
+
+function journeyHasInfraFailure(journey: ReplayJourney): boolean {
+  return [journey.status, journey.result, journey.last_result].some(looksLikeReplayInfraFailure);
+}
+
+export function projectStatusHasInfraFailure(status: { readonly test_runs?: unknown } | null | undefined): boolean {
+  if (!status) return false;
+  return countField(status.test_runs, ['infra-failed', 'infra_failed', 'recording-lost', 'recording_lost']) > 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -364,6 +382,7 @@ export function toQaRunFromProject(
   bugs: readonly ReplayBug[],
   journeys: readonly ReplayJourney[] = [],
   exploration?: ReplayExploration | null,
+  projectStatus?: { readonly explorations?: unknown; readonly test_runs?: unknown } | null,
 ): { readonly run: ReplayDerivedQaRun; readonly defects: readonly ReplayDerivedDefect[] } {
   const executed =
     Boolean(timing.started_at) ||
@@ -371,9 +390,16 @@ export function toQaRunFromProject(
     bugs.length > 0 ||
     Boolean(exploration && (exploration.started_at || (exploration.journeys?.length ?? 0) > 0));
 
+  const infraLost =
+    journeys.some(journeyHasInfraFailure) ||
+    (exploration?.journeys ?? []).some(journeyHasInfraFailure) ||
+    projectStatusHasInfraFailure(projectStatus);
+
   const explorationDone = Boolean(exploration && isExplorationFinished(exploration));
   let status: string;
-  if (!isProjectIdle(timing) && !explorationDone) {
+  if (infraLost) {
+    status = 'failed';
+  } else if (!isProjectIdle(timing) && !explorationDone) {
     status = exploration?.status ?? 'running';
   } else if (!executed) {
     status = 'failed';
@@ -382,13 +408,18 @@ export function toQaRunFromProject(
       exploration?.status && isTerminalExplorationStatus(exploration.status) ? exploration.status : 'completed';
   }
 
+  const journeysForCoverage = infraLost
+    ? []
+    : exploration?.journeys && exploration.journeys.length > 0
+      ? exploration.journeys
+      : [...journeys];
+
   const resolved: ReplayExploration = {
     id: exploration?.id ?? project.exploration_id ?? `project:${project.id}`,
     project_id: exploration?.project_id ?? project.id,
     status,
     prompt: exploration?.prompt,
-    journeys:
-      exploration?.journeys && exploration.journeys.length > 0 ? exploration.journeys : [...journeys],
+    journeys: journeysForCoverage,
     journey_ids: exploration?.journey_ids,
     bugs: exploration?.bugs,
     bug_ids: exploration?.bug_ids,
@@ -398,5 +429,15 @@ export function toQaRunFromProject(
     created_at: exploration?.created_at,
   };
 
-  return toQaRunAndDefects(project, resolved, bugs);
+  const bridged = toQaRunAndDefects(project, resolved, bugs);
+  if (!infraLost) return bridged;
+  return {
+    run: {
+      ...bridged.run,
+      status: 'failed',
+      unavailableReason: REPLAY_RECORDING_LOST,
+      flowsCovered: [],
+    },
+    defects: bridged.defects,
+  };
 }

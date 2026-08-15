@@ -180,6 +180,109 @@ describe('LovableMcpClient with fake fetch', () => {
     expect(methods).toContain('tools/list');
     expect(listed).toEqual({ tools: [] });
   });
+
+  it('never sends a Lovable-API-Key header — OAuth bearer only', async () => {
+    let headers: Headers | undefined;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      headers = new Headers(init?.headers);
+      return new Response('unauthorized', { status: 401 });
+    };
+    const client = new LovableMcpClient({
+      accessToken: new Secret('LOVABLE_OAUTH_ACCESS_TOKEN', 'not-a-live-token', 'unknown'),
+      fetchImpl,
+    });
+    await expect(client.initialize()).rejects.toBeInstanceOf(ProviderAuthError);
+    expect(headers?.get('authorization')).toBe('Bearer not-a-live-token');
+    expect(headers?.get('lovable-api-key')).toBeNull();
+    expect(headers?.get('x-api-key')).toBeNull();
+  });
+});
+
+function tokenStore(): SecretStore {
+  return new SecretStore({
+    get: (name) => (name === 'LOVABLE_OAUTH_ACCESS_TOKEN' ? 'not-a-live-token' : undefined),
+  });
+}
+
+function jsonRpc(id: unknown, result: unknown): Response {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 0, result }), { status: 200 });
+}
+
+function fakeMcpFetch(tools: Record<string, (args: Record<string, unknown>) => unknown>): {
+  fetchImpl: typeof fetch;
+  calls: Array<{ name: string; args: Record<string, unknown> }>;
+  headers: Headers[];
+} {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const headers: Headers[] = [];
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    headers.push(new Headers(init?.headers));
+    const body = JSON.parse(String(init?.body)) as {
+      method?: string;
+      id?: number;
+      params?: { name?: string; arguments?: Record<string, unknown> };
+    };
+    if (body.method === 'initialize') {
+      return jsonRpc(body.id, { protocolVersion: '2025-03-26', serverInfo: { name: 'lovable' } });
+    }
+    if (body.method === 'notifications/initialized' || body.method === 'tools/list') {
+      return jsonRpc(body.id, body.method === 'tools/list' ? { tools: [] } : {});
+    }
+    if (body.method === 'tools/call') {
+      const name = body.params?.name ?? '';
+      const args = body.params?.arguments ?? {};
+      calls.push({ name, args });
+      const result = tools[name]?.(args) ?? { content: [] };
+      return jsonRpc(body.id, result);
+    }
+    return jsonRpc(body.id, {});
+  };
+  return { fetchImpl, calls, headers };
+}
+
+describe('LovableAdapter MCP tools via injected fetch', () => {
+  it('createProject / listFiles / readFile / deployProject call the documented tools', async () => {
+    const { fetchImpl, calls, headers } = fakeMcpFetch({
+      create_project: () => ({
+        content: [{ type: 'text', text: JSON.stringify({ project_id: 'proj_1' }) }],
+      }),
+      list_files: () => ({
+        content: [{ type: 'text', text: JSON.stringify({ files: [{ path: 'src/App.tsx' }, { path: 'index.html' }] }) }],
+      }),
+      read_file: (args) => ({
+        content: [{ type: 'text', text: `// ${String(args['path'])}` }],
+      }),
+      deploy_project: () => ({
+        content: [{ type: 'text', text: JSON.stringify({ url: 'https://proj-1.lovable.app' }) }],
+      }),
+    });
+    const client = adapter(tokenStore(), fetchImpl);
+
+    const created = await client.createProject({ prompt: 'Build a storefront' });
+    expect(created.projectId).toBe('proj_1');
+
+    const files = await client.listFiles('proj_1');
+    expect(files).toEqual(['src/App.tsx', 'index.html']);
+
+    const text = await client.readFile('proj_1', 'src/App.tsx');
+    expect(text).toContain('src/App.tsx');
+
+    const deployed = await client.deployProject('proj_1');
+    expect(deployed.url).toBe('https://proj-1.lovable.app');
+
+    expect(calls.map((c) => c.name)).toEqual([
+      'create_project',
+      'list_files',
+      'read_file',
+      'deploy_project',
+    ]);
+    expect(calls[0]?.args).toMatchObject({ initial_message: 'Build a storefront' });
+    expect(calls[2]?.args).toMatchObject({ project_id: 'proj_1', path: 'src/App.tsx' });
+    for (const hdr of headers) {
+      expect(hdr.get('authorization')).toBe('Bearer not-a-live-token');
+      expect(hdr.get('lovable-api-key')).toBeNull();
+    }
+  });
 });
 
 describe('SSE JSON-RPC parser', () => {

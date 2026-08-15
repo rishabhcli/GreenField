@@ -21,12 +21,15 @@ import {
   TeracAdapter,
   StripeAdapter,
   buildReviewRubric,
+  interpretTeracWebhookEvent,
+  TeracWebhookEnvelope,
   toExpertReview,
   type TeracOpportunity,
   type TeracSubmission,
 } from '@foundry/providers';
 import { requireCapability, type ServiceDeps } from '../deps.js';
 import { getLogger } from '@foundry/obs';
+import { TERAC_STUDY_BLOCKER } from '../org/prize-tracks.js';
 
 export interface RequestReviewInput {
   readonly companyId: string;
@@ -56,6 +59,32 @@ export interface ExpertPollResult {
   readonly beforeComposite?: number | null;
   readonly afterComposite?: number | null;
   readonly blockedOn?: { capability: Capability; reason: string };
+}
+
+export interface ExpertValidateAssessment {
+  readonly complete: boolean;
+  readonly performed: boolean;
+  readonly detail: string;
+  readonly verdict?: string;
+  readonly blockedOn?: { capability: Capability; reason: string };
+}
+
+/**
+ * Worker/handler mapping: a blocked Terac result is recorded as `blocked`
+ * rather than thrown (throwing would retry a job that is waiting on credit
+ * or a missing key).
+ */
+export function expertJobOutcome<T extends { blockedOn?: { capability: Capability; reason: string } }>(
+  result: T,
+): T | { status: 'blocked'; reason: string; capability: Capability } {
+  if (result.blockedOn) {
+    return {
+      status: 'blocked',
+      reason: result.blockedOn.reason,
+      capability: result.blockedOn.capability,
+    };
+  }
+  return result;
 }
 
 export class ExpertReviewService {
@@ -235,30 +264,38 @@ export class ExpertReviewService {
         return { ok: true, reviewId: row.id, status: 'launched' };
       }
 
+      const live = await this.#liveOpportunity(terac, row.external_engagement_id);
       const page = await terac.listSubmissions(row.external_engagement_id, { limit: 100 });
       for (const submission of page.data) {
         await this.#recordIfComplete(row.id, submission);
       }
 
       const recorded = await this.deps.repos.research.expertReviews.submissions(row.id);
-      if (recorded.length === 0) {
-        const status = page.data.length > 0 ? 'submissions_received' : 'in_progress';
-        await this.deps.repos.research.expertReviews.setStatus(row.id, status);
-        return { ok: true, reviewId: row.id, status };
-      }
-
       const complete = page.data.filter(isCompleteSubmission);
       if (complete.length === 0) {
-        await this.deps.repos.research.expertReviews.setStatus(row.id, 'submissions_received');
-        return { ok: true, reviewId: row.id, status: 'submissions_received' };
+        if (isUnfundedDraft(live) || row.status === 'priced') {
+          await this.deps.repos.research.expertReviews.setStatus(row.id, 'priced');
+          return {
+            ok: false,
+            reviewId: row.id,
+            status: 'priced',
+            blockedOn: {
+              capability: 'expert.structured_review',
+              reason: TERAC_STUDY_BLOCKER,
+            },
+          };
+        }
+        const status = recorded.length > 0 || page.data.length > 0 ? 'submissions_received' : 'in_progress';
+        await this.deps.repos.research.expertReviews.setStatus(row.id, status);
+        return { ok: true, reviewId: row.id, status };
       }
 
       const opportunity = {
         id: row.external_engagement_id,
         num_participants: row.participants_requested,
-        status: 'in_progress',
-        cost_per_participant_minor: row.cost_per_participant_minor,
-        currency: row.currency,
+        status: live?.status ?? 'in_progress',
+        cost_per_participant_minor: live?.cost_per_participant_minor ?? row.cost_per_participant_minor,
+        currency: live?.currency ?? row.currency,
       } as TeracOpportunity;
 
       const derived = toExpertReview(opportunity, complete);
@@ -305,6 +342,145 @@ export class ExpertReviewService {
         return { ok: false, reviewId: expertReviewId, status: row.status, blockedOn: blocked };
       }
       throw error;
+    }
+  }
+
+  /**
+   * Webhook is a refresh signal. Submissions become review rows only after
+   * `poll` re-fetches them and `toExpertReview` sees critique + identity + timestamp.
+   */
+  async ingestWebhook(payload: unknown): Promise<ExpertPollResult> {
+    const parsed = TeracWebhookEnvelope.safeParse(payload);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        reviewId: '',
+        status: 'ignored',
+        blockedOn: {
+          capability: 'expert.structured_review',
+          reason: 'Terac webhook body did not match the defensive envelope',
+        },
+      };
+    }
+    const interpreted = interpretTeracWebhookEvent(parsed.data);
+    if (interpreted.action !== 'refresh_submissions' || !interpreted.signal.opportunityId) {
+      return {
+        ok: false,
+        reviewId: '',
+        status: 'ignored',
+        blockedOn: {
+          capability: 'expert.structured_review',
+          reason:
+            interpreted.action === 'refresh_submissions'
+              ? 'Terac webhook carried no opportunity id to refresh'
+              : interpreted.reason,
+        },
+      };
+    }
+    const opportunityId = interpreted.signal.opportunityId;
+    const companies = await this.deps.repos.companies.list();
+    for (const company of companies) {
+      const open = await this.deps.repos.research.expertReviews.listOpen(company.id);
+      const row = open.find((review) => review.external_engagement_id === opportunityId);
+      if (row) return this.poll(row.id);
+    }
+    return {
+      ok: false,
+      reviewId: '',
+      status: 'ignored',
+      blockedOn: {
+        capability: 'expert.structured_review',
+        reason: 'no open expert review for this Terac opportunity',
+      },
+    };
+  }
+
+  /**
+   * Re-derives `expert_validate` from stored review artefacts, not from
+   * in-memory loop state. A completed reject is rejected. An unfunded draft
+   * does not complete the phase.
+   */
+  async assessForLoop(companyId: string): Promise<ExpertValidateAssessment> {
+    const scored = await this.deps.repos.research.opportunities.list(companyId, ['scored']);
+    const reviewed = await this.deps.repos.research.opportunities.list(companyId, ['expert_reviewed']);
+    const killed = await this.deps.repos.research.opportunities.list(companyId, ['killed']);
+    const seen = new Set<string>();
+    const candidates = [];
+    for (const row of [...scored, ...reviewed, ...killed]) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      candidates.push(row);
+    }
+
+    const verdicts: string[] = [];
+    for (const opportunity of candidates) {
+      const completed =
+        (await this.deps.repos.research.expertReviews.completedFor(
+          companyId,
+          'opportunity_validity',
+          opportunity.id,
+        )) ??
+        (await this.deps.repos.research.expertReviews.completedFor(companyId, 'opportunity', opportunity.id));
+      if (completed?.verdict && completed.verdict !== 'pending') {
+        verdicts.push(completed.verdict);
+      }
+    }
+
+    if (verdicts.includes('rejected')) {
+      return {
+        complete: true,
+        performed: true,
+        verdict: 'rejected',
+        detail: 'expert review artefact is rejected (a single expert reject is rejected)',
+      };
+    }
+    if (verdicts.length > 0) {
+      return {
+        complete: true,
+        performed: true,
+        verdict: verdicts[0],
+        detail: `expert review artefact verdict ${verdicts[0]}`,
+      };
+    }
+
+    const open = await this.deps.repos.research.expertReviews.listOpen(companyId);
+    if (open.length > 0) {
+      const unfunded = open.some((row) => row.status === 'priced');
+      return {
+        complete: false,
+        performed: false,
+        detail: `${open.length} expert reviews still open`,
+        blockedOn: unfunded
+          ? { capability: 'expert.structured_review', reason: TERAC_STUDY_BLOCKER }
+          : undefined,
+      };
+    }
+
+    if (candidates.length === 0) {
+      return { complete: false, performed: false, detail: 'nothing to validate' };
+    }
+
+    const cap = this.deps.capabilities.resolveCapability('expert.structured_review');
+    if (!cap.usable) {
+      return {
+        complete: false,
+        performed: false,
+        detail: 'expert.structured_review is not usable; no review artefact exists',
+        blockedOn: {
+          capability: 'expert.structured_review',
+          reason: cap.remediation ?? `capability is ${cap.state}`,
+        },
+      };
+    }
+    return { complete: false, performed: false, detail: 'no expert review has been requested yet' };
+  }
+
+  async #liveOpportunity(terac: TeracAdapter, opportunityId: string): Promise<TeracOpportunity | undefined> {
+    if (typeof terac.getOpportunity !== 'function') return undefined;
+    try {
+      return await terac.getOpportunity(opportunityId);
+    } catch {
+      return undefined;
     }
   }
 
@@ -465,6 +641,10 @@ export class ExpertReviewService {
 
 function isOpportunitySubject(subject: string): boolean {
   return subject === 'opportunity_validity' || subject === 'opportunity';
+}
+
+function isUnfundedDraft(opportunity: TeracOpportunity | undefined): boolean {
+  return Boolean(opportunity && /draft/i.test(opportunity.status ?? ''));
 }
 
 function isCompleteSubmission(submission: TeracSubmission): boolean {

@@ -558,7 +558,9 @@ export class TeracAdapter extends ProviderAdapter {
     const listed = await this.listOpportunities({ limit: 25 });
     const reusable = listed.data.find((row) => {
       const status = (row.status ?? '').toLowerCase();
-      return status === 'draft' || status === 'launched' || status === 'in_progress' || status === 'active';
+      // A DRAFT has never spent credit. Reusing it here would present an
+      // unfunded row as if panel results already existed.
+      return status === 'launched' || status === 'in_progress' || status === 'active';
     });
     if (reusable) {
       return {
@@ -743,6 +745,9 @@ function mapOpportunityStatus(
   if (/fail|error/.test(raw)) return 'failed';
   if (/complet|closed|finished/.test(raw)) return 'completed';
   if (submissions.length > 0) return 'submissions_received';
+  // An unfunded DRAFT is not a launched study. Treating it as `launched`
+  // would let panel results be inferred from a row that has never spent credit.
+  if (/draft/.test(raw)) return 'priced';
   if (/launch|active|running|live|in.?progress/.test(raw)) return 'in_progress';
   return 'launched';
 }

@@ -6,8 +6,10 @@
  * switches are thrown here, budgets are set here, and the audit chain can be
  * verified here.
  *
- * Every mutating route requires the operator token. An unauthenticated caller
- * cannot approve a supplier purchase or release a kill switch.
+ * Every route requires the operator token — reads included. An unauthenticated
+ * caller cannot list pending approvals, inspect budgets, or approve a purchase.
+ * Client-supplied actor names (`decidedBy` / `engagedBy` / `releasedBy`) are
+ * ignored; the audit actor is the authenticated operator.
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -20,13 +22,17 @@ import { requireOperator } from '../auth.js';
 const DecideApproval = z.object({
   decision: z.enum(['approved', 'rejected']),
   rationale: z.string().min(3),
-  decidedBy: z.string().min(3),
 });
 
 const EngageKillSwitch = z.object({
   scope: KillSwitchScope,
   reason: z.string().min(3),
-  engagedBy: z.string().min(3),
+});
+
+const AuditListQuery = z.object({
+  kind: z.string().min(1).optional(),
+  subjectRefId: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 
 const SetBudget = z.object({
@@ -56,7 +62,8 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   /* Approvals                                                               */
   /* ---------------------------------------------------------------------- */
 
-  app.get('/api/approvals', async () => {
+  app.get('/api/approvals', async (request) => {
+    await operator(request as never);
     const companyId = await company();
     const pending = await ctx.repos.governance.approvals.listPending(companyId);
     return {
@@ -76,19 +83,19 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>('/api/approvals/:id/decide', async (request, reply) => {
-    await operator(request as never);
+    const actorId = await operator(request as never);
     const body = DecideApproval.parse(request.body);
     const approval = await ctx.repos.governance.approvals.decide(
       request.params.id,
       body.decision,
-      body.decidedBy,
+      actorId,
       body.rationale,
     );
 
     await ctx.repos.audit.append({
       companyId: approval.company_id,
       kind: body.decision === 'approved' ? 'approval_granted' : 'approval_rejected',
-      actorId: body.decidedBy,
+      actorId,
       actorKind: 'human_operator',
       action: approval.request,
       subjectType: 'approval',
@@ -99,7 +106,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
       currency: approval.currency,
     });
 
-    log.info({ approvalId: approval.id, decision: body.decision, by: body.decidedBy }, 'approval decided');
+    log.info({ approvalId: approval.id, decision: body.decision, by: actorId }, 'approval decided');
     return reply.send({ id: approval.id, status: approval.status, decidedAt: approval.decided_at });
   });
 
@@ -107,7 +114,8 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   /* Kill switches                                                           */
   /* ---------------------------------------------------------------------- */
 
-  app.get('/api/kill-switches', async () => {
+  app.get('/api/kill-switches', async (request) => {
+    await operator(request as never);
     const companyId = await company();
     const history = await ctx.repos.governance.killSwitches.history(companyId);
     return {
@@ -125,15 +133,15 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   });
 
   app.post<{ Body: unknown }>('/api/kill-switches/engage', async (request, reply) => {
-    await operator(request as never);
+    const actorId = await operator(request as never);
     const body = EngageKillSwitch.parse(request.body);
     const companyId = await company();
 
-    const engaged = await ctx.repos.governance.killSwitches.engage(companyId, body.scope, body.reason, body.engagedBy);
+    const engaged = await ctx.repos.governance.killSwitches.engage(companyId, body.scope, body.reason, actorId);
     await ctx.repos.audit.append({
       companyId,
       kind: 'kill_switch_engaged',
-      actorId: body.engagedBy,
+      actorId,
       actorKind: 'human_operator',
       action: `engage kill switch: ${body.scope}`,
       subjectType: 'kill_switch',
@@ -142,21 +150,20 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
       detail: { scope: body.scope, reason: body.reason },
     });
 
-    log.warn({ scope: body.scope, by: body.engagedBy }, 'kill switch engaged');
+    log.warn({ scope: body.scope, by: actorId }, 'kill switch engaged');
     return reply.send({ scope: engaged.scope, engaged: true, engagedAt: engaged.engaged_at });
   });
 
   app.post<{ Params: { scope: string }; Body: unknown }>('/api/kill-switches/:scope/release', async (request, reply) => {
-    await operator(request as never);
+    const actorId = await operator(request as never);
     const scope = KillSwitchScope.parse(request.params.scope);
-    const releasedBy = z.object({ releasedBy: z.string().min(3) }).parse(request.body).releasedBy;
     const companyId = await company();
 
-    await ctx.repos.governance.killSwitches.release(companyId, scope, releasedBy);
+    await ctx.repos.governance.killSwitches.release(companyId, scope, actorId);
     await ctx.repos.audit.append({
       companyId,
       kind: 'kill_switch_released',
-      actorId: releasedBy,
+      actorId,
       actorKind: 'human_operator',
       action: `release kill switch: ${scope}`,
       subjectType: 'kill_switch',
@@ -165,7 +172,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
       detail: { scope },
     });
 
-    log.info({ scope, by: releasedBy }, 'kill switch released');
+    log.info({ scope, by: actorId }, 'kill switch released');
     return reply.send({ scope, engaged: false });
   });
 
@@ -173,7 +180,8 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   /* Budgets                                                                 */
   /* ---------------------------------------------------------------------- */
 
-  app.get('/api/budgets', async () => {
+  app.get('/api/budgets', async (request) => {
+    await operator(request as never);
     const companyId = await company();
     const budgets = await ctx.repos.governance.budgets.list(companyId);
     return {
@@ -229,11 +237,13 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   app.get<{ Querystring: { kind?: string; subjectRefId?: string; limit?: string } }>(
     '/api/audit',
     async (request) => {
+      await operator(request as never);
+      const query = AuditListQuery.parse(request.query);
       const companyId = await company();
       const events = await ctx.repos.audit.list(companyId, {
-        ...(request.query.kind ? { kind: request.query.kind as never } : {}),
-        ...(request.query.subjectRefId ? { subjectRefId: request.query.subjectRefId } : {}),
-        limit: request.query.limit ? Number.parseInt(request.query.limit, 10) : 100,
+        ...(query.kind ? { kind: query.kind as never } : {}),
+        ...(query.subjectRefId ? { subjectRefId: query.subjectRefId } : {}),
+        limit: query.limit,
       });
       return {
         events: events.map((e) => ({
@@ -262,7 +272,8 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
    * Recomputes every hash rather than trusting the stored value, so a clean
    * result is a real statement about the log's integrity.
    */
-  app.get('/api/audit/verify', async (_request, reply) => {
+  app.get('/api/audit/verify', async (request, reply) => {
+    await operator(request as never);
     const companyId = await company();
     const result = await ctx.repos.audit.verifyChain(companyId);
     return reply.code(result.valid ? 200 : 500).send(result);
@@ -272,7 +283,8 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   /* Agent runs                                                              */
   /* ---------------------------------------------------------------------- */
 
-  app.get('/api/agent-runs', async () => {
+  app.get('/api/agent-runs', async (request) => {
+    await operator(request as never);
     const companyId = await company();
     const active = await ctx.repos.agents.runs.listActive(companyId);
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -294,6 +306,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   });
 
   app.get<{ Params: { id: string } }>('/api/agent-runs/:id', async (request) => {
+    await operator(request as never);
     const run = await ctx.repos.agents.runs.byId(request.params.id);
     const messages = await ctx.repos.agents.messages.forRun(run.id);
     const children = await ctx.repos.agents.runs.children(run.id);

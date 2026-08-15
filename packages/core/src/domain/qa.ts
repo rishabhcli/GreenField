@@ -117,6 +117,15 @@ export const PRODUCTION_REQUIRED_RUN_KINDS: readonly QaRunKind[] = [
   'data_integrity',
 ];
 
+/** Honest Replay prize-method blocker until a clean completed exploration exists. */
+export const REPLAY_QA_BLOCKER =
+  'Replay journeys recording-lost (infra-failed). 0 product bugs ≠ pass. No clean completed exploration.';
+
+export function isQaInfraFailureReason(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  return /recording[-_ ]lost|infra[-_ ]failed/i.test(reason);
+}
+
 /**
  * The gate.
  *
@@ -147,6 +156,21 @@ export function evaluateReleaseGate(input: ReleaseGateInput): ReleaseGateResult 
       isProduction ? blockers.push(entry) : warnings.push(entry);
       continue;
     }
+    if (isQaInfraFailureReason(run.unavailableReason)) {
+      blockers.push({
+        code: 'qa_infra_failed',
+        detail:
+          `${kind} ended ${run.unavailableReason}. 0 product bugs after an infra-failed run is not a pass.`,
+      });
+      continue;
+    }
+    if (run.status === 'running') {
+      blockers.push({
+        code: 'qa_run_incomplete',
+        detail: `${kind} is still running. An unexecuted check is not a passing check.`,
+      });
+      continue;
+    }
     if (run.status !== 'completed') {
       const entry = { code: 'qa_run_incomplete', detail: `${kind} finished with status "${run.status}"` };
       isProduction ? blockers.push(entry) : warnings.push(entry);
@@ -175,11 +199,10 @@ export function evaluateReleaseGate(input: ReleaseGateInput): ReleaseGateResult 
   }
   const flowBreaking = open.filter((d) => d.affectedFlow !== null && d.severity === 'high');
   if (flowBreaking.length > 0) {
-    const entry = {
+    blockers.push({
       code: 'critical_flow_defect',
       detail: `high-severity defects on commerce flows: ${[...new Set(flowBreaking.map((d) => d.affectedFlow))].join(', ')}`,
-    };
-    isProduction ? blockers.push(entry) : warnings.push(entry);
+    });
   }
   const mediums = open.filter((d) => d.severity === 'medium');
   if (mediums.length > 0) {
@@ -193,4 +216,23 @@ export function evaluateReleaseGate(input: ReleaseGateInput): ReleaseGateResult 
     coveredFlows,
     uncoveredFlows,
   };
+}
+
+/**
+ * Loop `assess('qa')` should complete only when this is true. A failed,
+ * running, or recording-lost Replay run is not a phase artefact.
+ */
+export function isReplayQaPhaseComplete(input: {
+  readonly runs: ReleaseGateInput['runs'];
+  readonly openDefects: ReleaseGateInput['openDefects'];
+}): boolean {
+  return (
+    evaluateReleaseGate({
+      environment: 'production',
+      runs: input.runs,
+      openDefects: input.openDefects,
+      requiredFlows: CRITICAL_FLOWS,
+      requiredRunKinds: PRODUCTION_REQUIRED_RUN_KINDS,
+    }).verdict === 'pass'
+  );
 }

@@ -14,8 +14,8 @@ import {
   type MessageChannel,
   type TicketIntent,
 } from '@foundry/core';
-import { companyConfig } from '@foundry/db';
-import { LinqAdapter, LinqOptOutError } from '@foundry/providers';
+import { companyConfig, type Repositories } from '@foundry/db';
+import { LinqAdapter, LinqOptOutError, type OptOutStateStore } from '@foundry/providers';
 import { optionalCapability, type ServiceDeps, type ServiceOutcome } from '../deps.js';
 import { RefundService, type RefundOutcome, type RefundRequest } from '../commerce/refunds.js';
 
@@ -32,6 +32,7 @@ export class SupportInboxService {
 
   async ingestInbound(input: IngestInboundInput): Promise<ServiceOutcome<{
     ticketId: string;
+    messageId: string;
     intent: TicketIntent;
     escalated: boolean;
   }>> {
@@ -45,7 +46,7 @@ export class SupportInboxService {
       intentConfidence: classified.confidence,
     });
 
-    await this.deps.repos.growth.support.recordMessage({
+    const messageId = await this.deps.repos.growth.support.recordMessage({
       companyId: input.companyId,
       ticketId: ticket.id,
       channel: input.channel,
@@ -57,6 +58,10 @@ export class SupportInboxService {
       status: 'delivered',
       externalChatId: input.externalChatId,
     });
+
+    if (classified.intent === 'marketing_opt_out') {
+      await this.#recordOptOut(input);
+    }
 
     const linq = this.#linq(input.channel);
     if (linq && typeof linq.markRead === 'function' && input.externalChatId) {
@@ -107,8 +112,24 @@ export class SupportInboxService {
 
     return {
       ok: true,
-      data: { ticketId: ticket.id, intent: classified.intent, escalated: decision.escalate },
+      data: { ticketId: ticket.id, messageId, intent: classified.intent, escalated: decision.escalate },
     };
+  }
+
+  async #recordOptOut(input: IngestInboundInput): Promise<void> {
+    const contact = contactFromHandle(input.customerHandle);
+    if (!contact) return;
+    const customer = await this.deps.repos.commerce.customers.upsert({
+      companyId: input.companyId,
+      email: contact.email ?? null,
+      phoneE164: contact.phoneE164 ?? null,
+    });
+    await this.deps.repos.commerce.customers.recordConsent(
+      customer.id,
+      contact.phoneE164 ? 'sms' : 'email',
+      false,
+      'inbound_opt_out',
+    );
   }
 
   async reply(input: { ticketId: string; body: string }): Promise<ServiceOutcome<{ messageId: string }>> {
@@ -244,7 +265,12 @@ function preferredService(channel: MessageChannel): 'iMessage' | 'RCS' | 'SMS' |
 function classifyIntent(body: string): { intent: TicketIntent; confidence: number } {
   const text = body.toLowerCase();
   if (isOptOutMessage(body)) return { intent: 'marketing_opt_out', confidence: 0.95 };
-  if (/\b(charg.?back|attorney|lawyer|sue|legal action)\b/.test(text)) return { intent: 'legal_threat', confidence: 0.75 };
+  if (/\b(charg.?back|dispute this charge)\b/.test(text)) return { intent: 'chargeback_threat', confidence: 0.85 };
+  if (/\b(regulator|attorney general|journalist|press inquir|media inquir|\bftc\b|\bfda\b)\b/.test(text)) {
+    return { intent: 'regulator_or_media', confidence: 0.8 };
+  }
+  if (/\b(fraud|stolen card|unauthorized charge)\b/.test(text)) return { intent: 'suspected_fraud', confidence: 0.75 };
+  if (/\b(attorney|lawyer|sue|legal action|lawsuit)\b/.test(text)) return { intent: 'legal_threat', confidence: 0.75 };
   if (/\b(injured|injury|hospital|unsafe|safety)\b/.test(text)) return { intent: 'safety_incident', confidence: 0.7 };
   if (/\brefund\b/.test(text)) return { intent: 'refund_request', confidence: 0.7 };
   if (/\breturn\b/.test(text)) return { intent: 'return_request', confidence: 0.65 };
@@ -262,4 +288,52 @@ function extractRefundRequest(body: string): number | null {
 
 function hashBody(body: string): string {
   return body.slice(0, 48).replace(/\s+/g, '_');
+}
+
+function contactFromHandle(handle: string): { email?: string; phoneE164?: string } | null {
+  const trimmed = handle.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('@')) return { email: trimmed };
+  if (/^\+[1-9]\d{6,14}$/.test(trimmed)) return { phoneE164: trimmed };
+  return null;
+}
+
+/** Local Linq opt-out ledger backed by customer consent rows. */
+export function linqOptOutStateStore(repos: Repositories): OptOutStateStore {
+  return {
+    async isOptedOut(handle: string): Promise<boolean> {
+      const contact = contactFromHandle(handle);
+      if (!contact) return false;
+      const companies = await repos.companies.list();
+      for (const company of companies) {
+        const customer = contact.phoneE164
+          ? await repos.commerce.customers.byPhone(company.id, contact.phoneE164)
+          : undefined;
+        if (!customer) continue;
+        const consent = customer.marketing_consent;
+        if (consent['optedOutAt']) return true;
+        if (contact.phoneE164 && consent['sms'] === false) return true;
+        if (contact.email && consent['email'] === false && consent['optedOutAt']) return true;
+      }
+      return false;
+    },
+    async markOptedOut(handle: string): Promise<void> {
+      const contact = contactFromHandle(handle);
+      if (!contact) return;
+      const companies = await repos.companies.list();
+      const company = companies[0];
+      if (!company) return;
+      const customer = await repos.commerce.customers.upsert({
+        companyId: company.id,
+        email: contact.email ?? null,
+        phoneE164: contact.phoneE164 ?? null,
+      });
+      await repos.commerce.customers.recordConsent(
+        customer.id,
+        contact.phoneE164 ? 'sms' : 'email',
+        false,
+        'linq_opt_out',
+      );
+    },
+  };
 }

@@ -14,6 +14,7 @@ import {
   LinqChatList,
   LinqMessageList,
   LinqSendMessageResponse,
+  LINQ_AGENT_PAY_ERROR_2011,
   isLinqCheckoutUrl,
   isStripePaymentLinkUrl,
 } from '../src/linq/index.js';
@@ -128,6 +129,35 @@ describe('LinqAdapter Agent Pay', () => {
     ).rejects.toSatisfy(
       (error: unknown) => error instanceof ValidationError && /Linq checkout/i.test((error as Error).message),
     );
+  });
+
+  it('createPaymentRequest classifies live 2011 as ValidationError, not success', async () => {
+    const adapter = keyedAdapter(async () => {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 2011,
+            message: 'no connected payment account on file for your account',
+          },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      );
+    });
+
+    await expect(
+      adapter.createPaymentRequest({
+        amountMinor: 50,
+        currency: 'usd',
+        description: 'foundry live probe — do not collect',
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      if (!(error instanceof ValidationError)) return false;
+      if (error.retryable) return false;
+      return (
+        error.message === LINQ_AGENT_PAY_ERROR_2011 &&
+        (error.context as { linqErrorCode?: unknown } | undefined)?.linqErrorCode === 2011
+      );
+    });
   });
 });
 

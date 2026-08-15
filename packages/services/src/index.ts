@@ -13,6 +13,8 @@ export * from './commerce/webhook-processor.js';
 export * from './commerce/fulfilment.js';
 export * from './commerce/refunds.js';
 export * from './commerce/collect.js';
+export * from './commerce/dodo.js';
+export * from './commerce/whop.js';
 
 export * from './finance/ledger.js';
 export * from './finance/reconciliation.js';
@@ -26,6 +28,7 @@ export * from './research/collect.js';
 export * from './research/cluster.js';
 export * from './research/score.js';
 export * from './research/expert.js';
+export * from './research/selection.js';
 
 export * from './sourcing/search.js';
 export * from './sourcing/rfq.js';
@@ -41,6 +44,7 @@ export * from './site/deploy.js';
 export * from './marketing/creative.js';
 export * from './marketing/experiments.js';
 export * from './marketing/audience.js';
+export * from './marketing/outreach.js';
 
 export * from './support/inbox.js';
 export * from './legal/documents.js';

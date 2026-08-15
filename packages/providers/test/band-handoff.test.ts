@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SecretStore, ValidationError } from '@foundry/core';
-import { BandAdapter } from '../src/band/index.js';
+import { BandAdapter, ZERO_HUMAN_CO_COORDINATION_ROOM_ID } from '../src/band/index.js';
 
 function loadDotenv(path: string): void {
   if (!existsSync(path)) return;
@@ -72,12 +72,10 @@ describe.skipIf(!live)('BAND live foundry-dispatch', () => {
     expect(me.handle ?? me.id).toMatch(/foundry-dispatch/i);
   });
 
-  it('createChat accepts the dispatcher company payload and returns a room id', async () => {
-    const chat = await liveBand().createChat({
-      name: 'Zero Human Co coordination',
-      taskId: 'co_01M03F7RQW2M6540BY2GZHCFBW',
-    });
-    expect(chat.id.length).toBeGreaterThan(0);
-    process.stdout.write(`BAND chat id: ${chat.id}\n`);
+  it('reuses the live Zero Human Co room instead of creating a second one', async () => {
+    const chat = await liveBand().getChat(ZERO_HUMAN_CO_COORDINATION_ROOM_ID);
+    expect(chat.id).toBe(ZERO_HUMAN_CO_COORDINATION_ROOM_ID);
+    const title = chat.title ?? chat.name ?? '';
+    expect(title).toMatch(/Zero Human Co/i);
   });
 });

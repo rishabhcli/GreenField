@@ -1,14 +1,15 @@
 /**
- * Render Workflows task definitions.
+ * Render Workflows task definitions — thin adapters onto services.
  *
- * Prize track "Best use of Render" requires Render Workflows. Blueprints
- * cannot declare `type: workflow` during the public beta (Render docs,
- * 2026-08-15). Create this service in the Dashboard from this entrypoint,
- * set RENDER_WORKFLOW_SLUG, and the control plane triggers runs with
- * POST /v1/task-runs.
+ * `tickCompanyLoop` is the Workflows loop driver. Do not reintroduce the
+ * `foundry-loop-tick` Render cron: it double-fired against the repeatable
+ * `loop.tick` job. Prize method is the completed task-run
+ * `trn-0994gda0c8fvlk1mc73fl86u0` — do not mint a fake second success.
  *
- * Blueprints cannot declare `type: workflow`. Create the service with
- * POST /v1/workflows (or Dashboard / `render workflows create`).
+ * Blueprints cannot declare `type: workflow` during the public beta (Render
+ * docs, 2026-08-15). Create the service with POST /v1/workflows (or Dashboard
+ * / `render workflows create`), set RENDER_WORKFLOW_SLUG, and trigger with
+ * POST /v1/task-runs. GET /v1/services is the probe, not the pass.
  */
 
 import { task } from '@renderinc/sdk/workflows';

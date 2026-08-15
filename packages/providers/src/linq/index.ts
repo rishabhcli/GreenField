@@ -72,6 +72,13 @@ import {
  * (error code 2024 / HTTP 403) — this class exists so *our* side agrees with
  * it before and after the network call, not only after.
  */
+/**
+ * Exact live POST /v3/payment_requests refusal (error 2011). Prize-track copy
+ * (`LINQ_AGENT_PAY_BLOCKER`) must stay this string. Not a Stripe Payment Link.
+ */
+export const LINQ_AGENT_PAY_ERROR_2011 =
+  'Linq Agent Pay is not usable: no connected payment account on file (error 2011). Connect a Stripe account in the Linq dashboard before POST /v3/payment_requests.';
+
 export class LinqOptOutError extends FoundryError {
   constructor(handle: string, reason: string, context?: Record<string, unknown>) {
     super({
@@ -178,10 +185,7 @@ export class LinqAdapter extends ProviderAdapter {
       });
     }
     if (code === 2011) {
-      return new ValidationError(
-        'Linq Agent Pay is not usable: no connected payment account on file (error 2011). Connect a Stripe account in the Linq dashboard before POST /v3/payment_requests.',
-        { linqErrorCode: code, httpStatus: status },
-      );
+      return new ValidationError(LINQ_AGENT_PAY_ERROR_2011, { linqErrorCode: code, httpStatus: status });
     }
     if (code === 2018) {
       return new ValidationError(`iMessage app messages can only be sent over iMessage (error 2018): ${message}`, {

@@ -4,9 +4,8 @@
  * `SupplierSourcingProvider` implementations behind the provider-neutral
  * layer in `./interface.ts`.
  *
- * This class does **not** import the Solari adapter (another agent owns that
- * directory); it is driven by a narrow `BrowserDriver` interface defined
- * right here, so any browser-automation backend can be plugged in. It also
+ * This class does **not** import the Solari adapter; it is driven by a
+ * `BrowserDriver` plus the shared robots/ToS helpers in `solari/compliance.ts`. It also
  * has no built-in scraper for any specific marketplace — parsing a rendered
  * page into supplier data is inherently site-specific, so the caller supplies
  * an `extract` function per `BrowserSearchTarget`. What this class actually
@@ -17,6 +16,7 @@
  */
 
 import { CapabilityUnsupportedError, PolicyDeniedError, ProviderContractError, type SupplierKind } from '@foundry/core';
+import { assertRobotsNotOverridden, refuseUnreviewedHost } from '../solari/compliance.js';
 import type { SourcedSupplierProfile, SourcingMethod, SupplierSourcingProvider } from './interface.js';
 
 /** The narrow surface this class needs from a browser-automation backend. Deliberately not tied to any one vendor. */
@@ -170,18 +170,17 @@ export class BrowserSourcingProvider implements SupplierSourcingProvider {
   async #visit(url: string): Promise<string> {
     const startedAt = new Date().toISOString();
     const check = await this.#complianceGate.check(url);
-    if (!check.robotsAllowed) {
+    try {
+      assertRobotsNotOverridden({ url, robotsAllowed: check.robotsAllowed });
+    } catch (error) {
       this.#sessions.push({
         url,
         startedAt,
         endedAt: new Date().toISOString(),
         outcome: 'compliance_blocked',
-        detail: check.reason ?? null,
+        detail: check.reason ?? (error instanceof Error ? error.message : String(error)),
       });
-      throw new PolicyDeniedError(
-        `Refusing to browse ${url}: compliance gate reported robotsAllowed=false${check.reason ? ` (${check.reason})` : ''}`,
-        { url, reason: check.reason ?? null },
-      );
+      throw error;
     }
 
     try {
@@ -199,6 +198,40 @@ export class BrowserSourcingProvider implements SupplierSourcingProvider {
       });
       throw error;
     }
+  }
+}
+
+/**
+ * Honest browser-backed supplier search. No registered marketplace → no
+ * invented directory. Unreviewed host → PolicyDeniedError from #visit.
+ */
+export async function runCompliantBrowserSupplierSearch(input: {
+  readonly query: string;
+  readonly driver: BrowserDriver;
+  readonly complianceGate?: ComplianceGate;
+  readonly targets?: SearchTargetResolver;
+  readonly providerId?: string;
+}): Promise<{
+  readonly profiles: readonly SourcedSupplierProfile[];
+  readonly sessionLog: readonly BrowserSessionRecord[];
+  readonly blocked?: CapabilityUnsupportedError | PolicyDeniedError;
+}> {
+  const provider = new BrowserSourcingProvider({
+    driver: input.driver,
+    complianceGate: input.complianceGate ?? { check: refuseUnreviewedHost },
+    targets: input.targets,
+    providerId: input.providerId ?? 'solari_browser',
+  });
+  try {
+    const profiles = await provider.searchSuppliers({ query: input.query });
+    return { profiles, sessionLog: provider.sessionLog };
+  } catch (error) {
+    if (error instanceof CapabilityUnsupportedError || error instanceof PolicyDeniedError) {
+      return { profiles: [], sessionLog: provider.sessionLog, blocked: error };
+    }
+    throw error;
+  } finally {
+    await provider.close().catch(() => undefined);
   }
 }
 

@@ -23,6 +23,7 @@ import {
   evaluateReleaseGate,
   type Capability,
   type CriticalFlow,
+  type DefectSeverity,
   type OrderStatus,
   type QaRunKind,
   type ReleaseGateResult,
@@ -44,9 +45,25 @@ export interface QaRunInput {
   readonly blockingForRelease: boolean;
 }
 
+export interface QaDefectArtefact {
+  readonly kind: 'qa_defect';
+  readonly externalId: string | null;
+  readonly title: string;
+  readonly description: string;
+  readonly severity: DefectSeverity;
+  readonly affectedFlow: CriticalFlow | null;
+  readonly reproductionSteps: readonly string[];
+  readonly rootCause: string | null;
+  /** Only Replay's own suggestion — never invented here. */
+  readonly suggestedFix: string | null;
+  readonly evidenceUrl: string | null;
+  readonly assignedRoleKey: 'site_builder';
+}
+
 export interface QaRunResult {
   readonly gate: ReleaseGateResult;
   readonly runIds: readonly string[];
+  readonly artefacts: readonly QaDefectArtefact[];
 }
 
 export class QaOrchestrationService {
@@ -54,12 +71,16 @@ export class QaOrchestrationService {
 
   async run(input: QaRunInput): Promise<ServiceOutcome<QaRunResult>> {
     const runIds: string[] = [];
+    const artefacts: QaDefectArtefact[] = [];
+    const replayReasons = new Map<string, string>();
     let blockedOn: ServiceOutcome<QaRunResult>['blockedOn'];
 
     for (const kind of input.kinds) {
       if (kind === 'autonomous_exploration') {
         const exploration = await this.#runReplay(input);
         runIds.push(exploration.runId);
+        artefacts.push(...exploration.artefacts);
+        if (exploration.unavailableReason) replayReasons.set(exploration.runId, exploration.unavailableReason);
         if (exploration.blockedOn) blockedOn = exploration.blockedOn;
         continue;
       }
@@ -92,7 +113,7 @@ export class QaOrchestrationService {
         kind: r.kind as QaRunKind,
         status: r.status as 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'provider_unavailable',
         flowsCovered: r.flows_covered as CriticalFlow[],
-        unavailableReason: r.unavailable_reason,
+        unavailableReason: r.unavailable_reason ?? replayReasons.get(r.id) ?? null,
       })),
       openDefects: defects.map((d) => ({
         severity: d.severity as 'critical' | 'high' | 'medium' | 'low' | 'info',
@@ -113,7 +134,7 @@ export class QaOrchestrationService {
 
     return {
       ok: blockedOn === undefined,
-      data: { gate, runIds },
+      data: { gate, runIds, artefacts },
       blockedOn,
     };
   }
@@ -154,10 +175,28 @@ export class QaOrchestrationService {
     return { ok: true, data: { approved: true, gate } };
   }
 
-  async #runReplay(input: QaRunInput): Promise<{ runId: string; blockedOn?: { capability: Capability; reason: string } }> {
+  async #runReplay(input: QaRunInput): Promise<{
+    runId: string;
+    blockedOn?: { capability: Capability; reason: string };
+    unavailableReason?: string | null;
+    artefacts: QaDefectArtefact[];
+  }> {
     const adapter = optionalCapability<ReplayAdapter>(this.deps, 'qa.autonomous_exploration');
     if (!adapter || typeof adapter.createProject !== 'function') {
       return this.#markReplayUnavailable(input, this.#reason('qa.autonomous_exploration'));
+    }
+
+    if (input.blockingForRelease && isLocalTargetUrl(input.targetUrl)) {
+      const started = await this.deps.repos.build.qa.startRun({
+        companyId: input.companyId,
+        siteId: input.siteId,
+        deploymentId: input.deploymentId,
+        kind: 'autonomous_exploration',
+        provider: 'replay',
+        targetUrl: input.targetUrl,
+      });
+      await this.deps.repos.build.qa.finishRun(started.id, { status: 'failed', flowsCovered: [] });
+      return { runId: started.id, artefacts: [] };
     }
 
     try {
@@ -166,7 +205,7 @@ export class QaOrchestrationService {
         name: `qa:${input.siteId}`,
         targetUrl: input.targetUrl,
         instructions: REPLAY_CRITICAL_FLOW_INSTRUCTIONS,
-        useReverseProxy: isLocalTargetUrl(input.targetUrl),
+        useReverseProxy: input.blockingForRelease ? false : isLocalTargetUrl(input.targetUrl),
         webhookUrl: replayWebhookUrl(this.deps.publicBaseUrl),
       });
       const started = await this.deps.repos.build.qa.startRun({
@@ -204,9 +243,14 @@ export class QaOrchestrationService {
           const listed = await adapter.listExplorations(project.id, { pageSize: 100 });
           exploration = listed.items[0] ?? null;
         }
-        const bridged = toQaRunFromProject(project, timing, bugs.items, [...journeys.items], exploration);
+        const projectStatus =
+          typeof adapter.getProjectStatus === 'function' ? await adapter.getProjectStatus(project.id).catch(() => null) : null;
+        const bridged = toQaRunFromProject(project, timing, bugs.items, [...journeys.items], exploration, projectStatus);
+        const artefacts: QaDefectArtefact[] = [];
         for (const defect of bridged.defects) {
-          await this.deps.repos.build.qa.recordDefect({
+          const artefact = toDefectArtefact(defect);
+          artefacts.push(artefact);
+          const defectId = await this.deps.repos.build.qa.recordDefect({
             companyId: input.companyId,
             qaRunId: started.id,
             provider: 'replay',
@@ -220,6 +264,9 @@ export class QaOrchestrationService {
             suggestedFix: defect.suggestedFix,
             evidenceUrl: defect.evidenceUrl,
           });
+          if (typeof this.deps.repos.build.qa.setDefectStatus === 'function') {
+            await this.deps.repos.build.qa.setDefectStatus(defectId, 'assigned', artefact.assignedRoleKey);
+          }
         }
         const status =
           bridged.run.status === 'completed' || bridged.run.status === 'failed' || bridged.run.status === 'cancelled'
@@ -231,7 +278,7 @@ export class QaOrchestrationService {
           externalRunId: exploration?.id ?? project.exploration_id ?? null,
           evidenceUrl: bridged.run.evidenceUrl,
         });
-        return { runId: started.id };
+        return { runId: started.id, unavailableReason: bridged.run.unavailableReason, artefacts };
       } catch (error) {
         if (error instanceof TimeoutError) {
           await this.deps.repos.build.qa.finishRun(started.id, {
@@ -239,7 +286,7 @@ export class QaOrchestrationService {
             flowsCovered: [],
             externalRunId: project.exploration_id ?? null,
           });
-          return { runId: started.id };
+          return { runId: started.id, artefacts: [] };
         }
         throw error;
       }
@@ -259,7 +306,11 @@ export class QaOrchestrationService {
   async #markReplayUnavailable(
     input: QaRunInput,
     reason: string,
-  ): Promise<{ runId: string; blockedOn: { capability: Capability; reason: string } }> {
+  ): Promise<{
+    runId: string;
+    blockedOn: { capability: Capability; reason: string };
+    artefacts: QaDefectArtefact[];
+  }> {
     const row = await this.deps.repos.build.qa.markProviderUnavailable({
       companyId: input.companyId,
       siteId: input.siteId,
@@ -269,7 +320,7 @@ export class QaOrchestrationService {
       targetUrl: input.targetUrl,
       reason,
     });
-    return { runId: row.id, blockedOn: { capability: 'qa.autonomous_exploration', reason } };
+    return { runId: row.id, blockedOn: { capability: 'qa.autonomous_exploration', reason }, artefacts: [] };
   }
 
   /**
@@ -372,6 +423,32 @@ export class QaOrchestrationService {
     const status = this.deps.providers.forCapability(capability).status;
     return status.remediation ?? `capability state is ${status.state}`;
   }
+}
+
+function toDefectArtefact(defect: {
+  readonly externalId: string;
+  readonly title: string;
+  readonly description: string;
+  readonly severity: DefectSeverity;
+  readonly affectedFlow: CriticalFlow | null;
+  readonly reproductionSteps: readonly string[];
+  readonly rootCause: string | null;
+  readonly suggestedFix: string | null;
+  readonly evidenceUrl: string | null;
+}): QaDefectArtefact {
+  return {
+    kind: 'qa_defect',
+    externalId: defect.externalId,
+    title: defect.title,
+    description: defect.description,
+    severity: defect.severity,
+    affectedFlow: defect.affectedFlow,
+    reproductionSteps: defect.reproductionSteps,
+    rootCause: defect.rootCause,
+    suggestedFix: defect.suggestedFix,
+    evidenceUrl: defect.evidenceUrl,
+    assignedRoleKey: 'site_builder',
+  };
 }
 
 function replayWebhookUrl(publicBaseUrl: string | undefined): string | undefined {

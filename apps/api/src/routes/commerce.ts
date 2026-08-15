@@ -9,11 +9,72 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { NotFoundError, ValidationError, idempotencyKey } from '@foundry/core';
+import {
+  NotFoundError,
+  PaymentRoute,
+  ProductKind,
+  ValidationError,
+  assertPaymentRoute,
+  idempotencyKey,
+} from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import type { StripeAdapter } from '@foundry/providers';
 import { companyConfig } from '@foundry/db';
 import type { AppContext } from '@foundry/runtime';
+import { requireOperator } from '../auth.js';
+import { checkoutRedirectAllowed } from '../http-policy.js';
+
+/** Catalogue prices only. A storefront that sends an amount is ignored as untrusted. */
+const CUSTOMER_TYPED_AMOUNT_KEYS = [
+  'amount',
+  'amountMinor',
+  'priceMinor',
+  'unit_amount',
+  'unitAmount',
+  'custom_amount',
+  'customAmount',
+  'unitPriceMinor',
+] as const;
+
+export function rejectCustomerTypedCheckoutAmount(body: unknown): void {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return;
+  const rec = body as Record<string, unknown>;
+  const hit = CUSTOMER_TYPED_AMOUNT_KEYS.find((key) => key in rec);
+  if (hit) {
+    throw new ValidationError(`Checkout amounts come from the catalogue, not the request. Remove "${hit}".`, {
+      field: hit,
+    });
+  }
+  const items = rec['items'];
+  if (!Array.isArray(items)) return;
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const itemHit = CUSTOMER_TYPED_AMOUNT_KEYS.find((key) => key in (item as object));
+    if (itemHit) {
+      throw new ValidationError(`Checkout amounts come from the catalogue, not the request. Remove "${itemHit}".`, {
+        field: itemHit,
+      });
+    }
+  }
+}
+
+export function assertCheckoutPaymentRoute(kind: string, route: string): void {
+  assertPaymentRoute(ProductKind.parse(kind), PaymentRoute.parse(route));
+}
+
+/** True when tracked inventory cannot cover this quantity. Untracked stock is never blocked here. */
+export function trackedProductOutOfStock(
+  product: {
+    sku: string;
+    inventory_policy: string;
+    inventory_on_hand: number;
+    inventory_reserved: number;
+  },
+  quantity: number,
+): boolean {
+  if (product.inventory_policy !== 'track') return false;
+  return product.inventory_on_hand - product.inventory_reserved < quantity;
+}
 
 const CreateCheckout = z.object({
   items: z
@@ -63,7 +124,17 @@ export async function registerCommerceRoutes(app: FastifyInstance, ctx: AppConte
    * checkout gets exploited.
    */
   app.post<{ Body: unknown }>('/api/checkout', async (request, reply) => {
+    rejectCustomerTypedCheckoutAmount(request.body);
     const body = CreateCheckout.parse(request.body);
+    if (
+      !checkoutRedirectAllowed(body.successUrl, ctx.config.corsAllowedOrigins) ||
+      !checkoutRedirectAllowed(body.cancelUrl, ctx.config.corsAllowedOrigins)
+    ) {
+      throw new ValidationError(
+        'Checkout success and cancel URLs must use an origin on the CORS allowlist (PUBLIC_BASE_URL plus CORS_ALLOWED_ORIGINS).',
+        { successUrl: body.successUrl, cancelUrl: body.cancelUrl },
+      );
+    }
     const row = await company();
     const companyId = row.id;
 
@@ -74,6 +145,16 @@ export async function registerCommerceRoutes(app: FastifyInstance, ctx: AppConte
         if (product.status !== 'active') {
           throw new ValidationError(`Product "${item.sku}" is not available for sale`, { sku: item.sku });
         }
+        if (product.price_minor <= 0) {
+          throw new ValidationError(`Product "${item.sku}" has no catalogue price`, { sku: item.sku });
+        }
+        if (trackedProductOutOfStock(product, item.quantity)) {
+          throw new ValidationError(`Product "${item.sku}" is out of stock`, {
+            sku: item.sku,
+            quantity: item.quantity,
+          });
+        }
+        assertCheckoutPaymentRoute(product.kind, product.payment_route);
         return { product, quantity: item.quantity };
       }),
     );
@@ -113,6 +194,17 @@ export async function registerCommerceRoutes(app: FastifyInstance, ctx: AppConte
       })),
       attribution: body.attribution ?? {},
     });
+
+    for (const { product, quantity } of products) {
+      const reserved = await ctx.repos.commerce.products.reserveInventory(product.id, quantity);
+      if (!reserved) {
+        throw new ValidationError(`Product "${product.sku}" is out of stock`, {
+          sku: product.sku,
+          quantity,
+          orderId: order.order.id,
+        });
+      }
+    }
 
     /* ---------------------------------------------------------------- */
     /* Payment session                                                   */
@@ -206,13 +298,15 @@ export async function registerCommerceRoutes(app: FastifyInstance, ctx: AppConte
     };
   });
 
-  /** Full internal view, including the append-only event history. */
+  /** Full internal view, including the append-only event history. Operator only. */
   app.get<{ Params: { id: string } }>('/api/orders/:id/events', async (request) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const events = await ctx.repos.commerce.orders.events(request.params.id);
     return { events };
   });
 
   app.get<{ Querystring: { status?: string } }>('/api/orders', async (request) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const row = await company();
     const statuses = request.query.status
       ? (request.query.status.split(',') as never)

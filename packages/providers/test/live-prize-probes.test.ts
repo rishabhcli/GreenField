@@ -6,7 +6,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { SecretStore, ValidationError, toFoundryError } from '@foundry/core';
+import { ConflictError, SecretStore, ValidationError, toFoundryError } from '@foundry/core';
 
 function loadDotenv(path: string): void {
   if (!existsSync(path)) return;
@@ -209,7 +209,10 @@ describe.skipIf(!live)('live prize-track probes', () => {
           });
           return { succeeded: false, detail: 'physical createProduct did not throw', evidence: {} };
         } catch (error) {
-          if (error instanceof ValidationError && error.message.toLowerCase().includes('physical')) {
+          if (
+            (error instanceof ConflictError || error instanceof ValidationError) &&
+            /physical|merchant of record/i.test(error.message)
+          ) {
             return { succeeded: true, detail: error.message, evidence: { refusedBeforeHttp: true } };
           }
           throw error;

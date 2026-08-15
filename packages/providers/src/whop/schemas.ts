@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const WHOP_API_VERSION_DATE = '2026-07-23';
+export { WHOP_API_VERSION_DATE } from './constants.js';
 
 export const WhopAccount = z.object({
   id: z.string(),
@@ -8,11 +8,20 @@ export const WhopAccount = z.object({
   email: z.string().optional(),
 }).passthrough();
 
+export const WhopPlan = z.object({
+  id: z.string(),
+  product_id: z.string().optional(),
+  plan_type: z.string().optional(),
+  visibility: z.string().optional(),
+}).passthrough();
+
 export const WhopProduct = z.object({
   id: z.string(),
   title: z.string().optional(),
   company_id: z.string().optional(),
+  account: z.object({ id: z.string() }).passthrough().optional(),
   visibility: z.string().optional(),
+  plans: z.array(WhopPlan).optional(),
 }).passthrough();
 
 export const WhopCheckoutConfiguration = z.object({
@@ -20,13 +29,7 @@ export const WhopCheckoutConfiguration = z.object({
   purchase_url: z.string().optional(),
   url: z.string().optional(),
   plan_id: z.string().optional(),
-}).passthrough();
-
-export const WhopPayment = z.object({
-  id: z.string(),
-  status: z.string().optional(),
-  amount: z.union([z.number(), z.string()]).optional(),
-  currency: z.string().optional(),
+  account_id: z.string().optional(),
   company_id: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
@@ -36,6 +39,17 @@ export const WhopRefund = z.object({
   payment_id: z.string().optional(),
   status: z.string().optional(),
   amount: z.union([z.number(), z.string()]).optional(),
+}).passthrough();
+
+export const WhopPayment = z.object({
+  id: z.string(),
+  status: z.string().optional(),
+  amount: z.union([z.number(), z.string()]).optional(),
+  refunded_amount: z.union([z.number(), z.string()]).optional(),
+  currency: z.string().optional(),
+  company_id: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  refunds: z.array(WhopRefund).optional(),
 }).passthrough();
 
 export const WhopWebhookEnvelope = z.object({
@@ -55,4 +69,9 @@ export function asMinorUnits(value: unknown): number | undefined {
     if (Number.isFinite(n)) return Math.round(n * 100);
   }
   return undefined;
+}
+
+/** Inverse of `asMinorUnits` for request bodies (`partial_amount`, plan prices). */
+export function asMajorUnits(minor: number): number {
+  return Number((minor / 100).toFixed(2));
 }

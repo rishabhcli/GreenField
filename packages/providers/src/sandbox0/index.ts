@@ -57,6 +57,12 @@ import { bearerAuth, type ProviderHttpClient } from '../http/client.js';
 import { verifySandbox0Signature, type VerificationResult } from '../http/webhook-verify.js';
 import { SECRETS, SANDBOX0_MANIFEST } from '../manifests.js';
 import {
+  assertIsolatedFromControlPlane,
+  assertSandbox0Workload,
+  isolatedExecIdentity,
+  type ComputeBusinessFunction,
+} from './identities.js';
+import {
   SANDBOX0_PREVIEW_TTL_MAX,
   SANDBOX0_PREVIEW_TTL_MIN,
   SANDBOX0_QUOTA_EXCEEDED,
@@ -91,6 +97,14 @@ import {
 } from './schemas.js';
 
 export type { AdapterContext };
+export {
+  assertIsolatedFromControlPlane,
+  assertSandbox0Workload,
+  isolatedExecIdentity,
+  type ComputeBusinessFunction,
+  type ComputeWorkload,
+  type IsolatedExecIdentity,
+} from './identities.js';
 
 /** Live 2026-08-15: pause does not keep processes. Superserve pause does. */
 export const SANDBOX0_PAUSE_PRESERVES_PROCESSES = false;
@@ -340,6 +354,9 @@ export interface ClaimOrCreateSandboxInput {
   };
   readonly envVars?: Readonly<Record<string, string>>;
   readonly snapshotId?: string;
+  /** Isolated-exec identity. Must be paired with `companyId`. */
+  readonly businessFunction?: ComputeBusinessFunction;
+  readonly companyId?: string;
 }
 
 export interface ExecInput {
@@ -437,6 +454,16 @@ export class Sandbox0Adapter extends ProviderAdapter {
       });
     }
 
+    if (input.businessFunction || input.companyId) {
+      if (!input.businessFunction || !input.companyId) {
+        throw new ValidationError('claimOrCreateSandbox businessFunction and companyId must be provided together', {
+          provider: 'sandbox0',
+        });
+      }
+      assertSandbox0Workload('untrusted_model_code');
+      assertIsolatedFromControlPlane(isolatedExecIdentity(input.businessFunction, input.companyId).name);
+    }
+
     const existing = await this.findSandboxByAgentRunId(agentRunId);
     if (existing) {
       getLogger().info({ sandboxId: existing.id, agentRunId, status: existing.status }, 'sandbox0 reattached existing sandbox');
@@ -495,7 +522,13 @@ export class Sandbox0Adapter extends ProviderAdapter {
       ...(input.snapshotId ? { snapshot_id: input.snapshotId } : {}),
       ...(Object.keys(config).length > 0 ? { config } : {}),
       // Sent, not proven stored. Live 2026-08-15 dropped this field.
-      metadata: { ...input.metadata, agent_run_id: agentRunId },
+      metadata: {
+        ...input.metadata,
+        agent_run_id: agentRunId,
+        ...(input.businessFunction && input.companyId
+          ? isolatedExecIdentity(input.businessFunction, input.companyId).metadata
+          : {}),
+      },
     };
     const response = await this.#client().request(
       { method: 'POST', path: SANDBOXES_PATH, body, retryable: false, operation: 'claimSandbox' },

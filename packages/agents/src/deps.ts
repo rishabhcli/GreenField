@@ -13,6 +13,7 @@ export {
   NotFoundError,
   ConflictError,
   evaluatePolicy,
+  capabilityAvailableForAuthority,
   newId,
   roleByKey,
   specialistsOf,

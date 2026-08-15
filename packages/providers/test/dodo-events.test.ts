@@ -35,7 +35,7 @@ function payment(overrides: Record<string, unknown> = {}) {
 
 function refund(overrides: Record<string, unknown> = {}) {
   return {
-    refund_id: 'ref_test_a1',
+    refund_id: 're_dodo_test_a1',
     payment_id: 'pay_test_a1',
     amount: 1500,
     currency: 'USD',
@@ -187,6 +187,15 @@ describe('refund events', () => {
     expect(failed.intent.orderStatus).toBe('MANUAL_REVIEW');
   });
 
+  it('ledger lookup keys are the re_* refund id, not the payment id', () => {
+    const result = mapDodoEventToOrderTransition('refund.succeeded', refund());
+    if (result.action !== 'transition') throw new Error('expected transition');
+    expect(result.intent.externalIds['refund_id']).toBe('re_dodo_test_a1');
+    expect(result.intent.externalIds['refund']).toBe('re_dodo_test_a1');
+    expect(result.intent.externalIds['refund']).not.toBe(result.intent.externalIds['payment_id']);
+    expect(result.intent.detail['refundId']).toBe('re_dodo_test_a1');
+  });
+
   it('does not invent a zero refund when the amount field is absent', () => {
     const result = mapDodoEventToOrderTransition('refund.succeeded', refund({ amount: null }));
     if (result.action !== 'transition') throw new Error('expected transition');
@@ -215,6 +224,36 @@ describe('dispute events', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+
+describe('digital happy-path state machine', () => {
+  it('processing → succeeded → refund.succeeded is a legal money path', () => {
+    const processing = mapDodoEventToOrderTransition('payment.processing', payment({ status: 'processing' }));
+    const succeeded = mapDodoEventToOrderTransition('payment.succeeded', payment());
+    const refunded = mapDodoEventToOrderTransition('refund.succeeded', refund());
+    if (
+      processing.action !== 'transition' ||
+      succeeded.action !== 'transition' ||
+      refunded.action !== 'transition'
+    ) {
+      throw new Error('expected transitions');
+    }
+
+    let status: OrderStatus = 'CHECKOUT_STARTED';
+    expect(processing.intent.orderStatus).toBe('PAYMENT_PENDING');
+    expect(canTransition(status, 'PAYMENT_PENDING')).toBe(true);
+    status = 'PAYMENT_PENDING';
+
+    expect(succeeded.intent.orderStatus).toBe('PAID');
+    expect(succeeded.intent.amountPaidDeltaMinor).toBe(4000);
+    expect(canTransition(status, 'PAID')).toBe(true);
+    status = 'PAID';
+
+    expect(refunded.intent.orderStatus).toBe('PARTIALLY_REFUNDED');
+    expect(refunded.intent.amountRefundedDeltaMinor).toBe(1500);
+    expect(canTransition(status, 'PARTIALLY_REFUNDED')).toBe(true);
+    expect(refunded.intent.externalIds['refund_id']).toMatch(/^re_/);
+  });
+});
 
 describe('every mapping targets a reachable state', () => {
   it('produces statuses the order machine can actually reach from a live order', () => {

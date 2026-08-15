@@ -7,6 +7,7 @@
 import WebSocket from 'ws';
 import { CapabilityUnsupportedError } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
+import { assertNavigationPermitted, isUnreviewedMarketplaceHost } from './compliance.js';
 
 export interface LoadedBrowserPage {
   readonly url: string;
@@ -87,7 +88,31 @@ export function resolveResultUrl(href: string, base: string): string | undefined
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
   if (isSearchResultsPage(parsed.toString())) return undefined;
+  if (isUnreviewedMarketplaceHost(parsed.toString())) return undefined;
   return parsed.toString();
+}
+
+/**
+ * Result URLs the search page actually emitted. Empty hrefs stay empty —
+ * this never invents a destination to keep maxItems satisfied.
+ */
+export function selectResultUrls(
+  hrefs: readonly string[],
+  searchBase: string,
+  maxItems: number,
+): readonly string[] {
+  const targets: string[] = [];
+  const seen = new Set<string>();
+  for (const href of hrefs) {
+    const resolved = resolveResultUrl(href, searchBase);
+    if (!resolved) continue;
+    const key = canonicalUrl(resolved);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push(resolved);
+    if (targets.length >= maxItems) break;
+  }
+  return targets;
 }
 
 export async function loadQueryPagesFromEndpoints(input: {
@@ -134,6 +159,7 @@ export async function openLoadedPagesViaCdp(input: {
     const hrefs: string[] = [];
     let searchBase = '';
     for (const searchUrl of searchPageUrls(input.query)) {
+      assertNavigationPermitted(searchUrl);
       const page = await cdp.navigate(searchUrl);
       if (!page) continue;
       loaded.push(page);
@@ -142,17 +168,7 @@ export async function openLoadedPagesViaCdp(input: {
       if (hrefs.length > 0) break;
     }
 
-    const targets: string[] = [];
-    const seen = new Set<string>();
-    for (const href of hrefs) {
-      const resolved = resolveResultUrl(href, searchBase);
-      if (!resolved) continue;
-      const key = canonicalUrl(resolved);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      targets.push(resolved);
-      if (targets.length >= input.maxItems) break;
-    }
+    const targets = selectResultUrls(hrefs, searchBase, input.maxItems);
 
     const evidence: LoadedBrowserPage[] = [];
     for (const url of targets) {

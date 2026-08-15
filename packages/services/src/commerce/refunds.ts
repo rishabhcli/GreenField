@@ -13,7 +13,7 @@
  *    failed provider call leaves the order untouched, not "refunded pending".
  */
 
-import { PolicyDeniedError, ValidationError, maxRefundableMinor } from '@foundry/core';
+import { PolicyDeniedError, ValidationError, maxRefundableMinor, statusAfterRefund } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { requireCapability, type ServiceDeps } from '../deps.js';
 
@@ -139,7 +139,10 @@ export class RefundService {
       await this.deps.repos.commerce.orders.applyEvent({
         orderId: order.id,
         kind: 'refund_issued',
-        toStatus: request.amountMinor >= ceiling ? 'REFUNDED' : 'PARTIALLY_REFUNDED',
+        toStatus: statusAfterRefund(
+          { amountPaidMinor: order.amount_paid_minor, amountRefundedMinor: order.amount_refunded_minor },
+          refund.amountMinor,
+        ),
         actor: request.actorId,
         externalEventId: `refund:${refund.refundId}`,
         amountRefundedDeltaMinor: refund.amountMinor,
@@ -257,4 +260,16 @@ export class RefundService {
 function disputeThresholdBps(config: unknown): number {
   const risk = (config as { risk?: { disputeRateThresholdBps?: number } }).risk;
   return risk?.disputeRateThresholdBps ?? 100;
+}
+
+/**
+ * A lost dispute withdraws whatever is still captured. Using the original
+ * dispute amount after a partial refund would over-reduce remaining captured.
+ */
+export function lostDisputeRefundDelta(order: {
+  readonly amountPaidMinor: number;
+  readonly amountRefundedMinor: number;
+}): number | undefined {
+  const remaining = maxRefundableMinor(order);
+  return remaining > 0 ? remaining : undefined;
 }

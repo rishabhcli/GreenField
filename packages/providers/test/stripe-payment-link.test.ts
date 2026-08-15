@@ -22,7 +22,7 @@ function adapterWith(env: Record<string, string> = {}): StripeAdapter {
 }
 
 describe('StripeAdapter payment links', () => {
-  it('pins the submitted customer-chooses-price Payment Link', () => {
+  it('pins the submitted Payment Link id and URL', () => {
     expect(HACKATHON_PAYMENT_LINK_ID).toBe('plink_1U4lK242nB81EBguRPuIHrxS');
     expect(HACKATHON_PAYMENT_LINK_URL).toBe('https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00');
   });

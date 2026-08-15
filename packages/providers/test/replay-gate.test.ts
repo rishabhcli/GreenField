@@ -381,4 +381,49 @@ describe('toQaRunFromProject', () => {
     expect(run.status).toBe('completed');
     expect(run.flowsCovered).toContain('homepage_loads');
   });
+
+  it('maps recording-lost journeys to failed, never completed — 0 bugs is not a pass', () => {
+    const { run, defects } = toQaRunFromProject(
+      project(),
+      ReplayProjectTiming.parse({
+        started_at: '2026-08-15T19:04:07.000Z',
+        finished_at: '2026-08-15T19:20:00.000Z',
+      }),
+      [],
+      [journey({ name: 'Homepage', status: 'recording-lost' }), journey({ id: 'jrn_2', name: 'Checkout flow', status: 'recording-lost' })],
+    );
+    expect(run.status).toBe('failed');
+    expect(run.status).not.toBe('completed');
+    expect(run.unavailableReason).toBe('recording-lost');
+    expect(defects).toEqual([]);
+    expect(run.flowsCovered).toEqual([]);
+
+    const gate = evaluateReleaseGate({
+      environment: 'production',
+      runs: [run],
+      openDefects: defects,
+      requiredFlows: ['homepage_loads', 'checkout_initiation'],
+      requiredRunKinds: ['autonomous_exploration'],
+    });
+    expect(gate.verdict).toBe('block');
+    expect(gate.blockers.some((b) => b.code === 'qa_infra_failed' || b.code === 'qa_run_incomplete')).toBe(true);
+  });
+
+  it('maps infra-failed test_runs with zero passed runs to failed, even when idle', () => {
+    const { run } = toQaRunFromProject(
+      project(),
+      ReplayProjectTiming.parse({
+        started_at: '2026-08-15T19:04:07.000Z',
+        first_event_at: '2026-08-15T19:04:19.000Z',
+        finished_at: '2026-08-15T19:25:00.000Z',
+      }),
+      [],
+      [journey({ name: 'Homepage' })],
+      exploration({ status: 'completed' }),
+      { explorations: { completed: 1 }, test_runs: { 'infra-failed': 4, passed: 0 } },
+    );
+    expect(run.status).toBe('failed');
+    expect(run.status).not.toBe('completed');
+    expect(run.unavailableReason).toBe('recording-lost');
+  });
 });

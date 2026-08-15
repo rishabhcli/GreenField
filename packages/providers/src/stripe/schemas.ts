@@ -17,6 +17,27 @@ export const StripePaymentLink = z.object({
   url: z.string(),
   active: z.boolean().nullish(),
   livemode: z.boolean().optional(),
+  line_items: z
+    .object({
+      data: z
+        .array(
+          z.object({
+            price: z
+              .union([
+                z.string(),
+                z.object({
+                  id: z.string().optional(),
+                  unit_amount: z.number().nullish(),
+                  custom_unit_amount: z.object({ enabled: z.boolean().nullish() }).nullish(),
+                }),
+              ])
+              .nullish(),
+            quantity: z.number().nullish(),
+          }),
+        )
+        .optional(),
+    })
+    .nullish(),
 });
 export type StripePaymentLink = z.infer<typeof StripePaymentLink>;
 
@@ -66,6 +87,7 @@ export const StripeCheckoutSession = z.object({
     .object({ amount_discount: z.number().nullish(), amount_shipping: z.number().nullish(), amount_tax: z.number().nullish() })
     .nullish(),
   payment_intent: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
+  payment_link: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
   metadata: z.record(z.string(), z.string()).nullish(),
   expires_at: z.number().nullish(),
   livemode: z.boolean().optional(),

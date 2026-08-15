@@ -16,9 +16,9 @@ import {
 import { optionalCapability, type ServiceDeps, type ServiceOutcome } from '../deps.js';
 
 /**
- * Structural generator surface. LovableAdapter is not exported from the
- * providers barrel; production wiring still satisfies this shape (or the
- * richer object-argument methods, which `asSiteGenerator` adapts).
+ * Structural generator surface. Production wiring uses LovableAdapter
+ * (object-argument methods); tests may pass this positional shape.
+ * `asSiteGenerator` adapts both.
  */
 export interface SiteGenerator {
   createProject(prompt: string): Promise<{ projectId: string }>;
@@ -30,6 +30,27 @@ export interface SiteGenerator {
 
 export const SITE_HOSTING_NOTE =
   'Production storefront hosting is Render (`platform.deploy_control`), not Lovable preview URLs. A Lovable deploy URL is a generator preview only.';
+
+/**
+ * Build-phase honesty: a drafted spec is not a storefront. Complete only when
+ * Lovable returned a project id *and* we actually read files.
+ */
+export function siteBuildComplete(input: {
+  status: string;
+  generatorProjectId?: string | null;
+  exportedFiles?: Record<string, string> | null;
+}): boolean {
+  if (
+    input.status === 'spec_drafted' ||
+    input.status === 'generating' ||
+    input.status === 'building' ||
+    input.status === 'build_failed'
+  ) {
+    return false;
+  }
+  const files = input.exportedFiles;
+  return Boolean(input.generatorProjectId) && files != null && Object.keys(files).length > 0;
+}
 
 export class SiteBuildService {
   constructor(private readonly deps: ServiceDeps) {}
@@ -44,6 +65,8 @@ export class SiteBuildService {
       brandId: input.brandId,
       spec: input.spec,
     });
+    await this.deps.repos.companies.setActive(input.companyId, { siteId: site.id });
+    await persistConfiguredHostingServiceId(this.deps, site.id, site.hosting_service_id);
     return { ok: true, data: { siteId: site.id, status: site.status } };
   }
 
@@ -51,30 +74,46 @@ export class SiteBuildService {
     projectId: string;
     status: SiteStatus;
     hostingNote: typeof SITE_HOSTING_NOTE;
+    files: Record<string, string>;
+    previewUrl: string | null;
   }>> {
     const raw = optionalCapability<unknown>(this.deps, 'site.generate');
     if (!asSiteGenerator(raw)) return blocked('site.generate', this.#reason('site.generate'));
 
     const site = await this.deps.repos.build.sites.byId(input.siteId);
-    await this.deps.repos.build.sites.setStatus(input.siteId, 'generating');
-
     const idempotencyKey = `site.generate:${input.siteId}`;
     const generator = asSiteGenerator(raw, idempotencyKey)!;
-    const claimed = await this.deps.repos.idempotency.claim(idempotencyKey, 'site.generate', {
+    let claimed = await this.deps.repos.idempotency.claim(idempotencyKey, 'site.generate', {
       companyId: site.company_id,
       requestPayload: { siteId: input.siteId, instructions: input.instructions },
     });
+    if (claimed.status === 'failed') {
+      await this.deps.repos.idempotency.reset?.(idempotencyKey);
+      claimed = await this.deps.repos.idempotency.claim(idempotencyKey, 'site.generate', {
+        companyId: site.company_id,
+        requestPayload: { siteId: input.siteId, instructions: input.instructions },
+      });
+    }
     if (claimed.status === 'in_progress') {
       return blocked('site.generate', `site generation for ${input.siteId} is already in progress`);
     }
     if (claimed.status === 'completed' && isRecord(claimed.result) && typeof claimed.result.projectId === 'string') {
+      const files = filesOf(claimed.result.files);
       await this.deps.repos.build.sites.setGenerator(input.siteId, 'lovable', claimed.result.projectId);
       await this.deps.repos.build.sites.setStatus(input.siteId, 'generated');
       return {
         ok: true,
-        data: { projectId: claimed.result.projectId, status: 'generated', hostingNote: SITE_HOSTING_NOTE },
+        data: {
+          projectId: claimed.result.projectId,
+          status: 'generated',
+          hostingNote: SITE_HOSTING_NOTE,
+          files,
+          previewUrl: typeof claimed.result.previewUrl === 'string' ? claimed.result.previewUrl : null,
+        },
       };
     }
+
+    await this.deps.repos.build.sites.setStatus(input.siteId, 'generating');
 
     const prompt = [
       `Generate a storefront from this spec:\n${JSON.stringify(site.spec)}`,
@@ -94,13 +133,43 @@ export class SiteBuildService {
       if (input.instructions.trim()) {
         await generator.sendMessage(created.projectId, input.instructions);
       }
+
+      const files = await readGeneratedFiles(generator, created.projectId);
+      if (Object.keys(files).length === 0) {
+        await this.deps.repos.build.sites.setStatus(input.siteId, 'spec_drafted');
+        await this.deps.repos.build.sites.finishBuild(buildId, {
+          status: 'failed',
+          error: 'Lovable returned no files; spec_drafted is not a completed build',
+        });
+        await this.deps.repos.idempotency.fail?.(
+          idempotencyKey,
+          'Lovable returned no files; spec_drafted is not a completed build',
+        );
+        return blocked(
+          'site.generate',
+          'Lovable returned no files; spec_drafted is not a completed build. A generator project without retrieved files is not generated.',
+        );
+      }
+
       await this.deps.repos.build.sites.setGenerator(input.siteId, 'lovable', created.projectId);
+      await this.deps.repos.build.sites.finishBuild(buildId, { status: 'succeeded', exportedFiles: files });
       await this.deps.repos.build.sites.setStatus(input.siteId, 'generated');
-      await this.deps.repos.build.sites.finishBuild(buildId, { status: 'succeeded' });
-      await this.deps.repos.idempotency.complete(idempotencyKey, { projectId: created.projectId });
+
+      const previewUrl = await previewDeployOnly(generator, created.projectId);
+      if (previewUrl) {
+        await this.deps.repos.build.sites.setUrls(input.siteId, { previewUrl });
+      }
+
+      await this.deps.repos.idempotency.complete(idempotencyKey, { projectId: created.projectId, files });
       return {
         ok: true,
-        data: { projectId: created.projectId, status: 'generated', hostingNote: SITE_HOSTING_NOTE },
+        data: {
+          projectId: created.projectId,
+          status: 'generated',
+          hostingNote: SITE_HOSTING_NOTE,
+          files,
+          previewUrl,
+        },
       };
     } catch (error) {
       await this.deps.repos.build.sites.setStatus(input.siteId, 'spec_drafted');
@@ -182,6 +251,22 @@ export class SiteBuildService {
   }
 }
 
+/**
+ * Copies `RENDER_STOREFRONT_SERVICE_ID` onto the site when the row has none.
+ * Does not invent an id: absent config leaves hosting_service_id null.
+ */
+export async function persistConfiguredHostingServiceId(
+  deps: Pick<ServiceDeps, 'repos' | 'renderStorefrontServiceId'>,
+  siteId: string,
+  currentHostingServiceId: string | null,
+): Promise<string | null> {
+  if (currentHostingServiceId) return currentHostingServiceId;
+  const configured = deps.renderStorefrontServiceId;
+  if (!configured) return null;
+  await deps.repos.build.sites.setUrls(siteId, { hostingServiceId: configured });
+  return configured;
+}
+
 function blocked<T>(capability: Capability, reason: string): ServiceOutcome<T> {
   return { ok: false, blockedOn: { capability, reason } };
 }
@@ -208,7 +293,7 @@ function asSiteGenerator(adapter: unknown, idempotencyKey?: string): SiteGenerat
         ? await createProject({
             initialMessage: prompt,
             idempotencyKey: idempotencyKey ?? `lovable:${prompt.slice(0, 40)}`,
-            wait: false,
+            wait: true,
           })
         : await createProject(prompt);
       const id = projectIdOf(result);
@@ -217,7 +302,7 @@ function asSiteGenerator(adapter: unknown, idempotencyKey?: string): SiteGenerat
     },
     async sendMessage(projectId: string, text: string) {
       if (!sendMessage) return;
-      if (real) await sendMessage({ projectId, message: text, wait: false });
+      if (real) await sendMessage({ projectId, message: text, wait: true });
       else await sendMessage(projectId, text);
     },
     async listFiles(projectId: string) {
@@ -246,6 +331,34 @@ function asSiteGenerator(adapter: unknown, idempotencyKey?: string): SiteGenerat
       return { url: null };
     },
   };
+}
+
+async function readGeneratedFiles(generator: SiteGenerator, projectId: string): Promise<Record<string, string>> {
+  const paths = await generator.listFiles(projectId);
+  const files: Record<string, string> = {};
+  for (const path of paths) {
+    files[path] = await generator.readFile(projectId, path);
+  }
+  return files;
+}
+
+/** Lovable deploy_project is a generator preview. Callers must never persist this as production_url. */
+async function previewDeployOnly(generator: SiteGenerator, projectId: string): Promise<string | null> {
+  try {
+    const deployed = await generator.deployProject(projectId);
+    return deployed.url;
+  } catch {
+    return null;
+  }
+}
+
+function filesOf(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const files: Record<string, string> = {};
+  for (const [path, text] of Object.entries(value)) {
+    if (typeof text === 'string') files[path] = text;
+  }
+  return files;
 }
 
 function projectIdOf(result: unknown): string | undefined {

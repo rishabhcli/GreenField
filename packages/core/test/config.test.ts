@@ -72,4 +72,10 @@ describe('loadRuntimeConfig', () => {
     const cfg = loadRuntimeConfig(env());
     expect(cfg.operatorApiToken).toBeUndefined();
   });
+
+  it('copies optional RENDER_STOREFRONT_SERVICE_ID onto runtime config', () => {
+    expect(loadRuntimeConfig(env()).renderStorefrontServiceId).toBeUndefined();
+    const cfg = loadRuntimeConfig(env({ RENDER_STOREFRONT_SERVICE_ID: 'srv-storefront-test' }));
+    expect(cfg.renderStorefrontServiceId).toBe('srv-storefront-test');
+  });
 });

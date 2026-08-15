@@ -154,6 +154,9 @@ export const ReplayJourney = z
     project_id: z.string().nullish(),
     name: z.string(),
     description: z.string().nullish(),
+    status: z.string().nullish(),
+    result: z.string().nullish(),
+    last_result: z.string().nullish(),
     // Step schema UNVERIFIED; kept opaque rather than typed.
     steps: z.array(z.unknown()).nullish(),
     created_at: z.string().nullish(),

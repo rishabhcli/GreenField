@@ -5,14 +5,15 @@
    place to inject an environment variable. Set the deployed API's base URL
    here and commit it; it is a public URL, not a secret.
 
-   Leave it empty and the console falls back to its own origin, which is correct
-   only when the API and the site are served from the same host. On Render they
-   are not: the site is `foundry-site` and the API is `foundry-api`.
+   On Render the site (`foundry-site`) and the API (`foundry-api`) are different
+   hosts. An empty value used to fall back to the page origin, so the console
+   fetched `/readiness/company` from the static service and got HTTP 404.
 
    Resolution order, most explicit first:
-     1. ?api=https://…   (persisted to localStorage, so a bookmark keeps working)
-     2. localStorage      (whatever was last set via the query param)
+     1. ?api=https://…   (persisted only if the origin is this allowlisted host)
+     2. localStorage      (ignored unless it is this host)
      3. this value
-     4. the page's own origin, or localhost:3000 when opened from a file://
+     4. the same baked default inside console.js
+     5. localhost:3000 when opened from a file:// or a localhost page
 ============================================================================ */
-window.YELLOFIELD_API_BASE = '';
+window.YELLOFIELD_API_BASE = 'https://foundry-api-8ih0.onrender.com';

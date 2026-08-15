@@ -13,6 +13,7 @@ import type { LoopOrchestrator } from '../loop/orchestrator.js';
 import type { MarketingCreativeService } from '../marketing/creative.js';
 import type { MarketingExperimentService } from '../marketing/experiments.js';
 import type { AudienceSegmentService } from '../marketing/audience.js';
+import type { LinqOutreachService } from '../marketing/outreach.js';
 import type { QaOrchestrationService } from '../qa/orchestration.js';
 import type { ResearchClusterService } from '../research/cluster.js';
 import type { ResearchCollectService } from '../research/collect.js';
@@ -46,6 +47,7 @@ export interface CompanyToolHost {
   readonly creative: MarketingCreativeService;
   readonly experiments: MarketingExperimentService;
   readonly audience: AudienceSegmentService;
+  readonly outreach: LinqOutreachService;
   readonly support: SupportInboxService;
   readonly legal: LegalDocumentService;
   readonly fulfilment: FulfilmentService;

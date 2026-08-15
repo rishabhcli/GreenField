@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { CredentialsMissingError, SecretStore, TimeoutError } from '@foundry/core';
 import type { AdapterContext } from '../src/http/adapter.js';
-import { ReplayAdapter } from '../src/replay/index.js';
+import { ReplayAdapter, isLocalTargetUrl } from '../src/replay/index.js';
 
 function ctx(env: Record<string, string> = {}): AdapterContext {
   return {
@@ -35,6 +35,15 @@ function router(handlers: Array<{ match: (url: string, method: string) => boolea
 }
 
 const KEY = 'lqa_testkey00000000000000000000000000000000';
+
+describe('isLocalTargetUrl', () => {
+  it('detects loopback hosts that must not gate production', () => {
+    expect(isLocalTargetUrl('http://localhost:3000/')).toBe(true);
+    expect(isLocalTargetUrl('http://127.0.0.1:8080/checkout')).toBe(true);
+    expect(isLocalTargetUrl('http://[::1]/')).toBe(true);
+    expect(isLocalTargetUrl('https://shop.example.test/')).toBe(false);
+  });
+});
 
 describe('ReplayAdapter credentials', () => {
   it('createProject names REPLAY_API_KEY when the token is absent', async () => {

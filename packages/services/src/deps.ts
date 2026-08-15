@@ -31,6 +31,11 @@ export interface ServiceDeps {
   /** Externally reachable base URL; webhook and return URLs are built from it. */
   readonly publicBaseUrl: string;
   readonly environment: 'production' | 'staging' | 'preview';
+  /**
+   * Render service id hosting the generated storefront, when configured.
+   * Copied onto the site row; never invented.
+   */
+  readonly renderStorefrontServiceId?: string;
 }
 
 /**

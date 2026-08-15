@@ -36,6 +36,8 @@ import {
 } from '@foundry/providers';
 import { optionalCapability as optCap } from '../deps.js';
 import { prizeTrackSnapshot } from '../org/prize-tracks.js';
+import { loadAndEvaluateSelection } from '../research/selection.js';
+import { resolveUnitContributionMinor } from '../sourcing/economics.js';
 import type { CompanyToolHost } from './host.js';
 
 interface ToolSpec<T extends z.ZodTypeAny> {
@@ -763,6 +765,10 @@ export function buildCompanyTools(s: CompanyToolHost): AgentTool<never, unknown>
         consequential: true,
         input: z.object({ opportunityId: Id, rationale: Text }),
         execute: async (input, ctx) => {
+          const { gates } = await loadAndEvaluateSelection(s.deps, input.opportunityId);
+          if (!gates.passed) {
+            return { ok: false, failures: gates.failures };
+          }
           await s.deps.repos.companies.setActive(ctx.companyId, { opportunityId: input.opportunityId });
           await s.deps.repos.research.opportunities.setStage(input.opportunityId, 'ceo_review');
           const cycle = await s.deps.repos.loop.currentOrStart(ctx.companyId);
@@ -990,7 +996,7 @@ function sourcingTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
     tool(
       {
         name: 'sourcing.build_landed_cost',
-        description: 'Build a landed-cost model from a real quote. Missing selling price is incomplete, not a failed model.',
+        description: 'Build a landed-cost model from a real quote. Incomplete or failing margin economics refuse the build.',
         authority: 'supplier.contact',
         consequential: false,
         input: z.object({
@@ -1405,14 +1411,13 @@ function brandSiteTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
     tool(
       {
         name: 'commerce.collect_payment',
-        description: 'Collect payment over Linq Agent Pay and/or the submitted Stripe Payment Link.',
+        description:
+          'Collect the order total over Linq (Stripe Checkout link; Agent Pay if connected). Amount comes from the order row, never from the model.',
         authority: 'payments.configure',
         consequential: true,
         input: z.object({
           orderId: Id,
           toHandle: Text,
-          amountMinor: z.number().int().positive(),
-          currency: z.string().length(3),
           description: Text,
         }),
         execute: async (input, ctx) => {
@@ -1427,8 +1432,6 @@ function brandSiteTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
               companyId: ctx.companyId,
               orderId: input.orderId,
               toHandle: input.toHandle,
-              amountMinor: input.amountMinor,
-              currency: input.currency,
               description: input.description,
               idempotencyKey,
             });
@@ -1740,7 +1743,20 @@ function growthSupportTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
         authority: 'ads.create_campaign',
         consequential: true,
         input: z.object({ experimentId: Id }),
-        execute: async (input) => s.experiments.decideArms({ experimentId: input.experimentId, unitContributionMinor: 0 }),
+        execute: async (input, ctx) => {
+          const unitContributionMinor = await resolveUnitContributionMinor(s.deps, ctx.companyId);
+          if (unitContributionMinor == null) {
+            return {
+              ok: false,
+              blockedOn: {
+                capability: 'ads.campaign_manage' as Capability,
+                reason:
+                  'Unit contribution is not modelled from economics; refusing to decide arms with a zero or invented contribution.',
+              },
+            };
+          }
+          return s.experiments.decideArms({ experimentId: input.experimentId, unitContributionMinor });
+        },
       },
       s,
     ),
@@ -2432,22 +2448,19 @@ function platformTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
     tool(
       {
         name: 'qa.run_contract_tests',
-        description: 'Run provider probes (non-destructive) and persist verification rows.',
+        description:
+          'Run provider probes (non-destructive). Does not write integration_verifications — apps/verifier is the sole writer of that table.',
         authority: 'infrastructure.provision',
         consequential: true,
         input: Empty,
-        execute: async (_i, ctx) => {
+        execute: async () => {
           const results = await s.deps.providers.probeAll();
-          for (const row of results) {
-            await s.deps.repos.verifications.record({
-              provider: row.provider,
-              succeeded: row.succeeded,
-              detail: row.detail,
-              evidence: row.evidence,
-              environment: s.deps.environment,
-            });
-          }
-          return { probed: results.length, succeeded: results.filter((r) => r.succeeded).map((r) => r.provider) };
+          return {
+            probed: results.length,
+            succeeded: results.filter((r) => r.succeeded).map((r) => r.provider),
+            persisted: false,
+            reason: 'verifier is the sole writer',
+          };
         },
       },
       s,
@@ -2559,8 +2572,8 @@ function prizeTrackTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
       {
         name: 'linq.send_link',
         description:
-          'Send the submitted Stripe Payment Link via Linq-hosted `link` experience. Not Agent Pay; a Stripe URL is invalid as agentpay checkout_url.',
-        authority: 'payments.configure',
+          'Send a fixed-price Stripe checkout URL via Linq-hosted `link` experience. Not Agent Pay; a Stripe URL is invalid as agentpay checkout_url. The amount is the catalogue price, not a customer-typed value.',
+        authority: 'messaging.send_marketing',
         capability: 'messaging.imessage_app',
         consequential: true,
         input: z.object({
@@ -2572,19 +2585,40 @@ function prizeTrackTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
           const stripe =
             optCap<StripeAdapter>(s.deps, 'payments.payment_link') ??
             optCap<StripeAdapter>(s.deps, 'payments.checkout.physical');
-          const stripeUrl = stripe?.hackathonPaymentLinkUrl() ?? null;
-          return sendStripeLinkViaLinq(s, {
-            toHandle: input.toHandle,
-            stripeUrl,
-            description: input.description,
-            title: input.title,
-            idempotencyKey: `linq-link:${ctx.companyId}:${ctx.runId}`,
-            agentPayBlocked: {
-              capability: 'payments.imessage_checkout',
-              reason: 'linq.send_link does not use Agent Pay',
-            },
-          });
+          if (!stripe) {
+            const status = s.deps.capabilities.resolveCapability('payments.payment_link');
+            return blocked('payments.payment_link', status.remediation ?? `payments.payment_link is ${status.state}`);
+          }
+          try {
+            const link = await stripe.resolveHackathonPaymentLink();
+            return sendStripeLinkViaLinq(s, {
+              toHandle: input.toHandle,
+              stripeUrl: link.url,
+              description: input.description,
+              title: input.title,
+              idempotencyKey: `linq-link:${ctx.companyId}:${ctx.runId}`,
+              agentPayBlocked: {
+                capability: 'payments.imessage_checkout',
+                reason: 'linq.send_link does not use Agent Pay',
+              },
+            });
+          } catch (error) {
+            return blockedFrom('payments.payment_link', error);
+          }
         },
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'linq.outreach',
+        description:
+          'Proactively send the fixed-price checkout link over Linq to configured handles and existing chats. Does not invent recipients. Opt-out is respected.',
+        authority: 'messaging.send_marketing',
+        capability: 'messaging.imessage_app',
+        consequential: true,
+        input: Empty,
+        execute: async (_i, ctx) => s.outreach.reachOut({ companyId: ctx.companyId, runId: ctx.runId }),
       },
       s,
     ),

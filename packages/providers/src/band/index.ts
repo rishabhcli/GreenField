@@ -78,6 +78,19 @@ import {
 } from './schemas.js';
 import { BandWebSocketClient } from './websocket.js';
 
+/** Live Zero Human Co coordination room. Do not open a decorative second chat. */
+export const ZERO_HUMAN_CO_COORDINATION_ROOM_ID = 'a70129cc-0663-4090-86b5-c5a98025532e';
+
+export interface ResolveCoordinationRoomInput {
+  readonly configuredChatId?: string | null;
+  readonly companyName?: string;
+}
+
+export interface ResolvedCoordinationRoom {
+  readonly chatId: string;
+  readonly created: boolean;
+}
+
 /** Converts BAND's documented `{"error": "...", "message": "..."}` envelope into our taxonomy. */
 function classifyBandError(status: number, body: unknown): FoundryError | undefined {
   const parsed = BandErrorEnvelope.safeParse(body);
@@ -325,6 +338,32 @@ export class BandAdapter extends ProviderAdapter {
       bandListEnvelope(BandChat),
     );
     return normaliseBandList<BandChat>(response.body);
+  }
+
+  /**
+   * Picks the company coordination room. A configured id or the live Zero
+   * Human Co room wins; createChat is last resort, never a substitute for
+   * "we already have a room."
+   */
+  async resolveCoordinationRoom(input: ResolveCoordinationRoomInput = {}): Promise<ResolvedCoordinationRoom> {
+    const configured = input.configuredChatId?.trim();
+    if (configured) {
+      return { chatId: configured, created: false };
+    }
+
+    const chats = await this.listChats();
+    const known = chats.find((chat) => chat.id === ZERO_HUMAN_CO_COORDINATION_ROOM_ID);
+    if (known) return { chatId: known.id, created: false };
+
+    const expectedTitle = `${input.companyName?.trim() || 'Zero Human Co'} coordination`;
+    const named = chats.find((chat) => {
+      const title = (chat.title ?? chat.name ?? '').trim();
+      return title === expectedTitle || chat.id === expectedTitle;
+    });
+    if (named) return { chatId: named.id, created: false };
+
+    const chat = await this.createChat({ name: expectedTitle });
+    return { chatId: chat.id, created: true };
   }
 
   async createChat(input: CreateChatInput = {}): Promise<BandChat> {

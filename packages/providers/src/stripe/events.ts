@@ -14,7 +14,7 @@
  *    would credit the order twice.
  */
 
-import type { OrderEventKind, OrderStatus } from '@foundry/core';
+import { Address, type OrderEventKind, type OrderStatus } from '@foundry/core';
 import { StripeCharge, StripeCheckoutSession, StripeDispute, StripePaymentIntent, StripeRefund, refId } from './schemas.js';
 
 export interface OrderTransitionIntent {
@@ -52,13 +52,34 @@ export function mapStripeEventToOrderTransition(eventType: string, dataObject: u
       // A completed session is not necessarily a paid session — asynchronous
       // methods complete the session while payment is still pending.
       if (session.payment_status === 'paid') {
+        if (session.amount_total == null) {
+          return {
+            action: 'transition',
+            intent: {
+              orderStatus: 'MANUAL_REVIEW',
+              kind: 'manual_review_flagged',
+              externalIds: ids,
+              currency: session.currency ?? undefined,
+              detail: {
+                paymentStatus: session.payment_status,
+                missingAmountTotal: true,
+                shipping: session.collected_information?.shipping_details ?? session.shipping_details ?? null,
+                customerEmail: session.customer_details?.email ?? null,
+                customerPhone: session.customer_details?.phone ?? null,
+                customerName: session.customer_details?.name ?? null,
+              },
+              manualReviewReason:
+                'Paid checkout session is missing amount_total. Refusing to mark PAID with an unknown amount.',
+            },
+          };
+        }
         return {
           action: 'transition',
           intent: {
             orderStatus: 'PAID',
             kind: 'payment_webhook_received',
             externalIds: ids,
-            amountPaidDeltaMinor: session.amount_total ?? 0,
+            amountPaidDeltaMinor: session.amount_total,
             currency: session.currency ?? undefined,
             detail: {
               paymentStatus: session.payment_status,
@@ -66,6 +87,9 @@ export function mapStripeEventToOrderTransition(eventType: string, dataObject: u
               amountTax: session.total_details?.amount_tax ?? null,
               amountShipping: session.total_details?.amount_shipping ?? null,
               shipping: session.collected_information?.shipping_details ?? session.shipping_details ?? null,
+              customerEmail: session.customer_details?.email ?? null,
+              customerPhone: session.customer_details?.phone ?? null,
+              customerName: session.customer_details?.name ?? null,
             },
           },
         };
@@ -83,13 +107,27 @@ export function mapStripeEventToOrderTransition(eventType: string, dataObject: u
 
     case 'checkout.session.async_payment_succeeded': {
       const session = StripeCheckoutSession.parse(dataObject);
+      if (session.amount_total == null) {
+        return {
+          action: 'transition',
+          intent: {
+            orderStatus: 'MANUAL_REVIEW',
+            kind: 'manual_review_flagged',
+            externalIds: sessionIds(session),
+            currency: session.currency ?? undefined,
+            detail: { asyncPayment: true, missingAmountTotal: true },
+            manualReviewReason:
+              'Async payment succeeded but amount_total is missing. Refusing to mark PAID with an unknown amount.',
+          },
+        };
+      }
       return {
         action: 'transition',
         intent: {
           orderStatus: 'PAID',
           kind: 'payment_captured',
           externalIds: sessionIds(session),
-          amountPaidDeltaMinor: session.amount_total ?? 0,
+          amountPaidDeltaMinor: session.amount_total,
           currency: session.currency ?? undefined,
           detail: { asyncPayment: true },
         },
@@ -127,20 +165,31 @@ export function mapStripeEventToOrderTransition(eventType: string, dataObject: u
     /* ---------------------------------------------------------------- */
     case 'payment_intent.succeeded': {
       const pi = StripePaymentIntent.parse(dataObject);
+      const received = pi.amount_received;
+      if (received == null || received <= 0) {
+        // Do not mark PAID with a zero capture. checkout.session.completed
+        // carries amount_total for Checkout; a PaymentIntent without
+        // amount_received is left for that event.
+        return {
+          action: 'transition',
+          intent: {
+            orderStatus: null,
+            kind: 'payment_captured',
+            externalIds: compact({ stripe_payment_intent: pi.id, stripe_charge: refId(pi.latest_charge) }),
+            currency: pi.currency,
+            detail: { amount: pi.amount, amountReceived: received ?? null, skippedPaid: true },
+          },
+        };
+      }
       return {
         action: 'transition',
         intent: {
           orderStatus: 'PAID',
           kind: 'payment_captured',
           externalIds: compact({ stripe_payment_intent: pi.id, stripe_charge: refId(pi.latest_charge) }),
-          // The amount is carried here as well as on checkout.session.completed.
-          // Applying it twice is prevented by the order repository's per-event
-          // deduplication plus the amount reconciliation in `payments`, not by
-          // omitting it — omitting it would lose the amount when a PaymentIntent
-          // is used without Checkout.
-          amountPaidDeltaMinor: 0,
+          amountPaidDeltaMinor: received,
           currency: pi.currency,
-          detail: { amount: pi.amount, amountReceived: pi.amount_received ?? null },
+          detail: { amount: pi.amount, amountReceived: received },
         },
       };
     }
@@ -388,7 +437,7 @@ export function mapStripeEventToOrderTransition(eventType: string, dataObject: u
           currency: dispute.currency,
           detail: { status: dispute.status, amount: dispute.amount },
           ...(lost
-            ? {}
+            ? { amountRefundedDeltaMinor: dispute.amount }
             : { manualReviewReason: `Dispute ${dispute.id} closed as "${dispute.status}"; confirm the order's correct final state.` }),
         },
       };
@@ -495,7 +544,8 @@ function sessionIds(session: StripeCheckoutSession): Record<string, string> {
   return compact({
     stripe_checkout_session: session.id,
     stripe_payment_intent: refId(session.payment_intent),
-    internal_order_id: session.client_reference_id ?? null,
+    stripe_payment_link: refId(session.payment_link),
+    internal_order_id: session.client_reference_id ?? session.metadata?.['internal_order_id'] ?? null,
   });
 }
 
@@ -521,4 +571,24 @@ function compact(record: Record<string, string | null | undefined>): Record<stri
     if (typeof value === 'string' && value.length > 0) out[key] = value;
   }
   return out;
+}
+
+/** Maps Stripe Checkout shipping onto our Address, or null when required fields are missing. */
+export function shippingAddressFromStripe(shipping: unknown): Address | null {
+  if (!shipping || typeof shipping !== 'object') return null;
+  const rec = shipping as Record<string, unknown>;
+  const addr = rec['address'];
+  if (!addr || typeof addr !== 'object') return null;
+  const a = addr as Record<string, unknown>;
+  const parsed = Address.safeParse({
+    name: typeof rec['name'] === 'string' ? rec['name'] : '',
+    line1: typeof a['line1'] === 'string' ? a['line1'] : '',
+    line2: typeof a['line2'] === 'string' && a['line2'].length > 0 ? a['line2'] : null,
+    city: typeof a['city'] === 'string' ? a['city'] : '',
+    state: typeof a['state'] === 'string' && a['state'].length > 0 ? a['state'] : null,
+    postalCode: typeof a['postal_code'] === 'string' ? a['postal_code'] : '',
+    country: typeof a['country'] === 'string' ? a['country'] : '',
+    phone: typeof rec['phone'] === 'string' && rec['phone'].length > 0 ? rec['phone'] : null,
+  });
+  return parsed.success ? parsed.data : null;
 }

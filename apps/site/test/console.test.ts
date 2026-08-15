@@ -143,12 +143,30 @@ describe('operator console', () => {
     expect(html).toContain('Nothing here is illustrative');
   });
 
+  it('maps blocked and failed provider states to distinct squares', () => {
+    expect(js).toContain('function providerSquare');
+    expect(js).toContain('sq-blocked');
+    expect(js).toContain('sq-fail');
+    expect(js).toContain("state.indexOf('blocked_') === 0");
+    expect(js).toContain("=== 'verification_failed'");
+    const sharedCss = read('assets/styles.css');
+    expect(sharedCss).toContain('.sq-blocked');
+    expect(sharedCss).toContain('.sq-fail');
+  });
+
   it('never upgrades a capability state on the client', () => {
     // `live_verified` may only be compared against, never assigned. The console
     // reads the field; it must not construct it. The lookbehind is what makes
     // this meaningful — `=== 'live_verified'` is exactly what we want to see.
     expect(js).not.toMatch(/(?<![=!<>])=\s*['"]live_verified['"]/);
     expect(js).toContain("=== 'live_verified'");
+  });
+
+  it('sends the bearer token on every request once it is present', () => {
+    // Gated reads (approvals, audit, orders list) and writes share one helper.
+    // `opts.auth` must not be required — forgetting it would 403 the console.
+    expect(js).toContain("if (auth.token) headers.Authorization = 'Bearer ' + auth.token");
+    expect(js).not.toContain('if (opts.auth && auth.token)');
   });
 
   it('keeps the operator token out of durable storage', () => {
@@ -226,5 +244,36 @@ describe('operator console', () => {
 
   it('is reachable from the landing page', () => {
     expect(read('index.html')).toContain('./console.html');
+  });
+
+  /**
+   * The site and API are different Render services. Defaulting to
+   * `window.location.origin` fetches `/readiness/company` from the static
+   * host, which answers HTTP 404 — the exact operator-visible failure.
+   * `?api=` must not persist an untrusted host (that would send the operator
+   * token elsewhere).
+   */
+  describe('API base', () => {
+    const DEPLOYED_API = 'https://foundry-api-8ih0.onrender.com';
+    const config = read('assets/console-config.js');
+    const resolveFn = js.slice(js.indexOf('function resolveApiBase'), js.indexOf('var API ='));
+
+    it('bakes the deployed API origin so the console does not need ?api=', () => {
+      expect(config).toContain(`window.YELLOFIELD_API_BASE = '${DEPLOYED_API}'`);
+      expect(html).toContain(`data-api="${DEPLOYED_API}"`);
+      expect(js).toContain(DEPLOYED_API);
+      expect(resolveFn).not.toMatch(/return window\.location\.origin/);
+    });
+
+    it('persists ?api= only when the origin is the known API host', () => {
+      expect(resolveFn).toContain("localStorage.setItem('yf.apiBase'");
+      expect(resolveFn).not.toContain("localStorage.setItem('yf.apiBase', fromQuery)");
+      expect(resolveFn).toMatch(/isAllowedApiBase|ALLOWED_API/);
+    });
+
+    it('still loads console-config.js before console.js', () => {
+      const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1] ?? '');
+      expect(scripts).toEqual(['./assets/console-config.js', './assets/console.js']);
+    });
   });
 });

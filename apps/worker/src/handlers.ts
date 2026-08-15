@@ -19,11 +19,12 @@
  *    that sentinel so a single cron can operate the whole deployment.
  */
 
-import { AssetKind, CredentialsMissingError, CapabilityUnsupportedError, QaRunKind, VendorApprovalRequiredError, describeError, type ProviderId } from '@foundry/core';
+import { AssetKind, CredentialsMissingError, CapabilityUnsupportedError, QaRunKind, VendorApprovalRequiredError, describeError } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import type { HandlerMap, QueueName } from '@foundry/queue';
 import type { AppContext } from '@foundry/runtime';
 import type { Services } from '@foundry/runtime';
+import { resolveUnitContributionMinor } from '@foundry/services';
 
 const SCHEDULED = 'SCHEDULED';
 
@@ -32,6 +33,39 @@ interface BlockedResult {
   readonly status: 'blocked';
   readonly reason: string;
   readonly capability?: string;
+}
+
+function contributionUnknown(): BlockedResult {
+  return {
+    status: 'blocked',
+    reason:
+      'unit contribution is unknown; refusing to decide arms with a zero or invented contribution',
+    capability: 'ads.campaign_manage',
+  };
+}
+
+/** Looks up a refund by its provider id (`re_*`), never by treating it as a payment id. */
+export async function refundLedgerLookup(
+  repos: {
+    commerce: {
+      payments: {
+        refundByExternalId: (
+          provider: string,
+          externalId: string,
+        ) => Promise<{ external_id: string; amount_minor: number; currency: string } | undefined>;
+      };
+    };
+  },
+  provider: string,
+  refundExternalId: string,
+): Promise<{ refundExternalId: string; refundAmountMinor: number; currency: string } | undefined> {
+  const refund = await repos.commerce.payments.refundByExternalId(provider, refundExternalId);
+  if (!refund) return undefined;
+  return {
+    refundExternalId: refund.external_id,
+    refundAmountMinor: refund.amount_minor,
+    currency: refund.currency,
+  };
 }
 
 /**
@@ -99,11 +133,11 @@ export function buildHandlers(ctx: AppContext, services: Services): HandlerMap {
       const ids = await companyIds(payload.companyId);
       const ticks = [];
       for (const companyId of ids) {
-        const tick = await services.loop.tick(companyId);
+        const tick = await services.loop.tick(companyId, { forcePhase: payload.forcePhase });
         log.info({ companyId, ...tick }, 'loop tick');
         ticks.push({ companyId, ...tick });
       }
-      return { ticks, reaped, forcePhaseIgnored: payload.forcePhase };
+      return { ticks, reaped };
     },
 
     /* ------------------------------------------------------------------ */
@@ -297,15 +331,15 @@ export function buildHandlers(ctx: AppContext, services: Services): HandlerMap {
       }
       if (payload.scope === 'refund' && payload.orderId && payload.refundExternalId) {
         const order = await ctx.repos.commerce.orders.byId(payload.orderId);
-        const refund = await ctx.repos.commerce.payments.byExternalId('stripe', payload.refundExternalId);
+        const refund = await refundLedgerLookup(ctx.repos, 'stripe', payload.refundExternalId);
         if (!refund) {
           return { posted: false, reason: `no refund record for ${payload.refundExternalId}` };
         }
         return services.ledger.postRefund({
           companyId: order.company_id,
           orderId: order.id,
-          refundExternalId: refund.external_id,
-          refundAmountMinor: refund.amount_minor,
+          refundExternalId: refund.refundExternalId,
+          refundAmountMinor: refund.refundAmountMinor,
           taxRefundedMinor: 0,
           feeRetainedMinor: 0,
           currency: refund.currency,
@@ -354,22 +388,44 @@ export function buildHandlers(ctx: AppContext, services: Services): HandlerMap {
     'marketing.decide': async (payload) =>
       tolerateMissingCapability(async () => {
         if (payload.experimentId) {
+          const experiment = await ctx.repos.growth.experiments.byId(payload.experimentId);
+          const unitContributionMinor = await resolveUnitContributionMinor(
+            services.deps,
+            experiment.company_id,
+          );
+          if (unitContributionMinor == null) {
+            return contributionUnknown();
+          }
           return services.experiments.decideArms({
             experimentId: payload.experimentId,
-            unitContributionMinor: 0,
+            unitContributionMinor,
           });
         }
         const results = [];
         for (const companyId of await companyIds(payload.companyId)) {
+          const unitContributionMinor = await resolveUnitContributionMinor(services.deps, companyId);
+          if (unitContributionMinor == null) {
+            results.push({ companyId, ...contributionUnknown() });
+            continue;
+          }
           const running = await ctx.repos.growth.experiments.listRunning(companyId);
           for (const experiment of running) {
             results.push(
               await services.experiments.decideArms({
                 experimentId: experiment.id,
-                unitContributionMinor: 0,
+                unitContributionMinor,
               }),
             );
           }
+        }
+        return { results };
+      }),
+
+    'marketing.outreach': async (payload) =>
+      tolerateMissingCapability(async () => {
+        const results = [];
+        for (const companyId of await companyIds(payload.companyId)) {
+          results.push(await services.outreach.reachOut({ companyId }));
         }
         return { results };
       }),
@@ -406,29 +462,9 @@ export function buildHandlers(ctx: AppContext, services: Services): HandlerMap {
     /* Platform                                                            */
     /* ------------------------------------------------------------------ */
 
-    'verification.probe': async (payload) => {
-      const only =
-        payload.providers.length > 0 ? (payload.providers as ProviderId[]) : undefined;
-      const results = await ctx.providers.probeAll(only);
-      for (const row of results) {
-        await ctx.repos.verifications.record({
-          provider: row.provider,
-          capability: row.capability,
-          succeeded: row.succeeded,
-          detail: row.detail,
-          evidence: { ...row.evidence },
-          environment: ctx.config.environment,
-          checkedAt: row.checkedAt,
-        });
-      }
-      return {
-        probed: results.length,
-        succeeded: results.filter((row) => row.succeeded).map((row) => row.provider),
-        failed: results.filter((row) => !row.succeeded).map((row) => ({
-          provider: row.provider,
-          detail: row.detail,
-        })),
-      };
+    'verification.probe': async () => {
+      log.info('verification.probe skipped — verifier is the sole writer of integration_verifications');
+      return { skipped: true, reason: 'verifier is the sole writer' };
     },
 
     'maintenance.retention': async (payload) => {

@@ -10,8 +10,10 @@ import {
   AGE_MIN,
   AgeRange,
   MetricSnapshot,
+  ValidationError,
   decideArm,
   evaluateStopConditions,
+  summariseReview,
 } from '@foundry/core';
 
 function snapshot(overrides: Record<string, unknown> = {}) {
@@ -43,7 +45,52 @@ describe('AgeRange', () => {
   });
 });
 
+function expertSubmission(
+  recommendation: 'approve' | 'approve_with_changes' | 'reject',
+  id: string,
+) {
+  return {
+    externalSubmissionId: id,
+    expertRef: `expert_${id}`,
+    attestations: [],
+    scores: { claim_accuracy: recommendation === 'reject' ? 1 : 4 },
+    critique: recommendation === 'reject' ? 'This creative violates ad policy.' : 'Acceptable creative.',
+    recommendation,
+    suggestedChanges: [],
+    submittedAt: '2026-08-15T12:00:00.000Z',
+    approved: true,
+  };
+}
+
+describe('summariseReview', () => {
+  it('a single reject from a paid expert blocks spend even when the majority approve', () => {
+    const result = summariseReview([
+      expertSubmission('approve', 'a'),
+      expertSubmission('approve', 'b'),
+      expertSubmission('reject', 'c'),
+    ]);
+    expect(result.verdict).toBe('rejected');
+  });
+});
+
 describe('decideArm', () => {
+  it('refuses a non-positive unit contribution rather than treating zero as one minor unit', () => {
+    expect(() =>
+      decideArm({
+        armId: 'arm_1',
+        snapshot: snapshot({ impressions: 5000, spendMinor: 3000 }),
+        unitContributionMinor: 0,
+      }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      decideArm({
+        armId: 'arm_1',
+        snapshot: snapshot({ impressions: 5000 }),
+        unitContributionMinor: -1,
+      }),
+    ).toThrow(/contribution/i);
+  });
+
   it('holds until there are enough impressions', () => {
     const decision = decideArm({
       armId: 'arm_1',

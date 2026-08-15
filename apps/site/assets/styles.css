@@ -320,6 +320,14 @@ h3 {
   background: var(--text-3);
 }
 
+.sq-blocked {
+  background: #ff9f0a;
+}
+
+.sq-fail {
+  background: #ff453a;
+}
+
 /* ---------------------------------------------------------------------------
    Nav — the one place glass is used prominently
 --------------------------------------------------------------------------- */

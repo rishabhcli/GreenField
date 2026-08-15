@@ -7,8 +7,7 @@ Live surfaces:
 
 - Landing + pricing — https://foundry-site-ye1g.onrender.com/#pricing
 - Operator console — https://foundry-site-ye1g.onrender.com/console.html
-- Checkout — one customer-chooses-price Stripe Payment Link, tier tagged via
-  `client_reference_id` and confirmed by signed webhook.
+- Checkout — fixed catalogue prices ($25 / $99 / $299). Founding access reuses the submitted Stripe Payment Link pinned to $99; other SKUs open a Checkout Session. Customers cannot type an amount. Attribution is `client_reference_id` and confirmed by signed webhook.
 
 Ladder to $1,000: 10 × $99, or 4 × $299, or any mix. Backer tier exists to
 convert people who won't spend $99 but will spend $25.

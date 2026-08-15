@@ -49,7 +49,8 @@ export async function registerReadinessRoutes(app: FastifyInstance, ctx: AppCont
    * business loop needs is genuinely usable. A partially configured system says
    * so, in detail, rather than rounding up to "ready".
    */
-  app.get('/readiness/capabilities', async () => {
+  app.get('/readiness/capabilities', async (request) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const statuses = ctx.capabilities.allCapabilityStatuses();
     const summary = ctx.capabilities.summary();
 
@@ -83,7 +84,8 @@ export async function registerReadinessRoutes(app: FastifyInstance, ctx: AppCont
   });
 
   /** Per-provider view, including which env vars are missing. */
-  app.get('/readiness/providers', async () => {
+  app.get('/readiness/providers', async (request) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const manifests = ctx.capabilities.allManifests();
     return {
       providers: manifests.map((m) => {
@@ -114,7 +116,8 @@ export async function registerReadinessRoutes(app: FastifyInstance, ctx: AppCont
    * Every environment variable the system can consume, and whether it is set.
    * Values are never returned — only presence and mode.
    */
-  app.get('/readiness/secrets', async () => {
+  app.get('/readiness/secrets', async (request) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const specs = allSecretSpecs();
     const resolution = ctx.secrets.resolve(specs);
     return {
@@ -138,7 +141,8 @@ export async function registerReadinessRoutes(app: FastifyInstance, ctx: AppCont
    * The company's operating state: what stage it is in, what the loop is doing,
    * and what is blocking it.
    */
-  app.get('/readiness/company', async () => {
+  app.get('/readiness/company', async (request) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const company = await ctx.repos.companies.first();
     if (!company) {
       return {
