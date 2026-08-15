@@ -187,7 +187,11 @@ function externalIds(data: Record<string, unknown>): Record<string, string> {
   const dispute = refId(data, 'dispute_id');
   const checkout = refId(data, 'checkout_session_id', 'session_id');
   if (payment) ids['payment_id'] = payment;
-  if (refund) ids['refund_id'] = refund;
+  if (refund) {
+    ids['refund_id'] = refund;
+    // Shared webhook/ledger lookup key. Must be the refund id, never payment_id.
+    ids['refund'] = refund;
+  }
   if (dispute) ids['dispute_id'] = dispute;
   if (checkout) ids['checkout_session_id'] = checkout;
   const metadata = data['metadata'];
@@ -207,4 +211,19 @@ function externalIds(data: Record<string, unknown>): Record<string, string> {
 function currencyOf(data: Record<string, unknown>): string | undefined {
   const c = data['currency'] ?? data['settlement_currency'];
   return typeof c === 'string' ? c.toUpperCase() : undefined;
+}
+
+/**
+ * Ledger lookup for a Dodo refund. Always the provider refund id (`re_*` /
+ * `refund_id`). A payment id is not a refund id — using it would book the
+ * reversal against the capture row.
+ */
+export function dodoRefundLedgerId(
+  externalIds: Readonly<Record<string, string>>,
+): string | undefined {
+  const refundId = externalIds['refund_id'] ?? externalIds['refund'];
+  if (!refundId) return undefined;
+  const paymentId = externalIds['payment_id'];
+  if (paymentId && refundId === paymentId) return undefined;
+  return refundId;
 }

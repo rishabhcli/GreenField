@@ -18,7 +18,7 @@ import { describeError, serviceNameFromEnv } from '@foundry/core';
 import { getLogger, metrics, withContext } from '@foundry/obs';
 import { buildContext, bootstrapOperatingCompany, wireRuntime, type AppContext } from '@foundry/runtime';
 import { registerErrorHandler } from './errors.js';
-import { corsAllowsOrigin, isWebhookPath } from './http-policy.js';
+import { corsAllowsOrigin, isWebhookPath, resolveRequestId } from './http-policy.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 import { registerReadinessRoutes } from './routes/readiness.js';
 import { registerGovernanceRoutes } from './routes/governance.js';
@@ -105,10 +105,10 @@ async function main(): Promise<void> {
   /* ---------------------------------------------------------------------- */
 
   app.addHook('onRequest', (request, _reply, done) => {
-    const traceId =
-      (request.headers['x-request-id'] as string | undefined) ??
-      (request.headers['x-render-request-id'] as string | undefined) ??
-      `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const traceId = resolveRequestId(
+      request.headers,
+      () => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+    );
     (request as { traceId?: string }).traceId = traceId;
     (request as { startedAt?: number }).startedAt = Date.now();
     withContext({ traceId, route: request.routeOptions?.url ?? request.url }, () => done());

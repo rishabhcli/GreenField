@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import type { Authority } from './governance.js';
+import { HUMAN_ONLY_AUTHORITIES, type Authority } from './governance.js';
 import type { Capability } from '../capability.js';
 
 export const ModelTier = z.enum(['executive', 'manager', 'specialist', 'fast']);
@@ -269,7 +269,7 @@ const MANAGERS: readonly RoleDefinition[] = [
       'order persistence and state transitions',
       'production deployment record with rollback target',
     ],
-    ['site.deploy_preview', 'site.deploy_production', 'payments.configure'],
+    ['site.deploy_preview', 'site.deploy_production', 'payments.configure', 'messaging.send_marketing'],
     ['site.generate', 'site.iterate', 'platform.hosting', 'platform.deploy_control', 'payments.checkout.physical'],
     [
       'site.create_spec',
@@ -280,6 +280,7 @@ const MANAGERS: readonly RoleDefinition[] = [
       'commerce.create_product',
       'commerce.configure_checkout',
       'commerce.collect_payment',
+      'linq.send_link',
       'qa.request_gate',
     ],
     200_00,
@@ -314,6 +315,8 @@ const MANAGERS: readonly RoleDefinition[] = [
       'marketing.scale_arm',
       'marketing.collect_metrics',
       'finance.compute_contribution',
+      'linq.send_link',
+      'linq.outreach',
     ],
     300_00,
   ),
@@ -331,7 +334,7 @@ const MANAGERS: readonly RoleDefinition[] = [
       'escalation packets for sensitive cases',
       'product feedback routed back to sourcing and brand',
     ],
-    ['messaging.send_customer', 'payments.refund'],
+    ['messaging.send_customer', 'payments.refund', 'payments.configure'],
     ['messaging.sms', 'messaging.inbound_webhook'],
     [
       'support.list_tickets',
@@ -760,7 +763,67 @@ export function validateOrgChart(): readonly string[] {
   }
   const ceos = ORG_CHART.filter((r) => r.tier === 'executive');
   if (ceos.length !== 1) problems.push(`expected exactly one executive role, found ${ceos.length}`);
+  for (const role of ORG_CHART) {
+    for (const authority of role.authorities) {
+      if (HUMAN_ONLY_AUTHORITIES.has(authority)) {
+        problems.push(`role "${role.key}" holds human-only authority "${authority}"`);
+      }
+    }
+  }
   return problems;
+}
+
+/* -------------------------------------------------------------------------- */
+/* BAND channels — permissioned lanes inside the one company room              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * PLAN §2 task-scoped channels. These are permission labels on the existing
+ * Zero Human Co coordination room, not a reason to open decorative extra chats.
+ */
+export const BAND_CHANNELS = [
+  'discovery',
+  'sourcing',
+  'marketing',
+  'support',
+  'engineering',
+  'finance',
+  'qa',
+  'incidents',
+] as const;
+export type BandChannel = (typeof BAND_CHANNELS)[number];
+
+const CHANNEL_BY_FUNCTION: Readonly<Record<OrgFunction, BandChannel>> = {
+  executive: 'incidents',
+  research: 'discovery',
+  sourcing: 'sourcing',
+  brand: 'marketing',
+  commerce: 'marketing',
+  growth: 'marketing',
+  customer_ops: 'support',
+  finance: 'finance',
+  engineering: 'engineering',
+  qa: 'qa',
+  legal: 'incidents',
+};
+
+export function bandChannelForRole(role: RoleDefinition): BandChannel {
+  return CHANNEL_BY_FUNCTION[role.func];
+}
+
+/**
+ * Who may post a handoff into a channel. The CEO and the operating system may
+ * address every lane. Everyone may escalate into incidents. A functional role
+ * may not silently assume another function's channel.
+ */
+export function roleMayPostToBandChannel(
+  from: RoleDefinition | 'system',
+  channel: BandChannel,
+): boolean {
+  if (from === 'system') return true;
+  if (from.tier === 'executive') return true;
+  if (channel === 'incidents') return true;
+  return bandChannelForRole(from) === channel;
 }
 
 /* -------------------------------------------------------------------------- */

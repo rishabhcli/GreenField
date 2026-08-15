@@ -37,6 +37,13 @@ import {
   refId,
 } from './schemas.js';
 import { mapStripeEventToOrderTransition, type MappingResult } from './events.js';
+import {
+  HACKATHON_OFFER_PRICE_MINOR,
+  paymentLinkAllowsCustomAmount,
+  paymentLinkFixedAmountMinor,
+  stripeCataloguePriceData,
+  stripeFixedAmountShippingRate,
+} from './fixed-amount.js';
 
 /**
  * Pinned explicitly rather than inherited from the SDK version.
@@ -49,8 +56,9 @@ import { mapStripeEventToOrderTransition, type MappingResult } from './events.js
 export const STRIPE_API_VERSION = '2026-07-29.dahlia' as Stripe.LatestApiVersion;
 
 /**
- * The single Payment Link submitted to hackathon organizers (customer chooses
- * price). Reuse this id/url; minting a second link drops organizer tracking.
+ * The single Payment Link submitted to hackathon organizers. Reuse this
+ * id/url; minting a second link drops organizer tracking. The link must
+ * charge a catalogue unit amount — never a customer-typed price.
  * Organizers get a read-only `rk_` key, never `sk_`.
  */
 export const HACKATHON_PAYMENT_LINK_ID = 'plink_1U4lK242nB81EBguRPuIHrxS';
@@ -168,6 +176,11 @@ export class StripeAdapter extends ProviderAdapter {
     if (input.lineItems.length === 0) {
       throw new ValidationError('A checkout session needs at least one line item', { orderId: input.orderId });
     }
+    if (input.lineItems.some((li) => li.unitPriceMinor <= 0 || li.quantity <= 0)) {
+      throw new ValidationError('Checkout line items must have a positive catalogue unit price and quantity', {
+        orderId: input.orderId,
+      });
+    }
     if (input.allowedShippingCountries.length === 0) {
       throw new ValidationError(
         'Physical-goods checkout must declare the countries it ships to; Stripe requires allowed_countries when collecting a shipping address',
@@ -193,17 +206,15 @@ export class StripeAdapter extends ProviderAdapter {
       cancel_url: input.cancelUrl,
       line_items: input.lineItems.map((li) => ({
         quantity: li.quantity,
-        price_data: {
-          currency: input.currency.toLowerCase(),
-          unit_amount: li.unitPriceMinor,
-          product_data: {
-            name: li.name,
-            ...(li.description ? { description: li.description } : {}),
-            ...(li.imageUrl ? { images: [li.imageUrl] } : {}),
-            metadata: { internal_product_id: li.productId },
-          },
-          ...(li.taxCode ? { tax_behavior: 'exclusive' as const } : {}),
-        },
+        price_data: stripeCataloguePriceData({
+          currency: input.currency,
+          unitAmountMinor: li.unitPriceMinor,
+          name: li.name,
+          ...(li.description ? { description: li.description } : {}),
+          ...(li.imageUrl ? { imageUrl: li.imageUrl } : {}),
+          productId: li.productId,
+          ...(li.taxCode ? { taxCode: li.taxCode } : {}),
+        }),
       })),
       shipping_address_collection: {
         allowed_countries: input.allowedShippingCountries as Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[],
@@ -228,22 +239,17 @@ export class StripeAdapter extends ProviderAdapter {
           count: input.shippingOptions.length,
         });
       }
-      params.shipping_options = input.shippingOptions.map((option) => ({
-        shipping_rate_data: {
-          type: 'fixed_amount',
-          display_name: option.displayName,
-          fixed_amount: { amount: option.amountMinor, currency: input.currency.toLowerCase() },
-          delivery_estimate: {
-            minimum: { unit: 'business_day', value: option.minBusinessDays },
-            maximum: { unit: 'business_day', value: option.maxBusinessDays },
-          },
-          // Shipping taxability differs by jurisdiction, so the shipping rate
-          // carries its own tax code rather than inheriting the product's.
-          ...(input.automaticTax
-            ? { tax_behavior: 'exclusive' as const, tax_code: option.taxCode ?? 'txcd_92010001' }
-            : {}),
-        },
-      }));
+      params.shipping_options = input.shippingOptions.map((option) =>
+        stripeFixedAmountShippingRate({
+          displayName: option.displayName,
+          amountMinor: option.amountMinor,
+          currency: input.currency,
+          minBusinessDays: option.minBusinessDays,
+          maxBusinessDays: option.maxBusinessDays,
+          ...(option.taxCode ? { taxCode: option.taxCode } : {}),
+          ...(input.automaticTax ? { automaticTax: true } : {}),
+        }),
+      );
     }
 
     const raw = await this.#call('checkout.sessions.create', () =>
@@ -394,6 +400,27 @@ export class StripeAdapter extends ProviderAdapter {
     return StripeRefund.parse(raw);
   }
 
+  /**
+   * RefundService facade. Maps onto `createRefund` and returns the unified
+   * `{ refundId, status, amountMinor }` shape. Amount is Stripe's, never a caller guess.
+   */
+  async refund(input: {
+    paymentExternalId: string;
+    amountMinor: number;
+    reason: string;
+    idempotencyKey: string;
+  }): Promise<{ refundId: string; status: string; amountMinor: number }> {
+    const stripeReason = asStripeRefundReason(input.reason);
+    const created = await this.createRefund({
+      paymentIntentId: input.paymentExternalId,
+      amountMinor: input.amountMinor,
+      ...(stripeReason ? { reason: stripeReason } : {}),
+      metadata: { reason: input.reason.slice(0, 500) },
+      idempotencyKey: input.idempotencyKey,
+    });
+    return mapStripeRefundToFacade(created);
+  }
+
   async listDisputes(limit = 50): Promise<readonly StripeDispute[]> {
     this.assertActivated();
     const raw = await this.#call('disputes.list', () => this.#stripe().disputes.list({ limit }));
@@ -512,6 +539,25 @@ export class StripeAdapter extends ProviderAdapter {
     return out;
   }
 
+  /**
+   * Reconciliation facade over `listChargesSince`. Prefers the PaymentIntent id
+   * so a local `payments` row keyed on `pi_*` matches Stripe's charge list.
+   */
+  async listPayments(input: { since: Date; limit?: number }): Promise<
+    readonly {
+      externalId: string;
+      amountMinor: number;
+      currency: string;
+      status: string;
+      feeMinor: number | null;
+      netMinor: number | null;
+    }[]
+  > {
+    const charges = await this.listChargesSince(input.since);
+    const mapped = charges.map(listedPaymentFromStripeCharge);
+    return input.limit !== undefined ? mapped.slice(0, input.limit) : mapped;
+  }
+
   /* ---------------------------------------------------------------------- */
   /* Payment Links (hackathon organizer-tracked collection)                  */
   /* ---------------------------------------------------------------------- */
@@ -538,13 +584,16 @@ export class StripeAdapter extends ProviderAdapter {
 
   async retrievePaymentLink(id: string): Promise<StripePaymentLink> {
     this.assertActivated();
-    const raw = await this.#call('paymentLinks.retrieve', () => this.#stripe().paymentLinks.retrieve(id));
+    const raw = await this.#call('paymentLinks.retrieve', () =>
+      this.#stripe().paymentLinks.retrieve(id, { expand: ['line_items.data.price'] }),
+    );
     return StripePaymentLink.parse(raw);
   }
 
   /**
-   * Confirms the submitted hackathon Payment Link still exists and is active.
-   * Retrieves by the submitted id rather than minting a second link.
+   * Confirms the submitted hackathon Payment Link still exists, is active, and
+   * charges a fixed catalogue amount. Retrieves by the submitted id rather
+   * than minting a second link.
    */
   async resolveHackathonPaymentLink(): Promise<StripePaymentLink> {
     return this.#retrieveSubmittedPaymentLink();
@@ -553,6 +602,11 @@ export class StripeAdapter extends ProviderAdapter {
   /**
    * Reuses the submitted Payment Link. Never calls `paymentLinks.create` while
    * `plink_1U4lK242nB81EBguRPuIHrxS` is the organizer-tracked collection URL.
+   *
+   * Stripe does not let `paymentLinks.update` replace line-item Prices — only
+   * quantity on an existing line item id. A custom-amount link must be pinned
+   * to a catalogue Price in the Stripe Dashboard. This method retrieves and
+   * refuses if the customer can still type an amount.
    */
   async createPaymentLink(input: {
     readonly priceId: string;
@@ -566,7 +620,7 @@ export class StripeAdapter extends ProviderAdapter {
   async #retrieveSubmittedPaymentLink(): Promise<StripePaymentLink> {
     this.assertActivated();
     const raw = await this.#call('paymentLinks.retrieve', () =>
-      this.#stripe().paymentLinks.retrieve(HACKATHON_PAYMENT_LINK_ID),
+      this.#stripe().paymentLinks.retrieve(HACKATHON_PAYMENT_LINK_ID, { expand: ['line_items.data.price'] }),
     );
     const link = StripePaymentLink.parse(raw);
     if (link.active === false) {
@@ -580,6 +634,19 @@ export class StripeAdapter extends ProviderAdapter {
         'stripe',
         `Payment Link ${HACKATHON_PAYMENT_LINK_ID} URL does not match the submitted organizer URL`,
         { paymentLinkId: HACKATHON_PAYMENT_LINK_ID },
+      );
+    }
+    if (paymentLinkAllowsCustomAmount(link)) {
+      throw new ValidationError(
+        `Hackathon Payment Link ${HACKATHON_PAYMENT_LINK_ID} still allows a customer-typed amount. Pin it to a catalogue Price (unit_amount ${HACKATHON_OFFER_PRICE_MINOR}) rather than minting a second link.`,
+        { paymentLinkId: HACKATHON_PAYMENT_LINK_ID },
+      );
+    }
+    const amount = paymentLinkFixedAmountMinor(link);
+    if (amount !== null && amount !== HACKATHON_OFFER_PRICE_MINOR) {
+      getLogger().warn(
+        { paymentLinkId: HACKATHON_PAYMENT_LINK_ID, amountMinor: amount, expected: HACKATHON_OFFER_PRICE_MINOR },
+        'hackathon Payment Link unit amount does not match the catalogue founding price',
       );
     }
     return link;
@@ -727,7 +794,57 @@ function truncateMetadata(input: Record<string, string>): Record<string, string>
   return out;
 }
 
-export { mapStripeEventToOrderTransition, HANDLED_STRIPE_EVENTS } from './events.js';
+export { mapStripeEventToOrderTransition, HANDLED_STRIPE_EVENTS, shippingAddressFromStripe } from './events.js';
 export type { MappingResult, OrderTransitionIntent } from './events.js';
 export * from './schemas.js';
+export {
+  HACKATHON_OFFER_PRICE_MINOR,
+  HACKATHON_OFFER_CURRENCY,
+  paymentLinkAllowsCustomAmount,
+  paymentLinkFixedAmountMinor,
+  stripeCataloguePriceData,
+  stripeFixedAmountShippingRate,
+} from './fixed-amount.js';
 export { Money, CredentialsMissingError };
+
+const STRIPE_REFUND_REASONS = ['duplicate', 'fraudulent', 'requested_by_customer'] as const;
+
+function asStripeRefundReason(
+  reason: string,
+): (typeof STRIPE_REFUND_REASONS)[number] | undefined {
+  return (STRIPE_REFUND_REASONS as readonly string[]).includes(reason)
+    ? (reason as (typeof STRIPE_REFUND_REASONS)[number])
+    : undefined;
+}
+
+export function mapStripeRefundToFacade(refund: StripeRefund): {
+  refundId: string;
+  status: string;
+  amountMinor: number;
+} {
+  return {
+    refundId: refund.id,
+    status: refund.status ?? 'pending',
+    amountMinor: refund.amount,
+  };
+}
+
+export function listedPaymentFromStripeCharge(charge: StripeCharge): {
+  externalId: string;
+  amountMinor: number;
+  currency: string;
+  status: string;
+  feeMinor: number | null;
+  netMinor: number | null;
+} {
+  const bt = charge.balance_transaction;
+  const settled = bt && typeof bt === 'object' ? bt : null;
+  return {
+    externalId: refId(charge.payment_intent) ?? charge.id,
+    amountMinor: charge.amount,
+    currency: charge.currency,
+    status: charge.status,
+    feeMinor: settled?.fee ?? null,
+    netMinor: settled?.net ?? null,
+  };
+}

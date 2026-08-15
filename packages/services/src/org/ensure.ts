@@ -9,7 +9,7 @@ import { CompanyConfig, ConflictError, describeError } from '@foundry/core';
 import type { Repositories } from '@foundry/db';
 import type { QueueSet } from '@foundry/queue';
 import { getLogger } from '@foundry/obs';
-import { defaultHackathonCompanyConfig, HACKATHON_COMPANY } from './default-config.js';
+import { defaultHackathonCompanyConfig, HACKATHON_CATALOG, HACKATHON_COMPANY } from './default-config.js';
 import { seedOrgActors } from './seed.js';
 
 /** POST /api/companies is create-once; boot uses `ensureOperatingCompany` instead. */
@@ -50,10 +50,11 @@ export async function ensureOperatingCompany(
   if (existing) {
     const currency = safeCurrency(existing);
     const actorsSeeded = await seedOrgActors(input.repos, existing.id, currency);
+    const catalogSeeded = await seedHackathonCatalog(input.repos, existing.id);
     const cycle = await input.repos.loop.currentOrStart(existing.id);
     const queued = await enqueueFirstTick(input.queues, existing.id, cycle.id);
     log.info(
-      { companyId: existing.id, cycleId: cycle.id, created: false, actorsSeeded },
+      { companyId: existing.id, cycleId: cycle.id, created: false, actorsSeeded, catalogSeeded },
       'operating company already present',
     );
     return {
@@ -78,10 +79,11 @@ export async function ensureOperatingCompany(
     config,
   });
   const actorsSeeded = await seedOrgActors(input.repos, company.id, config.commerce.baseCurrency);
+  const catalogSeeded = await seedHackathonCatalog(input.repos, company.id);
   const cycle = await input.repos.loop.currentOrStart(company.id);
   const queued = await enqueueFirstTick(input.queues, company.id, cycle.id);
   log.info(
-    { companyId: company.id, cycleId: cycle.id, created: true, actorsSeeded, loopJobId: queued.loopJobId },
+    { companyId: company.id, cycleId: cycle.id, created: true, actorsSeeded, catalogSeeded, loopJobId: queued.loopJobId },
     'operating company created',
   );
   return {
@@ -100,6 +102,29 @@ export async function ensureOperatingCompany(
 function safeCurrency(row: { readonly config: unknown }): string {
   const parsed = CompanyConfig.safeParse(row.config);
   return parsed.success ? parsed.data.commerce.baseCurrency : 'USD';
+}
+
+async function seedHackathonCatalog(
+  repos: Repositories,
+  companyId: string,
+): Promise<number> {
+  let created = 0;
+  for (const offer of HACKATHON_CATALOG) {
+    const existing = await repos.commerce.products.bySku(companyId, offer.sku);
+    if (existing) continue;
+    await repos.commerce.products.create({
+      companyId,
+      sku: offer.sku,
+      name: offer.name,
+      kind: offer.kind,
+      description: offer.description,
+      paymentRoute: offer.paymentRoute,
+      priceMinor: offer.priceMinor,
+      currency: offer.currency,
+    });
+    created += 1;
+  }
+  return created;
 }
 
 async function enqueueFirstTick(

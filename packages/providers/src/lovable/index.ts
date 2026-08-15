@@ -17,6 +17,7 @@ import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/
 import { verifyLovableSignature, type VerificationInput, type VerificationResult } from '../http/webhook-verify.js';
 import { LOVABLE_MANIFEST, SECRETS } from '../manifests.js';
 import { LovableMcpClient } from './mcp-client.js';
+import { extractList, projectIdOf } from './schemas.js';
 
 export { LovableMcpClient, parseMcpBody, buildToolsCall, parseSseJsonRpc, LOVABLE_MCP_ENDPOINT } from './mcp-client.js';
 
@@ -28,15 +29,21 @@ export interface LovableProject {
 export class LovableAdapter extends ProviderAdapter {
   override readonly manifest = LOVABLE_MANIFEST;
   #mcp: LovableMcpClient | undefined;
+  readonly #fetchImpl: typeof fetch | undefined;
 
-  constructor(ctx: AdapterContext) {
+  constructor(ctx: AdapterContext, overrides?: { readonly fetchImpl?: typeof fetch }) {
     super(ctx);
+    this.#fetchImpl = overrides?.fetchImpl;
   }
 
   #client(): LovableMcpClient {
     if (!this.#mcp) {
       const token = this.requireSecret(SECRETS.lovableOauthToken);
-      this.#mcp = new LovableMcpClient(this.baseUrl(), token.reveal());
+      this.#mcp = new LovableMcpClient({
+        accessToken: token,
+        fetchImpl: this.#fetchImpl,
+        endpoint: this.baseUrl(),
+      });
     }
     return this.#mcp;
   }
@@ -63,6 +70,7 @@ export class LovableAdapter extends ProviderAdapter {
     initialMessage?: string;
     workspaceId?: string;
     idempotencyKey?: string;
+    wait?: boolean;
   }): Promise<LovableProject> {
     this.assertActivated();
     const prompt = input.prompt ?? input.initialMessage;
@@ -73,6 +81,7 @@ export class LovableAdapter extends ProviderAdapter {
       initial_message: prompt,
       ...(input.name ? { name: input.name } : {}),
       ...(input.workspaceId ? { workspace_id: input.workspaceId } : {}),
+      ...(input.wait !== undefined ? { wait: input.wait } : {}),
     });
     this.#throwIfToolError('create_project', result.isError, result.content);
     const projectId = extractId(result.content);
@@ -84,23 +93,46 @@ export class LovableAdapter extends ProviderAdapter {
     return { projectId, raw: result.content };
   }
 
-  async sendMessage(projectId: string, text: string): Promise<unknown> {
+  async sendMessage(
+    projectIdOrInput: string | { projectId?: string; project_id?: string; message?: string; text?: string; wait?: boolean },
+    text?: string,
+  ): Promise<unknown> {
     this.assertActivated();
-    const result = await this.#client().callTool('send_message', { project_id: projectId, message: text, text });
+    const projectId =
+      typeof projectIdOrInput === 'string'
+        ? projectIdOrInput
+        : (projectIdOrInput.projectId ?? projectIdOrInput.project_id);
+    const message =
+      typeof projectIdOrInput === 'string'
+        ? (text ?? '')
+        : (projectIdOrInput.message ?? projectIdOrInput.text ?? text ?? '');
+    if (!projectId) {
+      throw new ProviderContractError('lovable', 'send_message requires project_id');
+    }
+    const result = await this.#client().callTool('send_message', {
+      project_id: projectId,
+      message,
+      ...(typeof projectIdOrInput === 'object' && projectIdOrInput.wait !== undefined
+        ? { wait: projectIdOrInput.wait }
+        : {}),
+    });
     this.#throwIfToolError('send_message', result.isError, result.content);
     return result.content;
   }
 
-  async listFiles(projectId: string): Promise<readonly string[]> {
+  async listFiles(projectId: string, ref?: string): Promise<readonly string[]> {
     this.assertActivated();
-    const result = await this.#client().callTool('list_files', { project_id: projectId });
+    const result = await this.#client().callTool('list_files', {
+      project_id: projectId,
+      ...(ref ? { ref } : {}),
+    });
     this.#throwIfToolError('list_files', result.isError, result.content);
     return extractFilePaths(result.content);
   }
 
-  async readFile(projectId: string, path: string): Promise<string> {
+  async readFile(projectId: string, path: string, ref = 'HEAD'): Promise<string> {
     this.assertActivated();
-    const result = await this.#client().callTool('read_file', { project_id: projectId, path });
+    const result = await this.#client().callTool('read_file', { project_id: projectId, path, ref });
     this.#throwIfToolError('read_file', result.isError, result.content);
     const text = extractText(result.content);
     if (text === null) {
@@ -137,43 +169,70 @@ function summarise(value: unknown): unknown {
 }
 
 function extractId(content: unknown): string | null {
-  if (!content || typeof content !== 'object') return null;
-  const record = content as Record<string, unknown>;
-  for (const key of ['project_id', 'projectId', 'id']) {
-    if (typeof record[key] === 'string') return record[key] as string;
-  }
-  if (Array.isArray(record['content'])) {
-    for (const block of record['content']) {
+  if (Array.isArray(content)) {
+    for (const block of content) {
       if (block && typeof block === 'object' && 'text' in block) {
         const found = extractId(tryParse((block as { text: unknown }).text));
         if (found) return found;
       }
     }
+    return null;
+  }
+  if (!content || typeof content !== 'object') return null;
+  const record = content as Record<string, unknown>;
+  const direct = projectIdOf(record);
+  if (direct) return direct;
+  if (Array.isArray(record['content'])) {
+    return extractId(record['content']);
   }
   return null;
 }
 
 function extractFilePaths(content: unknown): readonly string[] {
-  if (Array.isArray(content) && content.every((x) => typeof x === 'string')) return content;
-  if (content && typeof content === 'object' && Array.isArray((content as { files?: unknown }).files)) {
-    return ((content as { files: unknown[] }).files).filter((x): x is string => typeof x === 'string');
-  }
+  const listed = extractList(unwrapToolPayload(content));
+  const fromEntries = listed
+    .map((item) => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        if (typeof record.path === 'string' && record.path.length > 0) return record.path;
+        if (typeof record.name === 'string' && record.name.length > 0) return record.name;
+      }
+      return null;
+    })
+    .filter((path): path is string => typeof path === 'string');
+  if (fromEntries.length > 0) return fromEntries;
+
   const text = extractText(content);
   if (!text) return [];
   try {
-    const parsed = JSON.parse(text) as unknown;
-    return extractFilePaths(parsed);
+    return extractFilePaths(JSON.parse(text) as unknown);
   } catch {
-    return text.split('\n').map((l) => l.trim()).filter(Boolean);
+    return text.split('\n').map((line) => line.trim()).filter(Boolean);
+  }
+}
+
+function unwrapToolPayload(content: unknown): unknown {
+  const text = extractText(content);
+  if (!text) return content;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return content;
   }
 }
 
 function extractText(content: unknown): string | null {
   if (typeof content === 'string') return content;
-  if (content && typeof content === 'object' && Array.isArray((content as { content?: unknown }).content)) {
-    const parts = (content as { content: Array<{ text?: string }> }).content
-      .map((b) => b.text)
-      .filter((t): t is string => typeof t === 'string');
+  const blocks = Array.isArray(content)
+    ? content
+    : content && typeof content === 'object' && Array.isArray((content as { content?: unknown }).content)
+      ? (content as { content: unknown[] }).content
+      : null;
+  if (blocks) {
+    const parts = blocks
+      .map((block) => (block && typeof block === 'object' ? (block as { text?: string }).text : undefined))
+      .filter((text): text is string => typeof text === 'string');
     if (parts.length > 0) return parts.join('\n');
   }
   return null;

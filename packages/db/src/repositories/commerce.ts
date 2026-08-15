@@ -135,11 +135,27 @@ const PaymentRow = z.object({
   captured_at: z.date().nullable(),
 });
 
+const RefundRow = z.object({
+  id: z.string(),
+  company_id: z.string(),
+  order_id: z.string(),
+  payment_id: z.string(),
+  provider: z.string(),
+  external_id: z.string(),
+  amount_minor: z.number(),
+  currency: z.string(),
+  reason: z.string().nullable(),
+  status: z.string(),
+  authorised_by: z.string(),
+  approval_id: z.string().nullable(),
+});
+
 export type ProductRow = z.infer<typeof ProductRow>;
 export type CustomerRow = z.infer<typeof CustomerRow>;
 export type OrderRow = z.infer<typeof OrderRow>;
 export type LineItemRow = z.infer<typeof LineItemRow>;
 export type PaymentRow = z.infer<typeof PaymentRow>;
+export type RefundRow = z.infer<typeof RefundRow>;
 
 const ORDER_COLUMNS = `id, company_id, site_id, order_number, customer_id, status, payment_route, currency,
   subtotal_minor, shipping_minor, tax_minor, discount_minor, total_minor, amount_paid_minor,
@@ -806,6 +822,13 @@ export class OrderRepository {
     );
   }
 
+  async setShippingAddress(orderId: string, address: Address): Promise<void> {
+    await exec(this.pool, `UPDATE orders SET shipping_address = $2::jsonb WHERE id=$1`, [
+      orderId,
+      JSON.stringify(address),
+    ]);
+  }
+
   /**
    * Disputed share of paid orders over a trailing window, in basis points.
    *
@@ -912,6 +935,17 @@ export class PaymentRepository {
 
   async byExternalId(provider: string, externalId: string): Promise<PaymentRow | undefined> {
     return qMaybe(this.db, `SELECT ${PAYMENT_COLUMNS} FROM payments WHERE provider=$1 AND external_id=$2`, [provider, externalId], PaymentRow);
+  }
+
+  async refundByExternalId(provider: string, externalId: string): Promise<RefundRow | undefined> {
+    return qMaybe(
+      this.db,
+      `SELECT id, company_id, order_id, payment_id, provider, external_id, amount_minor, currency,
+              reason, status, authorised_by, approval_id
+         FROM refunds WHERE provider=$1 AND external_id=$2`,
+      [provider, externalId],
+      RefundRow,
+    );
   }
 
   async listForReconciliation(companyId: string, provider: string, since: Date): Promise<readonly PaymentRow[]> {

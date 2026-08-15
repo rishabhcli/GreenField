@@ -39,6 +39,14 @@ describe('ensureOperatingCompany', () => {
       loop: {
         currentOrStart: async () => ({ id: 'task_1', phase: 'discover', status: 'running' }),
       },
+      commerce: {
+        products: {
+          bySku: async () => ({ id: 'prd_existing', sku: 'zhc-founding' }),
+          create: async () => {
+            throw new Error('must not create products when they already exist');
+          },
+        },
+      },
     } as unknown as Repositories;
     const queues = {
       enqueue: async () => {

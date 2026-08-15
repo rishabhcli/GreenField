@@ -155,4 +155,83 @@ describe('LandedCostService.build', () => {
     ).rejects.toThrow(/outside the quoted price tiers/);
     expect(calls).not.toContain('write');
   });
+
+  it('fails the build when contribution margin misses the gate instead of only noting it', async () => {
+    const calls: string[] = [];
+    const service = new LandedCostService(economicsDeps(calls));
+    await expect(
+      service.build({
+        companyId: 'co_1',
+        opportunityId: 'opp_1',
+        quoteId: 'quote_1',
+        orderQuantity: 500,
+        destinationCountry: 'US',
+        sellingPriceMinor: 100,
+      }),
+    ).rejects.toThrow(ValidationError);
+    expect(calls).not.toContain('write');
+  });
+
+  it('fails the build when selling price is missing so contribution cannot be modelled', async () => {
+    const calls: string[] = [];
+    const service = new LandedCostService(economicsDeps(calls));
+    await expect(
+      service.build({
+        companyId: 'co_1',
+        opportunityId: 'opp_1',
+        quoteId: 'quote_1',
+        orderQuantity: 500,
+        destinationCountry: 'US',
+        sellingPriceMinor: null,
+      }),
+    ).rejects.toThrow(/incomplete|selling price/i);
+    expect(calls).not.toContain('write');
+  });
 });
+
+function economicsDeps(calls: string[]): ServiceDeps {
+  return {
+    repos: {
+      sourcing: {
+        quotes: {
+          byId: async () => ({
+            id: 'quote_1',
+            company_id: 'co_1',
+            rfq_id: 'rfq_1',
+            supplier_id: 'sup_1',
+            received_via: 'email_inbound',
+            raw_response_ref: 'msg_1',
+            received_at: new Date(NOW),
+            currency: 'USD',
+            price_tiers: [{ minQuantity: 500, maxQuantity: 999, unitPriceMinor: 520, currency: 'USD' }],
+            moq: 500,
+            sample_cost_minor: null,
+            sample_lead_time_days: null,
+            tooling_setup_cost_minor: 0,
+            customisation_cost_per_unit_minor: 0,
+            packaging_cost_per_unit_minor: 0,
+            production_lead_time_days: 28,
+            incoterm: 'FOB',
+            origin_port: null,
+            payment_terms: null,
+            valid_until: null,
+            notes: null,
+            verified_by_engagement_id: null,
+          }),
+        },
+        landedCosts: {
+          write: async () => {
+            calls.push('write');
+            throw new Error('must not persist a model that fails the margin gate');
+          },
+        },
+      },
+    },
+    providers: {
+      forCapability: () => ({
+        adapter: undefined,
+        status: { usable: false, state: 'blocked_missing_credentials', missingSecrets: [], provider: 'shippo', remediation: null },
+      }),
+    },
+  } as unknown as ServiceDeps;
+}

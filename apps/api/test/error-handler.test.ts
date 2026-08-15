@@ -12,6 +12,8 @@ import { httpStatusForError, registerErrorHandler, stampFastifyStatusCode } from
 import { registerCompanyRoutes } from '../src/routes/company.js';
 
 const COMPANY_ID = 'co_01M03F7RQW2M6540BY2GZHCFBW';
+const OPERATOR = 'correct-token';
+const operatorHeaders = { authorization: `Bearer ${OPERATOR}` };
 
 async function appWithHandler() {
   const app = Fastify({ logger: false });
@@ -156,6 +158,7 @@ describe('POST /api/companies', () => {
     await registerCompanyRoutes(
       app,
       {
+        config: { operatorApiToken: OPERATOR },
         repos: {
           companies: { first: async () => ({ id: COMPANY_ID }) },
         },
@@ -168,6 +171,7 @@ describe('POST /api/companies', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/companies',
+      headers: operatorHeaders,
       payload: {
         name: 'GreenField',
         mission: 'Operate an autonomous company loop without fabricated revenue or evidence.',
@@ -193,6 +197,7 @@ describe('PUT /api/companies/:id/config', () => {
     await registerCompanyRoutes(
       app,
       {
+        config: { operatorApiToken: OPERATOR },
         repos: {
           companies: {
             updateConfig: async (id: string, next: unknown) => ({ id, config: next }),
@@ -205,6 +210,7 @@ describe('PUT /api/companies/:id/config', () => {
     const response = await app.inject({
       method: 'PUT',
       url: `/api/companies/${COMPANY_ID}/config`,
+      headers: operatorHeaders,
       payload: { config },
     });
 
@@ -218,6 +224,7 @@ describe('PUT /api/companies/:id/config', () => {
     await registerCompanyRoutes(
       app,
       {
+        config: { operatorApiToken: OPERATOR },
         repos: {
           companies: {
             updateConfig: async () => {
@@ -232,6 +239,7 @@ describe('PUT /api/companies/:id/config', () => {
     const response = await app.inject({
       method: 'PUT',
       url: `/api/companies/${COMPANY_ID}/config`,
+      headers: operatorHeaders,
       payload: { config: { owner: { email: 'not-an-email' } } },
     });
 
@@ -251,6 +259,7 @@ describe('PUT /api/companies/:id/config', () => {
     await registerCompanyRoutes(
       app,
       {
+        config: { operatorApiToken: OPERATOR },
         repos: {
           companies: {
             updateConfig: async () => {
@@ -265,6 +274,7 @@ describe('PUT /api/companies/:id/config', () => {
     const response = await app.inject({
       method: 'PUT',
       url: `/api/companies/${COMPANY_ID}/config`,
+      headers: operatorHeaders,
       payload: { config },
     });
 

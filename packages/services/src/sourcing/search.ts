@@ -16,7 +16,11 @@ import {
   type Capability,
   type SupplierKind,
 } from '@foundry/core';
-import type { SourcedSupplierProfile } from '@foundry/providers';
+import {
+  refuseUnreviewedHost,
+  runCompliantBrowserSupplierSearch,
+  type SourcedSupplierProfile,
+} from '@foundry/providers';
 import type { SupplierRow } from '@foundry/db';
 import { getLogger } from '@foundry/obs';
 import { requireCapability, type ServiceDeps } from '../deps.js';
@@ -78,7 +82,7 @@ export class SourcingSearchService {
         hits.push(...parseHits(raw, alibaba.providerId ?? alibaba.provider ?? 'alibaba', 'provider_api'));
       } catch (error) {
         if (error instanceof VendorApprovalRequiredError) {
-          const solari = await this.#trySolariSession();
+          const solari = await this.#tryBrowserSourcing(input.keywords);
           solariSessionId = solari.sessionId;
           vendorBlock = {
             capability: 'sourcing.supplier_search',
@@ -96,7 +100,7 @@ export class SourcingSearchService {
         }
       }
     } else {
-      const solari = await this.#trySolariSession();
+      const solari = await this.#tryBrowserSourcing(input.keywords);
       solariSessionId = solari.sessionId;
       vendorBlock = {
         capability: 'sourcing.supplier_search',
@@ -169,10 +173,11 @@ export class SourcingSearchService {
   }
 
   /**
-   * Creates a Solari session when credentials exist. Does not navigate to, or
-   * parse, any marketplace — robots.txt and an extract parser are both absent.
+   * Browser-backed path when Alibaba/search is insufficient. Creates a Solari
+   * session when credentials exist, then runs the compliance-gated sourcing
+   * helper. No extract parser and no robots review → no invented suppliers.
    */
-  async #trySolariSession(): Promise<{ sessionId?: string; note: string }> {
+  async #tryBrowserSourcing(query: string): Promise<{ sessionId?: string; note: string }> {
     const solari = this.deps.providers.adapter('solari') as SolariSessionAdapter | undefined;
     if (!solari || typeof solari.createBrowserSession !== 'function') {
       return {
@@ -181,11 +186,33 @@ export class SourcingSearchService {
     }
     try {
       const session = await solari.createBrowserSession({ recording: false });
+      const closedDriver = {
+        async navigate(): Promise<void> {
+          throw new CapabilityUnsupportedError(
+            'solari_browser',
+            'searchSuppliers',
+            'No CDP marketplace driver is attached; HTML was not fetched or parsed.',
+          );
+        },
+        async getContent(): Promise<string> {
+          return '';
+        },
+        async currentUrl(): Promise<string> {
+          return '';
+        },
+        async close(): Promise<void> {},
+      };
+      const browsed = await runCompliantBrowserSupplierSearch({
+        query,
+        driver: closedDriver,
+        complianceGate: { check: refuseUnreviewedHost },
+      });
+      const blockedNote = browsed.blocked ? ` ${browsed.blocked.message}` : '';
       return {
         sessionId: session.sessionId,
         note: session.sessionId
-          ? `Solari session ${session.sessionId} created without an extract parser.`
-          : 'Solari createBrowserSession returned no sessionId.',
+          ? `Solari session ${session.sessionId} created. Marketplace HTML was not parsed and no suppliers were invented.${blockedNote}`
+          : `Solari createBrowserSession returned no sessionId.${blockedNote}`,
       };
     } catch (error) {
       if (

@@ -283,6 +283,16 @@ export class MarketingExperimentService {
     experimentId: string;
     unitContributionMinor: number;
   }): Promise<ServiceOutcome<readonly { armId: string; decision: ArmDecision }[]>> {
+    if (!Number.isFinite(input.unitContributionMinor) || input.unitContributionMinor <= 0) {
+      return {
+        ok: false,
+        blockedOn: {
+          capability: 'ads.campaign_manage',
+          reason:
+            'Unit contribution is not modelled from economics; refusing to decide arms with a zero or invented contribution.',
+        },
+      };
+    }
     const decided = await this.deps.repos.growth.metrics.decideArms(input.experimentId, input.unitContributionMinor);
     const applied: { armId: string; decision: ArmDecision }[] = [];
     for (const row of decided) {

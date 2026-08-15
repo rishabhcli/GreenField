@@ -9,6 +9,7 @@
  * not two that can drift.
  */
 
+import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import { PolicyDeniedError } from '@foundry/core';
 
 const OPERATOR_TOKEN_ENV = 'OPERATOR_API_TOKEN';
@@ -31,10 +32,13 @@ export async function requireOperator(
   return 'operator';
 }
 
-/** Constant-time compare, so a token cannot be guessed byte by byte. */
+/**
+ * Constant-time compare. Both sides are SHA-256 hashed first so
+ * `crypto.timingSafeEqual` always sees equal-length buffers and a length
+ * mismatch cannot be observed as an early return.
+ */
 export function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+  const left = createHash('sha256').update(a, 'utf8').digest();
+  const right = createHash('sha256').update(b, 'utf8').digest();
+  return cryptoTimingSafeEqual(left, right);
 }

@@ -700,6 +700,17 @@ export class SupportRepository {
     return row.id;
   }
 
+  async countOutbound(companyId: string, provider: string): Promise<number> {
+    const row = await qOne(
+      this.pool,
+      `SELECT count(*)::int AS n FROM support_messages
+        WHERE company_id=$1 AND direction='outbound' AND provider=$2`,
+      [companyId, provider],
+      z.object({ n: z.number() }),
+    );
+    return row.n;
+  }
+
   async updateMessageStatus(provider: string, externalMessageId: string, status: string, at?: Date): Promise<void> {
     await exec(
       this.pool,

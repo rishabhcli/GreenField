@@ -4,8 +4,9 @@
  * Every line carries a `CostBasis`. Manufacturing comes from a real quote tier
  * or the build refuses. Freight is tagged `assumption` with note
  * "freight API not quoted" until a freight API actually returns a rate — never
- * presented as a supplier quote. A missing selling price makes the model
- * incomplete, not a failed economics result.
+ * presented as a supplier quote. Incomplete economics (no selling price) or a
+ * failed margin gate refuse the build rather than returning a model that looks
+ * like a pass.
  */
 
 import {
@@ -14,6 +15,7 @@ import {
   Incoterm,
   MODELLING_SCALE,
   Money,
+  NotFoundError,
   PriceTier,
   ValidationError,
   computeContribution,
@@ -92,6 +94,96 @@ export function evaluateEconomicsGate(input: EconomicsGateInput): EconomicsGateR
   };
 }
 
+/**
+ * Unit contribution from the latest landed-cost model and an active SKU (or the
+ * selected opportunity's assumed price). Returns null when the inputs do not
+ * exist — never 0 as a stand-in, because a zero contribution is not modelled.
+ */
+export async function resolveUnitContributionMinor(
+  deps: ServiceDeps,
+  companyId: string,
+): Promise<number | null> {
+  const company = await deps.repos.companies.byId(companyId);
+  const products = await deps.repos.commerce.products.listActive(companyId);
+  const sku =
+    products.find((p) => p.opportunity_id && p.opportunity_id === company.selected_opportunity_id) ??
+    products.find((p) => p.landed_cost_model_id) ??
+    products[0];
+
+  let landed: LandedCostRow | undefined;
+  if (sku?.landed_cost_model_id) {
+    try {
+      landed = await deps.repos.sourcing.landedCosts.byId(sku.landed_cost_model_id);
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) throw error;
+    }
+  }
+  if (!landed && company.selected_opportunity_id) {
+    landed = await deps.repos.sourcing.landedCosts.latestForOpportunity(company.selected_opportunity_id);
+  }
+  if (!landed) {
+    landed = (await deps.repos.sourcing.landedCosts.listForCompany(companyId, 1))[0];
+  }
+  if (!landed) return null;
+
+  let sellingPriceMinor = sku?.price_minor ?? 0;
+  let currency = sku?.currency ?? landed.currency;
+  if (sellingPriceMinor <= 0 && company.selected_opportunity_id) {
+    const opportunity = await deps.repos.research.opportunities.byId(company.selected_opportunity_id);
+    sellingPriceMinor = opportunity.assumed_selling_price_cents ?? 0;
+    currency = opportunity.currency || currency;
+  }
+  if (sellingPriceMinor <= 0) return null;
+  if (currency !== landed.currency) return null;
+
+  const contribution = contributionFromLandedRow(landed, sellingPriceMinor);
+  if (!contribution || !contribution.contributionMargin.isPositive) return null;
+  return contribution.contributionMargin.toProviderMinorUnits();
+}
+
+/** Contribution from a persisted landed-cost row and a stated selling price. Never invents a quote. */
+export function contributionFromLandedRow(
+  landed: Pick<LandedCostRow, 'landed_unit_cost' | 'currency' | 'quote_id'> & {
+    readonly assumed_components?: readonly string[] | null;
+  },
+  sellingPriceMinor: number,
+): ContributionResult | null {
+  if (sellingPriceMinor <= 0) return null;
+  const price = Money.fromMinor(sellingPriceMinor, landed.currency).rescale(MODELLING_SCALE);
+  const assumed = landed.assumed_components ?? [];
+  const components: {
+    kind: 'landed_unit_cost' | 'payment_processing_fee';
+    amount: string;
+    basis: CostComponent['basis'];
+    sourceRef: string | null;
+    note: string | null;
+  }[] = [
+    {
+      kind: 'landed_unit_cost',
+      amount: landed.landed_unit_cost,
+      basis: assumed.length > 0 ? 'assumption' : 'supplier_quote',
+      sourceRef: landed.quote_id,
+      note: assumed.length > 0 ? `includes assumed: ${assumed.join(', ')}` : null,
+    },
+  ];
+  if (landed.currency === 'USD') {
+    const percent = price.multiplyByDecimal(STRIPE_US_CARD_FEE_SCHEDULE.rate);
+    const flat = Money.of(STRIPE_US_CARD_FEE_SCHEDULE.flat, 'USD', MODELLING_SCALE);
+    components.push({
+      kind: 'payment_processing_fee',
+      amount: percent.add(flat).rescale(MODELLING_SCALE).toString(),
+      basis: STRIPE_US_CARD_FEE_SCHEDULE.basis,
+      sourceRef: STRIPE_US_CARD_FEE_SCHEDULE.sourceRef,
+      note: STRIPE_US_CARD_FEE_SCHEDULE.note,
+    });
+  }
+  return computeContribution({
+    netSellingPrice: price.toString(),
+    currency: landed.currency,
+    components,
+  });
+}
+
 export interface LandedCostBuildInput {
   readonly companyId: string;
   readonly opportunityId: string;
@@ -118,6 +210,14 @@ export interface LandedCostBuildResult {
 
 export class LandedCostService {
   constructor(private readonly deps: ServiceDeps) {}
+
+  /**
+   * Modelled unit contribution in minor units, or null when economics are unknown.
+   * Callers must not substitute 0 — that collapses the arm-kill threshold to 3¢.
+   */
+  async unitContributionMinor(companyId: string): Promise<number | null> {
+    return resolveUnitContributionMinor(this.deps, companyId);
+  }
 
   async buildFromQuote(input: LandedCostBuildInput): Promise<LandedCostBuildResult> {
     return this.build(input);
@@ -198,6 +298,36 @@ export class LandedCostService {
 
     assertHonestCostComponents(components);
 
+    const landed = computeLandedCost({
+      id: 'cost_draft',
+      companyId: input.companyId,
+      opportunityId: input.opportunityId,
+      quoteId: quote.id,
+      orderQuantity: input.orderQuantity,
+      currency: quote.currency,
+      components,
+      destinationCountry: input.destinationCountry,
+      incoterm: quote.incoterm,
+      hsCode: null,
+      computedAt: new Date().toISOString(),
+    });
+
+    const contribution = this.#contribution(input, landed, quote.currency);
+    const sellingPricePresent = input.sellingPriceMinor != null && input.sellingPriceMinor > 0;
+    const gate = evaluateEconomicsGate({
+      groundedRatio: landed.groundedRatio,
+      contributionMarginRatio: contribution?.contributionMarginRatio ?? null,
+      sellingPricePresent,
+    });
+
+    if (!gate.complete || !gate.passesMarginGate) {
+      throw new ValidationError(gate.reason, {
+        quoteId: quote.id,
+        complete: gate.complete,
+        passesMarginGate: gate.passesMarginGate,
+      });
+    }
+
     const persisted = await this.deps.repos.sourcing.landedCosts.write({
       companyId: input.companyId,
       opportunityId: input.opportunityId,
@@ -209,34 +339,6 @@ export class LandedCostService {
       incoterm: quote.incoterm,
       hsCode: null,
     });
-
-    const landed = computeLandedCost({
-      id: persisted.id,
-      companyId: persisted.company_id,
-      opportunityId: persisted.opportunity_id,
-      quoteId: persisted.quote_id,
-      orderQuantity: persisted.order_quantity,
-      currency: persisted.currency,
-      components: components,
-      destinationCountry: persisted.destination_country,
-      incoterm: quote.incoterm,
-      hsCode: persisted.hs_code,
-      computedAt: persisted.computed_at.toISOString(),
-    });
-
-    const contribution = this.#contribution(input, landed, quote.currency);
-    const sellingPricePresent = input.sellingPriceMinor != null && input.sellingPriceMinor > 0;
-    const gate = evaluateEconomicsGate({
-      groundedRatio: landed.groundedRatio,
-      contributionMarginRatio: contribution?.contributionMarginRatio ?? null,
-      sellingPricePresent,
-    });
-
-    if (!gate.complete) {
-      notes.push(gate.reason);
-    } else if (!gate.passesMarginGate) {
-      notes.push(gate.reason);
-    }
 
     log.info(
       {

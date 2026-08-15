@@ -135,6 +135,40 @@ describe('checkout events', () => {
     expect(result.intent.amountPaidDeltaMinor).toBe(5787);
     expect(result.intent.externalIds['internal_order_id']).toBe('ord_01ABC');
     expect(result.intent.externalIds['stripe_payment_intent']).toBe('pi_test_a1');
+    expect(canTransition('CREATED', 'PAID')).toBe(true);
+  });
+
+  it('a paid session missing amount_total does not mark PAID with zero', () => {
+    const result = mapStripeEventToOrderTransition(
+      'checkout.session.completed',
+      session({ amount_total: null }),
+    );
+    expect(result.action).toBe('transition');
+    if (result.action !== 'transition') return;
+    expect(result.intent.orderStatus).not.toBe('PAID');
+    expect(result.intent.amountPaidDeltaMinor).toBeUndefined();
+    expect(result.intent.orderStatus).toBe('MANUAL_REVIEW');
+  });
+
+  it('an async payment succeeding without amount_total does not mark PAID with zero', () => {
+    const result = mapStripeEventToOrderTransition(
+      'checkout.session.async_payment_succeeded',
+      session({ amount_total: null }),
+    );
+    expect(result.action).toBe('transition');
+    if (result.action !== 'transition') return;
+    expect(result.intent.orderStatus).not.toBe('PAID');
+    expect(result.intent.amountPaidDeltaMinor).toBeUndefined();
+  });
+
+  it('carries the Payment Link id so an unmatched paid session can be booked', () => {
+    const result = mapStripeEventToOrderTransition(
+      'checkout.session.completed',
+      session({ client_reference_id: null, payment_link: 'plink_1U4lK242nB81EBguRPuIHrxS' }),
+    );
+    expect(result.action).toBe('transition');
+    if (result.action !== 'transition') return;
+    expect(result.intent.externalIds['stripe_payment_link']).toBe('plink_1U4lK242nB81EBguRPuIHrxS');
   });
 
   it('a completed but unpaid session does NOT credit the order', () => {
@@ -180,16 +214,33 @@ describe('checkout events', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('payment intent events', () => {
-  it('succeeded confirms PAID but carries no amount, so the order is not credited twice', () => {
-    const checkout = mapStripeEventToOrderTransition('checkout.session.completed', session());
-    const intent = mapStripeEventToOrderTransition('payment_intent.succeeded', paymentIntent());
+  it('succeeded with amount_received credits the captured amount, never zero', () => {
+    const result = mapStripeEventToOrderTransition('payment_intent.succeeded', paymentIntent());
+    if (result.action !== 'transition') throw new Error('expected transition');
+    expect(result.intent.orderStatus).toBe('PAID');
+    expect(result.intent.amountPaidDeltaMinor).toBe(5787);
+    expect(result.intent.amountPaidDeltaMinor).not.toBe(0);
+  });
 
-    if (checkout.action !== 'transition' || intent.action !== 'transition') throw new Error('expected transitions');
+  it('succeeded without amount_received does not mark PAID', () => {
+    // Checkout.session.completed is the paid path when the intent omits captured funds.
+    const result = mapStripeEventToOrderTransition(
+      'payment_intent.succeeded',
+      paymentIntent({ amount_received: null }),
+    );
+    if (result.action !== 'transition') throw new Error('expected transition');
+    expect(result.intent.orderStatus).not.toBe('PAID');
+    expect(result.intent.amountPaidDeltaMinor).toBeUndefined();
+  });
 
-    const total =
-      (checkout.intent.amountPaidDeltaMinor ?? 0) + (intent.intent.amountPaidDeltaMinor ?? 0);
-    // Stripe sends both for one payment. Exactly one payment's worth may land.
-    expect(total).toBe(5787);
+  it('succeeded with amount_received of 0 does not mark PAID', () => {
+    const result = mapStripeEventToOrderTransition(
+      'payment_intent.succeeded',
+      paymentIntent({ amount_received: 0 }),
+    );
+    if (result.action !== 'transition') throw new Error('expected transition');
+    expect(result.intent.orderStatus).not.toBe('PAID');
+    expect(result.intent.amountPaidDeltaMinor).toBeUndefined();
   });
 
   it('payment_failed records the decline reason', () => {
@@ -306,6 +357,7 @@ describe('dispute events', () => {
     const result = mapStripeEventToOrderTransition('charge.dispute.closed', dispute({ status: 'lost' }));
     if (result.action !== 'transition') throw new Error('expected transition');
     expect(result.intent.orderStatus).toBe('REFUNDED');
+    expect(result.intent.amountRefundedDeltaMinor).toBe(5787);
   });
 
   it('a won dispute goes to manual review rather than guessing the prior state', () => {

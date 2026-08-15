@@ -33,6 +33,11 @@ import type { ServiceDeps } from '../deps.js';
 import { ExpertReviewService } from '../research/expert.js';
 import { LandedCostService } from '../sourcing/economics.js';
 
+export interface TickOptions {
+  /** Operator-forced phase. Applied under the same advisory lock as the rest of the tick. */
+  readonly forcePhase?: string | null;
+}
+
 export interface TickResult {
   readonly cycleId: string;
   readonly cycleNumber: number;
@@ -76,6 +81,25 @@ export interface TickResult {
  */
 function tickLockKey(companyId: string): string {
   return `foundry:loop:tick:${companyId}`;
+}
+
+/** Site statuses that prove a storefront was actually generated — spec_drafted is not enough. */
+const BUILD_EVIDENCE_STATUSES = new Set([
+  'generated',
+  'preview_deployed',
+  'qa_passed',
+  'production_deployed',
+]);
+
+const BUILD_NOT_YET_GENERATED = new Set(['spec_drafted', 'generating', 'building', 'build_failed']);
+
+function parseForcePhase(raw: string): LoopPhase {
+  if ((LOOP_PHASE_ORDER as readonly string[]).includes(raw)) {
+    return raw as LoopPhase;
+  }
+  throw new ValidationError(`forcePhase must be one of ${LOOP_PHASE_ORDER.join(' | ')}, got "${raw}"`, {
+    forcePhase: raw,
+  });
 }
 
 /** What a phase must be able to show before the loop moves past it. */
@@ -131,7 +155,7 @@ export class LoopOrchestrator {
    * throw is a dead-lettered job, and a queued retry of a tick is just another
    * racing tick.
    */
-  async tick(companyId: string): Promise<TickResult> {
+  async tick(companyId: string, options: TickOptions = {}): Promise<TickResult> {
     // Establish which cycle this tick concerns *before* contending for the
     // lock, so that even a tick which does nothing can name the cycle it
     // declined to touch — a `TickResult` with no cycle would be useless to the
@@ -141,7 +165,7 @@ export class LoopOrchestrator {
     const opened = await this.deps.repos.loop.currentOrStart(companyId);
 
     const result = await tryAdvisoryLock(this.deps.repos.pool, tickLockKey(companyId), () =>
-      this.#tickExclusive(companyId),
+      this.#tickExclusive(companyId, options),
     );
     if (result !== undefined) return result;
 
@@ -161,7 +185,7 @@ export class LoopOrchestrator {
   /**
    * The body of a tick, guaranteed to be the only one running for this company.
    */
-  async #tickExclusive(companyId: string): Promise<TickResult> {
+  async #tickExclusive(companyId: string, options: TickOptions = {}): Promise<TickResult> {
     const log = getLogger();
     // Re-read under the lock instead of reusing the row `tick` already fetched.
     // Between that read and the lock being granted, the previous holder may
@@ -169,7 +193,16 @@ export class LoopOrchestrator {
     // and an assessment made against a stale phase is precisely the corruption
     // the lock exists to prevent. This costs one cheap query and is consistent
     // with the rest of the loop, which never trusts in-memory state.
-    const cycle = await this.deps.repos.loop.currentOrStart(companyId);
+    let cycle = await this.deps.repos.loop.currentOrStart(companyId);
+
+    if (options.forcePhase) {
+      const forced = parseForcePhase(options.forcePhase);
+      await this.deps.repos.loop.setPhase(cycle.id, forced);
+      await this.deps.repos.loop.unblock(cycle.id);
+      cycle = await this.deps.repos.loop.currentOrStart(companyId);
+      log.info({ cycleId: cycle.id, forcePhase: forced }, 'loop phase forced by operator');
+    }
+
     const phase = cycle.phase as LoopPhase;
 
     // A global kill switch stops the loop before it can spend anything.
@@ -497,10 +530,19 @@ export class LoopOrchestrator {
       }
       return { complete: false, detail: 'site build in progress' };
     }
+
+    const site = await this.deps.repos.build.sites.byId(company.active_site_id);
+    const succeeded = await this.deps.repos.build.sites.latestSucceededBuild(company.active_site_id);
+    if (BUILD_EVIDENCE_STATUSES.has(site.status) || succeeded) {
+      return {
+        complete: true,
+        detail: `site ${company.active_site_id} ${site.status}`,
+        outputs: { build: { siteId: company.active_site_id, status: site.status } },
+      };
+    }
     return {
-      complete: true,
-      detail: `site ${company.active_site_id} built`,
-      outputs: { build: { siteId: company.active_site_id } },
+      complete: false,
+      detail: `site ${company.active_site_id} is ${site.status}; waiting for a generated build`,
     };
   }
 
@@ -552,25 +594,33 @@ export class LoopOrchestrator {
 
   async #assessMarket(companyId: string): Promise<PhaseAssessment> {
     const active = await this.deps.repos.growth.experiments.listRunning(companyId);
-    if (active.length === 0) {
-      const status = this.#capabilityStatus('ads.campaign_manage');
-      if (!status.usable) {
-        return {
-          complete: false,
-          detail: 'no advertising capability is usable, so no traffic can be bought',
-          blockedOn: {
-            capability: 'ads.campaign_manage',
-            remediation: status.remediation ?? `ad platform is ${status.state}`,
-          },
-        };
-      }
-      return { complete: false, detail: 'awaiting the first live experiment' };
+    const linqSends = await this.deps.repos.growth.support.countOutbound(companyId, 'linq');
+    if (active.length > 0 || linqSends > 0) {
+      return {
+        complete: true,
+        detail:
+          active.length > 0
+            ? `${active.length} experiments live`
+            : `${linqSends} Linq outreach messages sent`,
+        outputs: { market: { activeExperiments: active.length, linqOutbound: linqSends } },
+      };
     }
-    return {
-      complete: true,
-      detail: `${active.length} experiments live`,
-      outputs: { market: { activeExperiments: active.length } },
-    };
+
+    const ads = this.#capabilityStatus('ads.campaign_manage');
+    const linq = this.#capabilityStatus('messaging.imessage_app');
+    if (!ads.usable && !linq.usable) {
+      return {
+        complete: false,
+        detail: 'no advertising or Linq messaging capability is usable, so no customers can be reached',
+        blockedOn: {
+          capability: ads.usable ? 'messaging.imessage_app' : 'ads.campaign_manage',
+          remediation:
+            [ads.remediation, linq.remediation].filter(Boolean).join(' ') ||
+            `ads is ${ads.state}; linq is ${linq.state}`,
+        },
+      };
+    }
+    return { complete: false, detail: 'awaiting the first live experiment or Linq outreach send' };
   }
 
   async #assessMeasure(companyId: string): Promise<PhaseAssessment> {
@@ -624,17 +674,31 @@ export class LoopOrchestrator {
       /* Judgement phases: the organisation decides, not a queue job.  */
       /* ------------------------------------------------------------ */
 
-      case 'discover':
+      case 'discover': {
         // What to research is a judgement call — which markets, which
         // sources, which queries. The manager makes it and its tools enqueue
         // `research.collect` with concrete arguments. Enqueueing directly
-        // from here would mean inventing a search query.
+        // from here would mean inventing a search query. Clustering, once
+        // evidence exists, is mechanical and must not wait on the agent tool.
+        const evidence = await this.deps.repos.research.evidence.search(companyId, {
+          limit: 1,
+          minConfidence: 0,
+        });
+        if (evidence.length > 0) {
+          await this.deps.queues.enqueue('research.cluster', {
+            ...base,
+            idempotencyKey: key('cluster'),
+            sinceIso: null,
+            minClusterSize: 3,
+          });
+        }
         return this.#dispatch(companyId, cycleId, 'research_manager', {
           objective:
             'Collect real market evidence and cluster it into candidate opportunities. ' +
             'Every claim must cite a retrievable source; do not generate pain points from prior knowledge.',
           phase,
         });
+      }
 
       case 'select':
         return this.#dispatch(companyId, cycleId, 'ceo', {
@@ -668,14 +732,20 @@ export class LoopOrchestrator {
           opportunityId: company.selected_opportunity_id,
         });
 
-      case 'market':
+      case 'market': {
+        await this.deps.queues.enqueue('marketing.outreach', {
+          ...base,
+          idempotencyKey: key('linq-outreach'),
+        });
         return this.#dispatch(companyId, cycleId, 'growth_manager', {
           objective:
-            'Launch the first advertising experiments against the live storefront. ' +
-            'Creative must pass human review before an arm goes live.',
+            'Acquire customers: send the fixed-price founding checkout over Linq to consented handles ' +
+            '(linq.outreach / linq.send_link), and launch advertising experiments against the live storefront. ' +
+            'Do not let customers type an amount. Creative must pass human review before an ad arm goes live.',
           phase,
           siteId: company.active_site_id,
         });
+      }
 
       /* ------------------------------------------------------------ */
       /* Mechanical phases: the loop already knows the arguments.      */
@@ -727,7 +797,7 @@ export class LoopOrchestrator {
 
       case 'build': {
         if (!company.active_site_id) {
-          return this.#dispatch(companyId, cycleId, 'engineering_manager', {
+          return this.#dispatch(companyId, cycleId, 'commerce_manager', {
             objective: 'Create the storefront site record and generate the first build from the brand and catalogue.',
             phase,
           });
@@ -739,6 +809,18 @@ export class LoopOrchestrator {
           reason: 'initial',
           instructions: null,
         });
+        const site = await this.deps.repos.build.sites.byId(company.active_site_id);
+        const succeeded = await this.deps.repos.build.sites.latestSucceededBuild(company.active_site_id);
+        if (!BUILD_NOT_YET_GENERATED.has(site.status) || succeeded) {
+          await this.deps.queues.enqueue('site.deploy', {
+            ...base,
+            idempotencyKey: key('preview'),
+            siteId: company.active_site_id,
+            environment: 'preview',
+            commitSha: null,
+            gatingQaRunId: null,
+          });
+        }
         return true;
       }
 
@@ -809,6 +891,7 @@ export class LoopOrchestrator {
           destination = 'US';
         }
         const quotes = await this.deps.repos.sourcing.quotes.forOpportunity(opportunityId);
+        const opportunity = await this.deps.repos.research.opportunities.byId(opportunityId);
         let built = 0;
         for (const quote of quotes) {
           try {
@@ -818,7 +901,7 @@ export class LoopOrchestrator {
               quoteId: quote.id,
               orderQuantity: quote.moq,
               destinationCountry: destination,
-              sellingPriceMinor: null,
+              sellingPriceMinor: opportunity.assumed_selling_price_cents,
             });
             built += 1;
           } catch (error) {

@@ -6,14 +6,20 @@
  * endpoints; this adapter uses the platform HTTP client so retry, breaker and
  * rate-limit behaviour stay uniform with every other provider.
  *
- * Physical goods are refused before any network call. Dodo's merchant-
- * acceptance policy enumerates them as prohibited; routing a bottle through
- * this adapter would be a false compliance claim.
+ * Physical goods are refused by `assertPaymentRoute` before any network call.
+ * Dodo's merchant-acceptance policy enumerates them as prohibited; routing a
+ * bottle through this adapter would misstate who bears tax and transaction
+ * liability.
+ *
+ * Dodo publishes no general Idempotency-Key header. Checkout and refund POSTs
+ * are not retried here; callers key the local idempotency ledger
+ * (`refund:${orderId}:${amount}`).
  */
 
 import {
   ConflictError,
   ProviderAuthError,
+  ProviderContractError,
   ValidationError,
   assertPaymentRoute,
   toFoundryError,
@@ -24,7 +30,7 @@ import { verifyStandardWebhook, type VerificationInput, type VerificationResult 
 import { DODO_MANIFEST, SECRETS } from '../manifests.js';
 import { DodoCheckoutSession, DodoProduct, DodoProductList, DodoRefund } from './schemas.js';
 
-export { mapDodoEventToOrderTransition, HANDLED_DODO_EVENTS } from './events.js';
+export { mapDodoEventToOrderTransition, HANDLED_DODO_EVENTS, dodoRefundLedgerId } from './events.js';
 
 export interface DodoCheckoutInput {
   readonly orderId: string;
@@ -46,16 +52,20 @@ export interface DodoCheckoutResult {
 export class DodoAdapter extends ProviderAdapter {
   override readonly manifest = DODO_MANIFEST;
   #client: ProviderHttpClient | undefined;
+  readonly #fetchImpl: typeof fetch | undefined;
 
-  constructor(ctx: AdapterContext) {
+  constructor(ctx: AdapterContext, overrides?: { readonly fetchImpl?: typeof fetch }) {
     super(ctx);
+    this.#fetchImpl = overrides?.fetchImpl;
   }
 
   #http(): ProviderHttpClient {
     if (!this.#client) {
       this.requireSecret(SECRETS.dodoApiKey);
       this.#client = this.http(bearerAuth(this.requireSecret(SECRETS.dodoApiKey)), {
-        idempotencyHeader: 'Idempotency-Key',
+        // Dodo has no Idempotency-Key header. Do not send one and pretend it
+        // is honouring a key it ignores. Local ledger is the retry guard.
+        ...(this.#fetchImpl ? { fetchImpl: this.#fetchImpl } : {}),
       });
     }
     return this.#client;
@@ -97,13 +107,8 @@ export class DodoAdapter extends ProviderAdapter {
   }
 
   async createCheckout(input: DodoCheckoutInput): Promise<DodoCheckoutResult> {
-    if (input.productKind === 'physical_good') {
-      throw new ValidationError(
-        'Dodo cannot collect payment for physical goods. Use Stripe as merchant of record for physical products.',
-      );
-    }
+    assertPaymentRoute(input.productKind, 'dodo_merchant_of_record');
     this.assertActivated();
-    assertPaymentRoute(input.productKind === 'membership' ? 'membership' : input.productKind, 'dodo_merchant_of_record');
     if (input.productCart.length === 0) {
       throw new ValidationError('Dodo checkout requires a non-empty product_cart');
     }
@@ -113,8 +118,7 @@ export class DodoAdapter extends ProviderAdapter {
         method: 'POST',
         path: '/checkouts',
         operation: 'checkouts.create',
-        idempotencyKey: input.idempotencyKey,
-        retryable: true,
+        retryable: false,
         body: {
           product_cart: input.productCart.map((item) => ({ product_id: item.productId, quantity: item.quantity })),
           return_url: input.returnUrl,
@@ -146,19 +150,14 @@ export class DodoAdapter extends ProviderAdapter {
     currency: string;
     idempotencyKey?: string;
   }): Promise<{ productId: string | null }> {
-    if (input.productKind === 'physical_good') {
-      throw new ValidationError(
-        'Dodo cannot list a physical product. Use Stripe as merchant of record for physical products.',
-      );
-    }
+    assertPaymentRoute(input.productKind, 'dodo_merchant_of_record');
     this.assertActivated();
     const response = await this.#http().request(
       {
         method: 'POST',
         path: '/products',
         operation: 'products.create',
-        idempotencyKey: input.idempotencyKey,
-        retryable: true,
+        retryable: false,
         body: {
           name: input.name,
           tax_category: input.taxCategory,
@@ -176,15 +175,14 @@ export class DodoAdapter extends ProviderAdapter {
     amountMinor?: number;
     reason?: string;
     idempotencyKey: string;
-  }): Promise<{ refundId: string | null; paymentId: string }> {
+  }): Promise<{ refundId: string | null; paymentId: string; status?: string; amountMinor?: number }> {
     this.assertActivated();
     const response = await this.#http().request(
       {
         method: 'POST',
         path: '/refunds',
         operation: 'refunds.create',
-        idempotencyKey: input.idempotencyKey,
-        retryable: true,
+        retryable: false,
         body: {
           payment_id: input.paymentId,
           ...(input.amountMinor !== undefined ? { amount: input.amountMinor } : {}),
@@ -196,6 +194,36 @@ export class DodoAdapter extends ProviderAdapter {
     return {
       refundId: response.body.refund_id ?? response.body.id ?? null,
       paymentId: response.body.payment_id,
+      ...(response.body.status !== undefined ? { status: response.body.status } : {}),
+      ...(response.body.amount !== undefined ? { amountMinor: response.body.amount } : {}),
+    };
+  }
+
+  /**
+   * RefundService facade. The refund id (`re_*`) is the ledger key; the
+   * payment id is only the provider argument, never the stored refund external id.
+   */
+  async refund(input: {
+    paymentExternalId: string;
+    amountMinor: number;
+    reason: string;
+    idempotencyKey: string;
+  }): Promise<{ refundId: string; status: string; amountMinor: number }> {
+    const created = await this.refundPayment({
+      paymentId: input.paymentExternalId,
+      amountMinor: input.amountMinor,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!created.refundId) {
+      throw new ProviderContractError('dodo', 'refund was created without an id', {
+        paymentId: input.paymentExternalId,
+      });
+    }
+    return {
+      refundId: created.refundId,
+      status: created.status ?? 'pending',
+      amountMinor: created.amountMinor ?? input.amountMinor,
     };
   }
 
@@ -213,7 +241,11 @@ export class DodoAdapter extends ProviderAdapter {
 
 /** Structural refusal used by commerce routing tests without constructing a client. */
 export function refusePhysicalGoods(): never {
-  throw new ValidationError(
-    'Dodo cannot collect payment for physical goods. Use Stripe as merchant of record for physical products.',
+  assertPaymentRoute('physical_good', 'dodo_merchant_of_record');
+  throw new ConflictError(
+    'Dodo Payments is documented as Merchant of Record for digital products and SaaS. ' +
+      'Routing a physical good through it would misstate who bears transaction and tax liability. ' +
+      'Use stripe_direct for physical goods.',
+    { kind: 'physical_good', route: 'dodo_merchant_of_record' },
   );
 }

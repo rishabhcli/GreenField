@@ -54,6 +54,7 @@ import {
   redisHealthCheck,
 } from '@foundry/queue';
 import { AgentExecutor, OrgDispatcher, PolicyGate, ToolRegistry, DEFAULT_APPROVAL_THRESHOLDS } from '@foundry/agents';
+import { linqOptOutStateStore } from '@foundry/services';
 import type { Redis } from 'ioredis';
 
 export interface AppContext {
@@ -201,10 +202,12 @@ export async function buildContext(options: BuildOptions): Promise<AppContext> {
     gate,
     band: band?.isConfigured ? band : undefined,
   });
-  // Always wire the adapter so a missing BAND key fails dispatch rather than
-  // silently enqueueing work with no room. Prize-track coordination must drive
-  // the handoff: remove the room and start must break.
-  const dispatcher = new OrgDispatcher(repos, queues, band ? { band } : undefined);
+  const dispatcher = new OrgDispatcher(repos, queues, band?.isConfigured ? { band } : undefined);
+
+  const linq = providers.adapter('linq') as LinqAdapter | undefined;
+  if (linq) {
+    linq.setOptOutStateStore(linqOptOutStateStore(repos));
+  }
 
   const health = new HealthRegistry(config.releaseSha);
   health.register(databaseHealthCheck(pool));

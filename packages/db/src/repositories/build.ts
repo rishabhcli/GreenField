@@ -309,6 +309,17 @@ export class SiteRepository {
     return row.id;
   }
 
+  async latestSucceededBuild(siteId: string): Promise<{ id: string; status: string } | undefined> {
+    return qMaybe(
+      this.pool,
+      `SELECT id, status FROM site_builds
+        WHERE site_id=$1 AND status='succeeded'
+        ORDER BY started_at DESC LIMIT 1`,
+      [siteId],
+      z.object({ id: z.string(), status: z.string() }),
+    );
+  }
+
   /** Records the exported file map, proving the code was actually retrieved. */
   async finishBuild(
     buildId: string,

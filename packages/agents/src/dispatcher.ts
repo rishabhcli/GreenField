@@ -21,6 +21,7 @@ import {
   specialistsOf,
   type RoleDefinition,
 } from './deps.js';
+import { bandChannelForRole, roleMayPostToBandChannel, type ActorKind } from '@foundry/core';
 import type { Repositories } from '@foundry/db';
 import { companyConfig } from '@foundry/db';
 import type { QueueSet } from '@foundry/queue';
@@ -87,13 +88,17 @@ export class OrgDispatcher {
       );
     }
 
-    return this.#enqueueRun(request, to.key);
+    return this.#enqueueRun(request, to.key, { requireBand: true });
   }
 
   /**
    * System-origin enqueue for the CEO (and any role the loop must start
    * without a chain-of-command parent). The CEO cannot dispatch itself
    * through `dispatch()` because `ceo.reportsTo` is null.
+   *
+   * Unlike agent-to-agent `dispatch`, this may proceed DB-only when BAND is
+   * unconfigured — support inbound must not stall on a missing agent key.
+   * When BAND *is* wired, the room post still happens before enqueue.
    */
   async enqueueSystem(
     request: Omit<DispatchRequest, 'fromRoleKey'> & { readonly fromRoleKey?: string },
@@ -106,11 +111,17 @@ export class OrgDispatcher {
         fromRoleKey: request.fromRoleKey ?? 'system',
       },
       to.key,
+      { requireBand: false },
     );
   }
 
-  async #enqueueRun(request: DispatchRequest, toRoleKey: string): Promise<DispatchResult> {
-    if (!this.coordination?.band) {
+  async #enqueueRun(
+    request: DispatchRequest,
+    toRoleKey: string,
+    options: { readonly requireBand: boolean },
+  ): Promise<DispatchResult> {
+    const band = this.coordination?.band;
+    if (options.requireBand && !band) {
       throw new ValidationError(
         'Dispatch requires BAND coordination. The room is the handoff; enqueue without posting to a BAND room is refused.',
       );
@@ -124,20 +135,22 @@ export class OrgDispatcher {
       parentRunId: request.parentRunId ?? null,
     });
 
-    try {
-      await this.#postBandAssignment(request, run.id, toRoleKey);
-    } catch (error) {
+    if (band) {
       try {
-        await this.repos.agents.runs.finish({
-          id: run.id,
-          status: 'failed',
-          roleKey: toRoleKey,
-          error: 'BAND handoff failed; the specialist was not enqueued.',
-        });
-      } catch {
-        /* keep the handoff error */
+        await this.#postBandAssignment(request, run.id, toRoleKey);
+      } catch (error) {
+        try {
+          await this.repos.agents.runs.finish({
+            id: run.id,
+            status: 'failed',
+            roleKey: toRoleKey,
+            error: 'BAND handoff failed; the specialist was not enqueued.',
+          });
+        } catch {
+          /* keep the handoff error */
+        }
+        throw error;
       }
-      throw error;
     }
 
     await this.queues.enqueue(
@@ -240,6 +253,17 @@ export class OrgDispatcher {
    */
   async #postBandAssignment(request: DispatchRequest, runId: string, toRoleKey: string): Promise<void> {
     const band = this.coordination!.band;
+    const to = roleByKey(toRoleKey);
+    if (!to) throw new ValidationError(`Unknown target role "${toRoleKey}"`);
+    const channel = bandChannelForRole(to);
+    const from = request.fromRoleKey === 'system' ? 'system' : roleByKey(request.fromRoleKey);
+    if (!from || !roleMayPostToBandChannel(from, channel)) {
+      throw new PolicyDeniedError(
+        `"${request.fromRoleKey}" may not post a BAND handoff on the ${channel} channel.`,
+        { from: request.fromRoleKey, to: toRoleKey, channel },
+      );
+    }
+
     const me = await band.getMe();
     const selfHandle = (me.handle ?? me.id)?.replace(/^@/, '') ?? '';
     const chatId = await this.#ensureCompanyChat(request.companyId, band);
@@ -256,7 +280,7 @@ export class OrgDispatcher {
     const message = await band.sendMessage(chatId, {
       recipients: [mentionHandle],
       body:
-        `DISPATCH role=${toRoleKey} run=${runId}\n` +
+        `DISPATCH role=${toRoleKey} run=${runId} CHANNEL=${channel}\n` +
         `${request.objective}\n` +
         `A specialist must not start this work except by claiming this message.`,
     });
@@ -265,23 +289,42 @@ export class OrgDispatcher {
       bandChatId: chatId,
       bandMessageId: message.id,
       bandHandle: mentionHandle,
+      bandChannel: channel,
+    });
+    await this.repos.audit.append({
+      companyId: request.companyId,
+      kind: 'agent_decision',
+      actorId: request.fromRoleKey,
+      actorKind: actorKindForDispatch(request.fromRoleKey),
+      action: 'band.handoff',
+      subjectType: 'agent_run',
+      subjectRefId: runId,
+      outcome: 'success',
+      detail: {
+        from: request.fromRoleKey,
+        to: toRoleKey,
+        channel,
+        chatId,
+        messageId: message.id,
+        mentionHandle,
+      },
     });
   }
 
   async #ensureCompanyChat(companyId: string, band: BandAdapter): Promise<string> {
     const company = await this.repos.companies.byId(companyId);
     const config = companyConfig(company);
-    const existing = config.integrations?.bandChatId;
-    if (existing) return existing;
-    const chat = await band.createChat({
-      name: `${company.name} coordination`,
-      taskId: companyId,
+    const resolved = await band.resolveCoordinationRoom({
+      configuredChatId: config.integrations?.bandChatId,
+      companyName: company.name,
     });
-    await this.repos.companies.updateConfig(companyId, {
-      ...config,
-      integrations: { ...config.integrations, bandChatId: chat.id },
-    });
-    return chat.id;
+    if (config.integrations?.bandChatId !== resolved.chatId) {
+      await this.repos.companies.updateConfig(companyId, {
+        ...config,
+        integrations: { ...config.integrations, bandChatId: resolved.chatId },
+      });
+    }
+    return resolved.chatId;
   }
 }
 
@@ -299,6 +342,15 @@ function mentionableParticipantHandle(
     return handle;
   }
   return undefined;
+}
+
+function actorKindForDispatch(fromRoleKey: string): ActorKind {
+  if (fromRoleKey === 'system') return 'system_job';
+  const role = roleByKey(fromRoleKey);
+  if (role?.tier === 'executive') return 'ceo_agent';
+  if (role?.tier === 'manager') return 'manager_agent';
+  if (role?.tier === 'specialist') return 'specialist_agent';
+  return 'system_job';
 }
 
 function directReportKeys(role: RoleDefinition): readonly string[] {

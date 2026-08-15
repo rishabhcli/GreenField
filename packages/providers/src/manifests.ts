@@ -1279,8 +1279,26 @@ export const ALIBABA_MANIFEST: ProviderManifest = {
   secrets: [SECRETS.alibabaAppKey, SECRETS.alibabaAppSecret],
   baseUrls: { production: 'https://openapi-api.alibaba.com/rest' },
   capabilities: [
-    { capability: 'sourcing.supplier_search', priority: 1, evidence: { kind: 'documented_api', detail: 'product and supplier search endpoints on the Open Platform' } },
-    { capability: 'sourcing.supplier_profile', priority: 1, evidence: { kind: 'documented_api', detail: 'supplier detail endpoints' } },
+    {
+      capability: 'sourcing.supplier_search',
+      priority: 1,
+      evidence: {
+        kind: 'marketing_claim_only',
+        detail:
+          'The Open Platform advertises product and supplier search, but no endpoint contract was recoverable ' +
+          'from public docs (2026-08-15). The adapter always throws VendorApprovalRequiredError and makes no call.',
+      },
+    },
+    {
+      capability: 'sourcing.supplier_profile',
+      priority: 1,
+      evidence: {
+        kind: 'marketing_claim_only',
+        detail:
+          'Supplier detail is advertised behind GGS developer approval. No public method name or response shape ' +
+          'was verified, so this is not documented_api.',
+      },
+    },
     {
       capability: 'sourcing.rfq_submit',
       priority: 1,
@@ -1296,7 +1314,11 @@ export const ALIBABA_MANIFEST: ProviderManifest = {
     required: true,
     how: 'An Alibaba Open Platform app must be created and approved, and API scopes are granted per app. Approval is manual.',
   },
-  liveProbe: { description: 'A signed read-only category or product search call with a single result', mutatesState: false },
+  liveProbe: {
+    description:
+      'No confirmed non-destructive read exists; the adapter reports unverifiable and does not invent a signed call',
+    mutatesState: false,
+  },
   failureBehaviour: 'Signature errors are terminal and indicate a clock skew or secret problem; the adapter surfaces the server timestamp for diagnosis.',
   retryStrategy: 'Standard policy.',
   idempotency: 'Search is read-only. RFQ submission is guarded by the local idempotency ledger.',

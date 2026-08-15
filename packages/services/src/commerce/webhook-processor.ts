@@ -26,6 +26,7 @@ import {
   NotFoundError,
   ValidationError,
   isStaleTransition,
+  statusAfterRefund,
 } from '@foundry/core';
 import type { OrderStatus } from '@foundry/core';
 import { getLogger, metrics } from '@foundry/obs';
@@ -34,11 +35,13 @@ import {
   mapLinqEventToSupportUpdate,
   mapStripeEventToOrderTransition,
   mapWhopEventToOrderTransition,
+  shippingAddressFromStripe,
   type MappingResult,
   type OrderTransitionIntent,
 } from '@foundry/providers';
 import type { ServiceDeps } from '../deps.js';
 import { SupportInboxService } from '../support/inbox.js';
+import { lostDisputeRefundDelta, RefundService } from './refunds.js';
 
 /** Providers whose events this processor knows how to interpret. */
 export type WebhookProvider = 'stripe' | 'whop' | 'dodo' | 'linq' | 'terac' | 'lovable' | 'sandbox0' | 'replay' | 'solari';
@@ -177,6 +180,15 @@ export class WebhookProcessorService {
       body: update.body,
       customerHandle: update.fromHandle,
     });
+    if (ingested.ok && ingested.data?.messageId) {
+      await this.deps.queues.enqueue('support.inbound', {
+        companyId: company.id,
+        traceId: ingested.data.ticketId,
+        originRunId: null,
+        idempotencyKey: `support:${ingested.data.ticketId}:${ingested.data.messageId}`,
+        supportMessageId: ingested.data.messageId,
+      });
+    }
     await this.deps.repos.webhooks.markProcessed(webhookEventId, company.id);
     return {
       outcome: 'ingested',
@@ -204,6 +216,9 @@ export class WebhookProcessorService {
         return mapStripeEventToOrderTransition(eventType, dataObject);
       }
       case 'dodo':
+        // Refund ledger aliases (`refund` = `refund_id` / `re_*`) are applied
+        // in mapDodoEventToOrderTransition. Do not copy payment_id onto the
+        // refund key. Persist/reconcile splices: PATCH.md (DodoCommerceService).
         return mapDodoEventToOrderTransition(eventType, payload);
       case 'whop':
         return mapWhopEventToOrderTransition(eventType, payload);
@@ -270,21 +285,64 @@ export class WebhookProcessorService {
       return { outcome: 'escalated', orderId: order.id, reason: detail };
     }
 
+    let toStatus = intent.orderStatus;
+    let amountPaidDeltaMinor = intent.amountPaidDeltaMinor;
+    let amountRefundedDeltaMinor = intent.amountRefundedDeltaMinor;
+    let kind = intent.kind;
+    let manualReviewReason = intent.manualReviewReason;
+
+    const capture = evaluatePaidCapture({
+      intendedStatus: intent.orderStatus,
+      amountPaidDeltaMinor: intent.amountPaidDeltaMinor,
+      eventCurrency: intent.currency,
+      orderTotalMinor: order.total_minor,
+      orderCurrency: order.currency,
+      orderAmountPaidMinor: order.amount_paid_minor,
+    });
+    if (capture.action === 'reject') {
+      toStatus = 'MANUAL_REVIEW';
+      kind = 'manual_review_flagged';
+      amountPaidDeltaMinor = undefined;
+      amountRefundedDeltaMinor = undefined;
+      manualReviewReason = capture.reason;
+    } else if (capture.action === 'already_credited') {
+      amountPaidDeltaMinor = undefined;
+    } else if (capture.action === 'credit') {
+      amountPaidDeltaMinor = capture.amountPaidDeltaMinor;
+    }
+
+    if (intent.kind === 'dispute_closed' && intent.orderStatus === 'REFUNDED') {
+      amountRefundedDeltaMinor = lostDisputeRefundDelta({
+        amountPaidMinor: order.amount_paid_minor,
+        amountRefundedMinor: order.amount_refunded_minor,
+      });
+    }
+
+    if (
+      capture.action !== 'reject' &&
+      amountRefundedDeltaMinor !== undefined &&
+      amountRefundedDeltaMinor > 0
+    ) {
+      toStatus = statusAfterRefund(
+        {
+          amountPaidMinor: order.amount_paid_minor,
+          amountRefundedMinor: order.amount_refunded_minor,
+        },
+        amountRefundedDeltaMinor,
+      );
+    }
+
     try {
       const result = await this.deps.repos.commerce.orders.applyEvent({
         orderId: order.id,
-        kind: intent.kind,
-        toStatus: intent.orderStatus,
+        kind,
+        toStatus,
         actor: `webhook:${provider}`,
         externalEventId: `${provider}:${webhookEventId}`,
         payload: { eventType, ...intent.detail },
-        ...(intent.amountPaidDeltaMinor !== undefined
-          ? { amountPaidDeltaMinor: intent.amountPaidDeltaMinor }
-          : {}),
-        ...(intent.amountRefundedDeltaMinor !== undefined
-          ? { amountRefundedDeltaMinor: intent.amountRefundedDeltaMinor }
-          : {}),
-        ...(intent.manualReviewReason ? { manualReviewReason: intent.manualReviewReason } : {}),
+        ...(amountPaidDeltaMinor !== undefined ? { amountPaidDeltaMinor } : {}),
+        ...(amountRefundedDeltaMinor !== undefined ? { amountRefundedDeltaMinor } : {}),
+        ...(manualReviewReason ? { manualReviewReason } : {}),
       });
 
       await this.deps.repos.webhooks.markProcessed(webhookEventId, order.company_id);
@@ -302,17 +360,38 @@ export class WebhookProcessorService {
         await this.deps.repos.commerce.orders.setExternalRef(order.id, `${provider}_${key}`, value);
       }
 
-      await this.#onApplied(order.id, intent);
+      const shipping = shippingAddressFromStripe(intent.detail['shipping']);
+      if (shipping) {
+        await this.deps.repos.commerce.orders.setShippingAddress(order.id, shipping);
+      }
+
+      if (capture.action === 'reject') {
+        await this.#escalate(provider, eventType, capture.reason, intent);
+        return {
+          outcome: 'escalated',
+          orderId: order.id,
+          fromStatus: order.status as OrderStatus,
+          toStatus: 'MANUAL_REVIEW',
+          reason: capture.reason,
+        };
+      }
+
+      await this.#onApplied(order.id, provider, {
+        ...intent,
+        orderStatus: toStatus,
+        amountPaidDeltaMinor,
+        amountRefundedDeltaMinor,
+      });
 
       log.info(
-        { orderId: order.id, provider, eventType, toStatus: intent.orderStatus },
+        { orderId: order.id, provider, eventType, toStatus },
         'order transition applied from webhook',
       );
       return {
         outcome: 'applied',
         orderId: order.id,
         fromStatus: order.status as OrderStatus,
-        ...(intent.orderStatus ? { toStatus: intent.orderStatus } : {}),
+        ...(toStatus ? { toStatus } : {}),
       };
     } catch (error) {
       if (error instanceof ConflictError) {
@@ -337,13 +416,21 @@ export class WebhookProcessorService {
     if (!companyRow) return undefined;
 
     for (const [key, value] of Object.entries(intent.externalIds)) {
-      const found = await this.deps.repos.commerce.orders.byExternalRef(companyRow.id, `${provider}_${key}`, value);
-      if (found) return found;
+      const prefixed = await this.deps.repos.commerce.orders.byExternalRef(
+        companyRow.id,
+        `${provider}_${key}`,
+        value,
+      );
+      if (prefixed) return prefixed;
+      // Checkout writes `stripe_checkout_session` without a second prefix;
+      // mapper keys already include the provider in some cases.
+      const direct = await this.deps.repos.commerce.orders.byExternalRef(companyRow.id, key, value);
+      if (direct) return direct;
     }
 
     // Our own order id, when the provider echoed it back in metadata. This is
     // the most reliable path and the reason checkout sets it.
-    const ownId = intent.externalIds['orderId'] ?? intent.externalIds['order_id'];
+    const ownId = intent.externalIds['orderId'] ?? intent.externalIds['order_id'] ?? intent.externalIds['internal_order_id'];
     if (ownId) {
       try {
         return await this.deps.repos.commerce.orders.byId(ownId);
@@ -351,7 +438,70 @@ export class WebhookProcessorService {
         if (!(error instanceof NotFoundError)) throw error;
       }
     }
+
+    if (
+      provider === 'stripe' &&
+      intent.orderStatus === 'PAID' &&
+      (intent.amountPaidDeltaMinor ?? 0) >= 50
+    ) {
+      return this.#materializePaidSessionOrder(companyRow.id, intent);
+    }
     return undefined;
+  }
+
+  /**
+   * A paid Stripe Checkout / Payment Link session with no pre-created order.
+   * Records the money against a catalogue SKU rather than leaving an orphan
+   * webhook. Does not invent a customer: email or phone must be on the event.
+   */
+  async #materializePaidSessionOrder(
+    companyId: string,
+    intent: OrderTransitionIntent,
+  ) {
+    const email = stringDetail(intent.detail, 'customerEmail');
+    const phone = stringDetail(intent.detail, 'customerPhone');
+    if (!email && !phone) return undefined;
+
+    const products = await this.deps.repos.commerce.products.listActive(companyId);
+    const amount = intent.amountPaidDeltaMinor ?? 0;
+    const tax = numberDetail(intent.detail, 'amountTax') ?? 0;
+    const shipping = numberDetail(intent.detail, 'amountShipping') ?? 0;
+    const productAmount = Math.max(amount - tax - shipping, 0);
+    const product =
+      products.find((p) => p.price_minor === productAmount) ??
+      products.find((p) => p.sku === 'zhc-founding') ??
+      products[0];
+    if (!product) return undefined;
+
+    const customer = await this.deps.repos.commerce.customers.upsert({
+      companyId,
+      email: email ?? null,
+      phoneE164: phone ?? null,
+      name: stringDetail(intent.detail, 'customerName'),
+    });
+
+    const created = await this.deps.repos.commerce.orders.create({
+      companyId,
+      customerId: customer.id,
+      currency: (intent.currency ?? product.currency).toUpperCase(),
+      paymentRoute: product.payment_route as 'stripe_direct' | 'dodo_merchant_of_record' | 'whop_checkout',
+      shippingMinor: shipping,
+      lineItems: [
+        {
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          quantity: 1,
+          unitPriceMinor: product.price_minor,
+          taxMinor: tax,
+        },
+      ],
+      externalRefs: Object.fromEntries(
+        Object.entries(intent.externalIds).map(([key, value]) => [`${key.startsWith('stripe') ? key : `stripe_${key}`}`, value]),
+      ),
+      attribution: { source: 'stripe_payment_link' },
+    });
+    return created.order;
   }
 
   /**
@@ -360,10 +510,11 @@ export class WebhookProcessorService {
    * Kept as enqueues rather than inline work: the webhook path must stay fast
    * and must not fail because a downstream system is slow.
    */
-  async #onApplied(orderId: string, intent: OrderTransitionIntent): Promise<void> {
+  async #onApplied(orderId: string, provider: string, intent: OrderTransitionIntent): Promise<void> {
     const order = await this.deps.repos.commerce.orders.byId(orderId);
 
     if (intent.orderStatus === 'PAID') {
+      await this.#upsertCapturedPayment(order, provider, intent);
       await this.deps.queues.enqueue('fulfilment.sync', {
         companyId: order.company_id,
         traceId: orderId,
@@ -385,9 +536,25 @@ export class WebhookProcessorService {
       });
     }
 
-    if (intent.orderStatus === 'DISPUTED') {
-      // A dispute is a governance event, not just a status: it can trigger the
-      // payments kill switch if the rate crosses the configured threshold.
+    if (intent.kind === 'refund_issued' && (intent.amountRefundedDeltaMinor ?? 0) > 0) {
+      await this.#recordWebhookRefund(order, provider, intent);
+    }
+
+    if (intent.kind === 'dispute_opened' && intent.orderStatus === 'DISPUTED') {
+      const amountMinor = numberDetail(intent.detail, 'amount');
+      const dueSeconds = numberDetail(intent.detail, 'evidenceDueBy');
+      await new RefundService(this.deps).onDisputeOpened({
+        orderId: order.id,
+        provider,
+        externalId:
+          intent.externalIds['stripe_dispute'] ??
+          intent.externalIds['stripe_charge'] ??
+          intent.externalIds['dispute'] ??
+          order.id,
+        amountMinor: amountMinor ?? order.amount_paid_minor,
+        reason: stringDetail(intent.detail, 'reason') ?? 'dispute',
+        evidenceDueBy: dueSeconds !== null ? new Date(dueSeconds * 1000) : null,
+      });
       await this.deps.repos.audit.append({
         companyId: order.company_id,
         kind: 'order_state_changed',
@@ -402,6 +569,96 @@ export class WebhookProcessorService {
         currency: order.currency,
       });
     }
+  }
+
+  async #upsertCapturedPayment(
+    order: {
+      id: string;
+      company_id: string;
+      amount_paid_minor: number;
+      currency: string;
+      paid_at: Date | null;
+      external_refs: Record<string, string>;
+    },
+    provider: string,
+    intent: OrderTransitionIntent,
+  ): Promise<void> {
+    if (provider !== 'stripe' && provider !== 'dodo' && provider !== 'whop') return;
+    if (order.amount_paid_minor <= 0) return;
+    const externalId =
+      intent.externalIds['stripe_payment_intent'] ??
+      intent.externalIds['stripe_charge'] ??
+      intent.externalIds['payment_intent'] ??
+      intent.externalIds['charge'] ??
+      order.external_refs['stripe_payment_intent'] ??
+      order.external_refs['stripe_charge'];
+    if (!externalId) return;
+    await this.deps.repos.commerce.payments.upsert({
+      companyId: order.company_id,
+      orderId: order.id,
+      provider,
+      externalId,
+      status: 'succeeded',
+      amountMinor: order.amount_paid_minor,
+      currency: order.currency,
+      capturedAt: order.paid_at ?? new Date(),
+    });
+  }
+
+  /**
+   * Dashboard / provider-initiated refunds update order totals in applyEvent.
+   * The refunds table + ledger job still have to be written, or
+   * finance.reconcile cannot find a `re_*` row.
+   */
+  async #recordWebhookRefund(
+    order: {
+      id: string;
+      company_id: string;
+      currency: string;
+      external_refs: Record<string, string>;
+    },
+    provider: string,
+    intent: OrderTransitionIntent,
+  ): Promise<void> {
+    const refundExternalId = intent.externalIds['stripe_refund'] ?? intent.externalIds['refund'];
+    const amountMinor = intent.amountRefundedDeltaMinor;
+    if (!refundExternalId || !amountMinor || amountMinor <= 0) return;
+
+    const paymentExternalId =
+      intent.externalIds['stripe_payment_intent'] ??
+      intent.externalIds['stripe_charge'] ??
+      intent.externalIds['payment_intent'] ??
+      intent.externalIds['charge'] ??
+      order.external_refs['stripe_payment_intent'] ??
+      order.external_refs['stripe_charge'];
+    if (!paymentExternalId) return;
+
+    const payment = await this.deps.repos.commerce.payments.byExternalId(provider, paymentExternalId);
+    if (!payment) return;
+
+    await this.deps.repos.commerce.payments.recordRefund({
+      companyId: order.company_id,
+      orderId: order.id,
+      paymentId: payment.id,
+      provider,
+      externalId: refundExternalId,
+      amountMinor,
+      currency: order.currency,
+      reason: stringDetail(intent.detail, 'reason'),
+      status: stringDetail(intent.detail, 'status') ?? 'succeeded',
+      authorisedBy: 'webhook',
+    });
+
+    await this.deps.queues.enqueue('finance.reconcile', {
+      companyId: order.company_id,
+      traceId: order.id,
+      originRunId: null,
+      idempotencyKey: `ledger:refund:${refundExternalId}`,
+      sinceIso: null,
+      scope: 'refund',
+      orderId: order.id,
+      refundExternalId,
+    });
   }
 
   /** Records an incident that needs a human, and audits it. */
@@ -429,6 +686,63 @@ export class WebhookProcessorService {
   }
 }
 
+export type PaidCaptureDecision =
+  | { readonly action: 'credit'; readonly amountPaidDeltaMinor: number }
+  | { readonly action: 'already_credited' }
+  | { readonly action: 'pass' }
+  | { readonly action: 'reject'; readonly reason: string };
+
+/**
+ * Whether a webhook's captured amount may be booked against this order.
+ *
+ * A mismatch or an explicit zero capture is held for manual review. A PAID
+ * event with no amount (Linq, or a later status-only webhook) is passed
+ * through without crediting money.
+ */
+export function evaluatePaidCapture(input: {
+  readonly intendedStatus: OrderStatus | null;
+  readonly amountPaidDeltaMinor: number | undefined;
+  readonly eventCurrency: string | undefined;
+  readonly orderTotalMinor: number;
+  readonly orderCurrency: string;
+  readonly orderAmountPaidMinor: number;
+}): PaidCaptureDecision {
+  if (
+    input.eventCurrency &&
+    input.eventCurrency.toUpperCase() !== input.orderCurrency.toUpperCase()
+  ) {
+    return {
+      action: 'reject',
+      reason: `Currency mismatch: order is ${input.orderCurrency}, event reports ${input.eventCurrency}.`,
+    };
+  }
+  const delta = input.amountPaidDeltaMinor;
+  if (delta === undefined) return { action: 'pass' };
+  if (delta <= 0) {
+    return {
+      action: 'reject',
+      reason: `Refusing to mark PAID with captured amount ${delta}.`,
+    };
+  }
+  if (input.orderAmountPaidMinor > 0) {
+    if (input.orderAmountPaidMinor === delta) return { action: 'already_credited' };
+    return {
+      action: 'reject',
+      reason:
+        `Captured ${delta} minor units disagrees with the already booked ` +
+        `${input.orderAmountPaidMinor} on this order.`,
+    };
+  }
+  if (input.orderTotalMinor > 0 && delta !== input.orderTotalMinor) {
+    return {
+      action: 'reject',
+      reason:
+        `Captured ${delta} minor units does not equal order total ${input.orderTotalMinor}.`,
+    };
+  }
+  return { action: 'credit', amountPaidDeltaMinor: delta };
+}
+
 function readPath(value: unknown, path: readonly string[]): unknown {
   let current: unknown = value;
   for (const segment of path) {
@@ -436,4 +750,14 @@ function readPath(value: unknown, path: readonly string[]): unknown {
     current = (current as Record<string, unknown>)[segment];
   }
   return current;
+}
+
+function stringDetail(detail: Readonly<Record<string, unknown>>, key: string): string | null {
+  const value = detail[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function numberDetail(detail: Readonly<Record<string, unknown>>, key: string): number | null {
+  const value = detail[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }

@@ -27,6 +27,12 @@ import { apiKeyHeaderAuth, noAuth, ProviderHttpClient } from '../http/client.js'
 import { limiterFor } from '../http/rate-limit.js';
 import { SECRETS, SUPERSERVE_MANIFEST } from '../manifests.js';
 import {
+  assertIsolatedFromControlPlane,
+  assertSuperserveWorkload,
+  persistentWorkspaceIdentity,
+  type ComputeBusinessFunction,
+} from './identities.js';
+import {
   SuperserveExecResult,
   SuperserveFileList,
   SuperserveNetworkLog,
@@ -40,6 +46,16 @@ import {
   type SuperserveFileEntry,
 } from './schemas.js';
 import { SuperservePreviewPort } from './schemas.js';
+
+export {
+  SUPERSERVE_PAUSE_PRESERVES_VM_STATE,
+  assertIsolatedFromControlPlane,
+  assertSuperserveWorkload,
+  persistentWorkspaceIdentity,
+  type ComputeBusinessFunction,
+  type ComputeWorkload,
+  type PersistentWorkspaceIdentity,
+} from './identities.js';
 
 // Re-exported so `CoreAdapterContext` is actually referenced (keeps this file
 // honest about depending on the shared context shape without a second,
@@ -86,6 +102,9 @@ export interface CreateSandboxInput {
    * what actually make that claim true rather than aspirational.
    */
   readonly agentRunId?: string;
+  /** Persistent workspace identity. Must be paired with `companyId`. */
+  readonly businessFunction?: ComputeBusinessFunction;
+  readonly companyId?: string;
 }
 
 export interface UpdateSandboxInput {
@@ -249,9 +268,22 @@ export class SuperserveAdapter extends ProviderAdapter {
 
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
     if (input.agentRunId) metadata.agent_run_id = input.agentRunId;
+    let name = input.name;
+    if (input.businessFunction || input.companyId) {
+      if (!input.businessFunction || !input.companyId) {
+        throw new ValidationError('createSandbox businessFunction and companyId must be provided together', {
+          provider: 'superserve',
+        });
+      }
+      assertSuperserveWorkload('persistent_multi_hour');
+      const identity = persistentWorkspaceIdentity(input.businessFunction, input.companyId);
+      assertIsolatedFromControlPlane(identity.name);
+      name = input.name ?? identity.name;
+      Object.assign(metadata, identity.metadata);
+    }
 
     const body: Record<string, unknown> = {
-      ...(input.name ? { name: input.name } : {}),
+      ...(name ? { name } : {}),
       ...(input.fromTemplate ? { from_template: input.fromTemplate } : {}),
       ...(input.timeoutSeconds !== undefined ? { timeout_seconds: input.timeoutSeconds } : {}),
       ...(input.autoDeleteSeconds !== undefined ? { auto_delete_seconds: input.autoDeleteSeconds } : {}),

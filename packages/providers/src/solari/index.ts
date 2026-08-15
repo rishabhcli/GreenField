@@ -52,9 +52,26 @@ export {
   isSearchHost,
   isSearchResultsPage,
   resolveResultUrl,
+  selectResultUrls,
   type LoadedBrowserPage,
   type SessionPageLoad,
 } from './navigate.js';
+export {
+  assertNavigationPermitted,
+  assertResearchResultPermitted,
+  assertRobotsNotOverridden,
+  isReviewedResearchSearchHost,
+  isUnreviewedMarketplaceHost,
+  refuseUnreviewedHost,
+} from './compliance.js';
+export {
+  assertIsolatedFromControlPlane,
+  assertSolariWorkload,
+  browserSessionIdentity,
+  type BrowserSessionIdentity,
+  type ComputeBusinessFunction,
+  type ComputeWorkload,
+} from './identities.js';
 
 /* -------------------------------------------------------------------------- */
 /* UNVERIFIED path — reassignable like Terac's `feasibilityRequestPath`         */

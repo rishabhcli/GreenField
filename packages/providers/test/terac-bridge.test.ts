@@ -78,8 +78,15 @@ describe('toExpertReview', () => {
     expect(toExpertReview(opportunity({ status: 'completed' }), []).status).toBe('completed');
   });
 
+  it('does not treat an unfunded draft as launched panel results', () => {
+    const result = toExpertReview(opportunity({ status: 'draft' }), []);
+    expect(result.status).toBe('priced');
+    expect(result.verdict).toBe('pending');
+    expect(result.submissions).toHaveLength(0);
+  });
+
   it('falls back to launched when nothing matches and no submissions exist yet', () => {
-    expect(toExpertReview(opportunity({ status: 'draft' }), []).status).toBe('launched');
+    expect(toExpertReview(opportunity({ status: 'unknown_wire_value' }), []).status).toBe('launched');
   });
 
   it('normalises an unrecognised recommendation to approve_with_changes rather than guessing approve or reject', () => {

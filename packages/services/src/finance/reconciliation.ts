@@ -48,10 +48,10 @@ export class ReconciliationService {
    */
   async run(companyId: string, provider: 'stripe', windowDays = 14): Promise<ReconciliationReport> {
     const log = getLogger();
-    const adapter = optionalCapability<ReconcilableProvider>(this.deps, 'payments.webhooks');
+    const adapter = optionalCapability<ReconcilableProvider>(this.deps, 'payments.checkout.physical');
 
     if (!adapter || typeof adapter.listPayments !== 'function') {
-      const status = this.deps.providers.forCapability('payments.webhooks').status;
+      const status = this.deps.providers.forCapability('payments.checkout.physical').status;
       const reason = status.remediation ?? `payment provider is ${status.state}`;
       // Not a clean result — an unrun reconciliation is not a passing one, and
       // reporting it as such would be exactly the false assurance this service

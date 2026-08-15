@@ -28,6 +28,7 @@ export const QUEUE_NAMES = [
   'fulfilment.sync',
   'marketing.metrics_collect',
   'marketing.decide',
+  'marketing.outreach',
   'support.inbound',
   'support.followup',
   'finance.reconcile',
@@ -143,6 +144,7 @@ export const JOB_SCHEMAS = {
   'marketing.decide': withEnvelope({
     experimentId: z.string().min(1).nullable().default(null),
   }),
+  'marketing.outreach': withEnvelope({}),
   'support.inbound': withEnvelope({
     supportMessageId: z.string().min(1),
   }),
@@ -216,6 +218,7 @@ export const QUEUE_POLICIES: Readonly<Record<QueueName, QueuePolicy>> = {
   'fulfilment.sync': { concurrency: 6, attempts: 5, backoffMs: 30_000, jobTimeoutMs: 5 * 60_000, keepCompleted: 500, keepFailed: 2000, consequential: true },
   'marketing.metrics_collect': { concurrency: 4, attempts: 4, backoffMs: 30_000, jobTimeoutMs: 10 * 60_000, keepCompleted: 500, keepFailed: 1000, consequential: false },
   'marketing.decide': { concurrency: 2, attempts: 2, backoffMs: 30_000, jobTimeoutMs: 10 * 60_000, keepCompleted: 500, keepFailed: 1000, consequential: true },
+  'marketing.outreach': { concurrency: 1, attempts: 3, backoffMs: 30_000, jobTimeoutMs: 5 * 60_000, keepCompleted: 200, keepFailed: 500, consequential: true },
   'support.inbound': { concurrency: 8, attempts: 5, backoffMs: 5_000, jobTimeoutMs: 5 * 60_000, keepCompleted: 1000, keepFailed: 5000, consequential: true },
   'support.followup': { concurrency: 4, attempts: 3, backoffMs: 60_000, jobTimeoutMs: 5 * 60_000, keepCompleted: 500, keepFailed: 1000, consequential: true },
   'finance.reconcile': { concurrency: 1, attempts: 3, backoffMs: 60_000, jobTimeoutMs: 20 * 60_000, keepCompleted: 200, keepFailed: 500, consequential: true },
@@ -227,7 +230,8 @@ export const QUEUE_POLICIES: Readonly<Record<QueueName, QueuePolicy>> = {
 /**
  * Repeatable jobs. These are what make the company a running loop rather than
  * a one-shot pipeline: the CEO cycle ticks, metrics are collected, payments are
- * reconciled, provider health is re-probed and retention is enforced, forever.
+ * reconciled, and retention is enforced, forever. Provider health rows are
+ * written only by `apps/verifier` — never by a repeatable queue job.
  */
 export interface ScheduledJob {
   readonly queue: QueueName;
@@ -273,7 +277,6 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
   { queue: 'fulfilment.sync', name: 'tracking-sync', cron: '*/30 * * * *', payload: {} },
   { queue: 'expert.poll', name: 'expert-review-poll', cron: '*/15 * * * *', payload: {} },
   { queue: 'sourcing.quote_poll', name: 'quote-poll', cron: '0 */6 * * *', payload: {} },
-  { queue: 'verification.probe', name: 'integration-health', cron: '0 */6 * * *', payload: {} },
   { queue: 'maintenance.budget_rollover', name: 'budget-windows', cron: '2 0 * * *', payload: {} },
   { queue: 'maintenance.retention', name: 'data-retention', cron: '30 4 * * *', payload: {} },
 ];

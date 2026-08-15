@@ -52,9 +52,10 @@ export const REPLAY_CRITICAL_FLOW_INSTRUCTIONS =
   'Do not treat an unreachable or unfinished app as a passing run.';
 
 export function isLocalTargetUrl(url: string): boolean {
+  if (/^https?:\/\/(\[::1\]|localhost|127\.0\.0\.1)(?::\d+)?(?:[/?#]|$)/i.test(url)) return true;
   try {
-    const host = new URL(url).hostname;
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0:0:0:0:0:0:0:1';
   } catch {
     return false;
   }

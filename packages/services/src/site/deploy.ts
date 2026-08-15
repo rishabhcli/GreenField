@@ -1,15 +1,19 @@
 /**
  * Render-hosted storefront deploys.
  *
- * Preview and production both go through Render. A Lovable preview is not a
- * deploy. Production additionally re-evaluates the QA release gate and will
- * not promote without a pass — `promoteToProduction` is the write that
- * enforces it.
+ * Preview, staging, and production all go through the Render API. A Lovable
+ * preview is not a deploy and is never recorded as a production URL.
+ * Production additionally re-evaluates `evaluateReleaseGate` and will not
+ * trigger a Render deploy or promote when the gate blocks. Replay owns the
+ * gate implementation; this service only refuses.
  */
 
 import {
   CapabilityUnsupportedError,
   CredentialsMissingError,
+  CRITICAL_FLOWS,
+  PRODUCTION_REQUIRED_RUN_KINDS,
+  evaluateReleaseGate,
   type Capability,
 } from '@foundry/core';
 import { RenderAdapter, mapDeployStatus } from '@foundry/providers';
@@ -18,8 +22,30 @@ import { optionalCapability, type ServiceDeps, type ServiceOutcome } from '../de
 export const RENDER_SERVICE_NEEDED =
   'Site has no hosting_service_id. Set RENDER_STOREFRONT_SERVICE_ID and persist it on the site, or create a Render service first.';
 
+export const LOCAL_PRODUCTION_URL_REFUSED =
+  'Render returned a localhost URL; refusing to record it as a production storefront. Lovable preview is never production.';
+
 export class SiteDeployService {
   constructor(private readonly deps: ServiceDeps) {}
+
+  async deploy(input: {
+    siteId: string;
+    environment: 'preview' | 'staging' | 'production';
+    gatingQaRunId?: string | null;
+  }): Promise<
+    ServiceOutcome<
+      | { deploymentId: string; externalDeployId: string; status: string; url: string | null }
+      | { promoted: boolean; deploymentId: string; gate: unknown }
+    >
+  > {
+    if (input.environment === 'production') {
+      if (!input.gatingQaRunId) {
+        return blocked('qa.release_gate', 'Production deploy requires gatingQaRunId from a completed QA run.');
+      }
+      return this.deployProduction({ siteId: input.siteId, gatingQaRunId: input.gatingQaRunId });
+    }
+    return this.#deployNonProduction({ siteId: input.siteId, environment: input.environment });
+  }
 
   async deployPreview(input: { siteId: string }): Promise<ServiceOutcome<{
     deploymentId: string;
@@ -27,65 +53,23 @@ export class SiteDeployService {
     status: string;
     url: string | null;
   }>> {
-    const site = await this.deps.repos.build.sites.byId(input.siteId);
-    if (!site.hosting_service_id) {
-      return blocked('platform.deploy_control', RENDER_SERVICE_NEEDED);
-    }
-    const adapter = optionalCapability<RenderAdapter>(this.deps, 'platform.deploy_control');
-    if (!adapter || typeof adapter.triggerDeploy !== 'function') {
-      return blocked('platform.deploy_control', this.#reason('platform.deploy_control'));
-    }
+    return this.#deployNonProduction({ siteId: input.siteId, environment: 'preview' });
+  }
 
-    const idempotencyKey = `site.preview:${input.siteId}:${site.hosting_service_id}`;
-    const claimed = await this.deps.repos.idempotency.claim(idempotencyKey, 'site.deploy_preview', {
-      companyId: site.company_id,
-    });
-    if (claimed.status === 'in_progress') {
-      return blocked('platform.deploy_control', 'a preview deploy is already in progress');
-    }
-
-    try {
-      const render = await adapter.triggerDeploy(site.hosting_service_id);
-      const row = await this.deps.repos.build.deployments.start({
-        companyId: site.company_id,
-        siteId: site.id,
-        provider: 'render',
-        environment: 'preview',
-        serviceId: site.hosting_service_id,
-        externalDeployId: render.id,
-        commitSha: render.commit?.id ?? null,
-      });
-      const mapped = mapDeployStatus(render.status);
-      const updated = await this.deps.repos.build.deployments.update(row.id, {
-        status: mapped,
-        externalDeployId: render.id,
-      });
-      if (mapped === 'live') {
-        await this.deps.repos.build.sites.setStatus(site.id, 'preview_deployed');
-      } else {
-        await this.deps.repos.build.sites.setStatus(site.id, 'building');
-      }
-      await this.deps.repos.idempotency.complete(idempotencyKey, { deploymentId: updated.id, deployId: render.id });
-      return {
-        ok: true,
-        data: {
-          deploymentId: updated.id,
-          externalDeployId: render.id,
-          status: updated.status,
-          url: updated.url,
-        },
-      };
-    } catch (error) {
-      await this.deps.repos.idempotency.fail(idempotencyKey, error instanceof Error ? error.message : String(error));
-      return this.#fromProviderError('platform.deploy_control', error);
-    }
+  async deployStaging(input: { siteId: string }): Promise<ServiceOutcome<{
+    deploymentId: string;
+    externalDeployId: string;
+    status: string;
+    url: string | null;
+  }>> {
+    return this.#deployNonProduction({ siteId: input.siteId, environment: 'staging' });
   }
 
   async deployProduction(input: {
     siteId: string;
     gatingQaRunId: string;
   }): Promise<ServiceOutcome<{ promoted: boolean; deploymentId: string; gate: unknown }>> {
-    const site = await this.deps.repos.build.sites.byId(input.siteId);
+    const site = await this.#siteWithHosting(input.siteId);
     if (!site.hosting_service_id) {
       return blocked('platform.deploy_control', RENDER_SERVICE_NEEDED);
     }
@@ -97,46 +81,43 @@ export class SiteDeployService {
 
     const runs = await this.deps.repos.build.qa.runsForSite(site.id, 50);
     const gating = runs.find((r) => r.id === input.gatingQaRunId);
-    if (!gating) {
-      return {
-        ok: false,
-        blockedOn: {
-          capability: 'qa.release_gate',
-          reason: `gating QA run ${input.gatingQaRunId} was not found for site ${site.id}`,
-        },
-      };
-    }
-    if (gating.status === 'provider_unavailable' || gating.status !== 'completed') {
+    const gatedDeploymentId = gating?.deployment_id ?? site.current_deployment_id;
+
+    const gate = gatedDeploymentId
+      ? await this.deps.repos.build.qa.evaluateGate(site.company_id, site.id, gatedDeploymentId, 'production')
+      : evaluateReleaseGate({
+          environment: 'production',
+          runs: [],
+          openDefects: [],
+          requiredFlows: [...CRITICAL_FLOWS],
+          requiredRunKinds: [...PRODUCTION_REQUIRED_RUN_KINDS],
+        });
+
+    if (!gating || gate.verdict === 'block') {
       await this.deps.repos.build.sites.setStatus(site.id, 'release_blocked');
       return {
         ok: false,
         blockedOn: {
           capability: 'qa.release_gate',
-          reason: `gating QA run ${input.gatingQaRunId} has status "${gating.status}", not completed. An unexecuted or failed check cannot gate production.`,
+          reason:
+            gate.verdict === 'block'
+              ? gate.blockers.map((b) => b.detail).join('; ') || 'evaluateReleaseGate blocked production deploy'
+              : `gating QA run ${input.gatingQaRunId} was not found for site ${site.id}`,
         },
+        data: { promoted: false, deploymentId: gatedDeploymentId ?? '', gate },
       };
     }
 
-    const gatedDeploymentId = gating.deployment_id ?? site.current_deployment_id;
-    if (!gatedDeploymentId) {
-      return {
-        ok: false,
-        blockedOn: {
-          capability: 'qa.release_gate',
-          reason: 'gating QA run is not attached to a deployment; refusing to promote without that evidence trail',
-        },
-      };
-    }
-
-    const gate = await this.deps.repos.build.qa.evaluateGate(
-      site.company_id,
-      site.id,
-      gatedDeploymentId,
-      'production',
-    );
-    if (gate.verdict === 'block') {
-      await this.deps.repos.build.sites.setStatus(site.id, 'release_blocked');
-      return { ok: false, data: { promoted: false, deploymentId: gatedDeploymentId, gate } };
+    if (typeof adapter.getService === 'function') {
+      const service = await adapter.getService(site.hosting_service_id);
+      const previewed = service.serviceDetails?.url ?? null;
+      if (previewed && isLocalPublicUrl(previewed)) {
+        return {
+          ok: false,
+          blockedOn: { capability: 'platform.deploy_control', reason: LOCAL_PRODUCTION_URL_REFUSED },
+          data: { promoted: false, deploymentId: gatedDeploymentId, gate },
+        };
+      }
     }
 
     try {
@@ -160,6 +141,19 @@ export class SiteDeployService {
       if (typeof adapter.getService === 'function') {
         const service = await adapter.getService(site.hosting_service_id);
         url = service.serviceDetails?.url ?? null;
+      }
+
+      if (url && isLocalPublicUrl(url)) {
+        await this.deps.repos.build.deployments.update(productionRow.id, {
+          status: 'failed',
+          error: LOCAL_PRODUCTION_URL_REFUSED,
+          externalDeployId: render.id,
+        });
+        return {
+          ok: false,
+          blockedOn: { capability: 'platform.deploy_control', reason: LOCAL_PRODUCTION_URL_REFUSED },
+          data: { promoted: false, deploymentId: productionRow.id, gate },
+        };
       }
 
       if (render.status !== 'live' && typeof adapter.waitForDeploy === 'function') {
@@ -206,7 +200,14 @@ export class SiteDeployService {
           status: 'failed',
           error: 'release gate blocked at promoteToProduction',
         });
-        return { ok: false, data: { promoted: false, deploymentId: gatedDeploymentId, gate: promotion.gate } };
+        return {
+          ok: false,
+          blockedOn: {
+            capability: 'qa.release_gate',
+            reason: promotion.gate.blockers.map((b) => b.detail).join('; ') || 'evaluateReleaseGate blocked promotion',
+          },
+          data: { promoted: false, deploymentId: gatedDeploymentId, gate: promotion.gate },
+        };
       }
       await this.deps.repos.build.deployments.update(productionRow.id, { status: 'live', url });
       return { ok: true, data: { promoted: true, deploymentId: gatedDeploymentId, gate: promotion.gate } };
@@ -219,7 +220,7 @@ export class SiteDeployService {
     rolledBackTo: string;
     renderDeployId: string;
   }>> {
-    const site = await this.deps.repos.build.sites.byId(input.siteId);
+    const site = await this.#siteWithHosting(input.siteId);
     if (!site.hosting_service_id) {
       return blocked('platform.deploy_control', RENDER_SERVICE_NEEDED);
     }
@@ -248,6 +249,93 @@ export class SiteDeployService {
     }
   }
 
+  async #deployNonProduction(input: {
+    siteId: string;
+    environment: 'preview' | 'staging';
+  }): Promise<ServiceOutcome<{
+    deploymentId: string;
+    externalDeployId: string;
+    status: string;
+    url: string | null;
+  }>> {
+    const site = await this.#siteWithHosting(input.siteId);
+    if (!site.hosting_service_id) {
+      return blocked('platform.deploy_control', RENDER_SERVICE_NEEDED);
+    }
+    const adapter = optionalCapability<RenderAdapter>(this.deps, 'platform.deploy_control');
+    if (!adapter || typeof adapter.triggerDeploy !== 'function') {
+      return blocked('platform.deploy_control', this.#reason('platform.deploy_control'));
+    }
+
+    const idempotencyKey = `site.${input.environment}:${input.siteId}:${site.hosting_service_id}`;
+    const claimed = await this.deps.repos.idempotency.claim(idempotencyKey, `site.deploy_${input.environment}`, {
+      companyId: site.company_id,
+    });
+    if (claimed.status === 'in_progress') {
+      return blocked('platform.deploy_control', `a ${input.environment} deploy is already in progress`);
+    }
+
+    try {
+      const render = await adapter.triggerDeploy(site.hosting_service_id);
+      const row = await this.deps.repos.build.deployments.start({
+        companyId: site.company_id,
+        siteId: site.id,
+        provider: 'render',
+        environment: input.environment,
+        serviceId: site.hosting_service_id,
+        externalDeployId: render.id,
+        commitSha: render.commit?.id ?? null,
+      });
+      const mapped = mapDeployStatus(render.status);
+      let previewUrl: string | null = null;
+      if (typeof adapter.getService === 'function') {
+        const service = await adapter.getService(site.hosting_service_id);
+        previewUrl = service.serviceDetails?.url ?? null;
+        if (previewUrl && isLocalPublicUrl(previewUrl)) {
+          previewUrl = null;
+        }
+      }
+      const updated = await this.deps.repos.build.deployments.update(row.id, {
+        status: mapped,
+        externalDeployId: render.id,
+        ...(previewUrl ? { url: previewUrl } : {}),
+      });
+      if (previewUrl) {
+        await this.deps.repos.build.sites.setUrls(site.id, { previewUrl });
+      }
+      if (mapped === 'live') {
+        await this.deps.repos.build.sites.setStatus(site.id, 'preview_deployed');
+      } else {
+        await this.deps.repos.build.sites.setStatus(site.id, 'building');
+      }
+      await this.deps.repos.idempotency.complete(idempotencyKey, { deploymentId: updated.id, deployId: render.id });
+      return {
+        ok: true,
+        data: {
+          deploymentId: updated.id,
+          externalDeployId: render.id,
+          status: updated.status,
+          url: updated.url,
+        },
+      };
+    } catch (error) {
+      await this.deps.repos.idempotency.fail(idempotencyKey, error instanceof Error ? error.message : String(error));
+      return this.#fromProviderError('platform.deploy_control', error);
+    }
+  }
+
+  async #siteWithHosting(siteId: string) {
+    const site = await this.deps.repos.build.sites.byId(siteId);
+    const hostingServiceId = await persistConfiguredHostingServiceId(
+      this.deps,
+      site.id,
+      site.hosting_service_id,
+    );
+    return hostingServiceId && hostingServiceId !== site.hosting_service_id
+      ? { ...site, hosting_service_id: hostingServiceId }
+      : site;
+  }
+
   #reason(capability: Capability): string {
     const status = this.deps.providers.forCapability(capability).status;
     return status.remediation ?? `capability state is ${status.state}`;
@@ -258,6 +346,32 @@ export class SiteDeployService {
       return blocked(capability, error.message);
     }
     throw error;
+  }
+}
+
+/**
+ * Copies `RENDER_STOREFRONT_SERVICE_ID` onto the site when the row has none.
+ * Does not invent an id: absent config leaves hosting_service_id null.
+ * `createSpec` also copies this id; deploy persists it only as a fallback.
+ */
+async function persistConfiguredHostingServiceId(
+  deps: Pick<ServiceDeps, 'repos' | 'renderStorefrontServiceId'>,
+  siteId: string,
+  currentHostingServiceId: string | null,
+): Promise<string | null> {
+  if (currentHostingServiceId) return currentHostingServiceId;
+  const configured = deps.renderStorefrontServiceId;
+  if (!configured) return null;
+  await deps.repos.build.sites.setUrls(siteId, { hostingServiceId: configured });
+  return configured;
+}
+
+export function isLocalPublicUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local');
+  } catch {
+    return /localhost|127\.0\.0\.1|::1/i.test(url);
   }
 }
 

@@ -17,6 +17,37 @@ export const HACKATHON_COMPANY = {
   ownerEmail: 'rishabh.rb@icloud.com',
 } as const;
 
+/** Catalogue SKUs the landing page and Payment Link charge. Amounts are fixed. */
+export const HACKATHON_CATALOG = [
+  {
+    sku: 'zhc-backer',
+    name: 'Backer',
+    description: 'Fund the run. Full build log and verification evidence.',
+    kind: 'service' as const,
+    paymentRoute: 'stripe_direct' as const,
+    priceMinor: 2500,
+    currency: 'USD',
+  },
+  {
+    sku: 'zhc-founding',
+    name: 'Founding access',
+    description: 'Complete source and Render blueprint at founder price. Charged at this catalogue amount — the customer cannot type a different price.',
+    kind: 'service' as const,
+    paymentRoute: 'stripe_direct' as const,
+    priceMinor: 9900,
+    currency: 'USD',
+  },
+  {
+    sku: 'zhc-operator',
+    name: 'Operator',
+    description: 'Working session standing the company up on your infrastructure.',
+    kind: 'service' as const,
+    paymentRoute: 'stripe_direct' as const,
+    priceMinor: 29900,
+    currency: 'USD',
+  },
+] as const;
+
 export function defaultHackathonCompanyConfig(input: {
   readonly ownerName: string;
   readonly ownerEmail: string;
@@ -70,6 +101,7 @@ export function defaultHackathonCompanyConfig(input: {
       messageFrequencyDisclosure: null,
       optOutInstructions: 'Reply STOP to opt out.',
       helpInstructions: 'Reply HELP for support.',
+      outreachHandles: [],
     },
     risk: {
       maxOrderValueMinor: 50_000,

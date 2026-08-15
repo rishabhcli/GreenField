@@ -57,6 +57,38 @@ export const HUMAN_ONLY_AUTHORITIES: ReadonlySet<Authority> = new Set<Authority>
   'governance.override',
 ]);
 
+/**
+ * Authorities that spend money, contact a third party, or publish publicly.
+ * A capability that is merely `configured_unverified` is not enough to exercise
+ * these — only `live_verified` counts. Read-only probes may still use `isUsable()`.
+ */
+export const LIVE_VERIFIED_AUTHORITIES: ReadonlySet<Authority> = new Set<Authority>([
+  'expert.engage_paid',
+  'supplier.contact',
+  'supplier.purchase_sample',
+  'supplier.purchase_production',
+  'brand.publish',
+  'site.deploy_preview',
+  'site.deploy_production',
+  'payments.refund',
+  'fulfilment.purchase_label',
+  'ads.create_campaign',
+  'ads.increase_budget',
+  'messaging.send_customer',
+  'messaging.send_marketing',
+  'legal.publish_policy',
+  'finance.move_funds',
+  'infrastructure.provision',
+]);
+
+export function capabilityAvailableForAuthority(
+  authority: Authority,
+  status: { readonly state: string; readonly usable: boolean },
+): boolean {
+  if (LIVE_VERIFIED_AUTHORITIES.has(authority)) return status.state === 'live_verified';
+  return status.usable;
+}
+
 export const ActorKind = z.enum(['ceo_agent', 'manager_agent', 'specialist_agent', 'human_operator', 'system_job']);
 export type ActorKind = z.infer<typeof ActorKind>;
 

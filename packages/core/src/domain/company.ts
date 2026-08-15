@@ -78,6 +78,8 @@ export const CompanyConfig = z.object({
     messageFrequencyDisclosure: z.string().nullable(),
     optOutInstructions: z.string().nullable(),
     helpInstructions: z.string().nullable(),
+    /** E.164 / Linq handles the growth loop may message. Empty means no invented recipients. */
+    outreachHandles: z.array(z.string().min(1)).default([]),
   }),
   risk: z.object({
     maxOrderValueMinor: z.number().int().positive(),

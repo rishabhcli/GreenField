@@ -22,6 +22,8 @@ import { getLogger, metrics } from '@foundry/obs';
 import { verifyWebhook, type WebhookScheme } from '@foundry/providers';
 import { SECRETS } from '@foundry/providers';
 import type { AppContext } from '@foundry/runtime';
+import { requireOperator } from '../auth.js';
+import { resolveWebhookEventId } from '../http-policy.js';
 
 /** Which verifier and secret each provider's endpoint uses. */
 const PROVIDER_WEBHOOKS: Record<
@@ -145,7 +147,19 @@ export async function registerWebhookRoutes(app: FastifyInstance, ctx: AppContex
         return reply.code(400).send({ error: 'Body is not valid JSON' });
       }
 
-      const externalEventId = readPath(payload, spec.eventIdPath) ?? deriveFallbackId(request, rawBody);
+      const headerId = firstHeader(request, ['webhook-id', 'x-event-id']);
+      const bodyId = readPath(payload, spec.eventIdPath);
+      const externalEventId =
+        resolveWebhookEventId({
+          preferDeliveryHeader: spec.scheme === 'standard_webhooks',
+          bodyId,
+          headerId,
+        }) ??
+        (() => {
+          throw new ValidationError(
+            'Webhook has no identifiable event id in body or headers; refusing to process it, because it cannot be deduplicated.',
+          );
+        })();
       const eventType = readPath(payload, spec.eventTypePath) ?? 'unknown';
 
       const recorded = await ctx.repos.webhooks.recordIfNew({
@@ -184,7 +198,8 @@ export async function registerWebhookRoutes(app: FastifyInstance, ctx: AppContex
    * Operational view of webhooks that failed repeatedly. A stuck webhook is
    * unreconciled money, so it is surfaced rather than buried in a log.
    */
-  app.get('/webhooks/stuck', async () => {
+  app.get('/webhooks/stuck', async (request) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     const stuck = await ctx.repos.webhooks.stuckEvents();
     return {
       count: stuck.length,
@@ -209,16 +224,10 @@ function readPath(value: unknown, path: readonly string[]): string | null {
   return typeof current === 'string' && current.length > 0 ? current : null;
 }
 
-/**
- * Some providers put the delivery id only in a header (Standard Webhooks uses
- * `webhook-id`). Falling back to it keeps deduplication working; a content hash
- * is the last resort so a body with no id at all still cannot be processed
- * twice.
- */
-function deriveFallbackId(request: FastifyRequest, rawBody: Buffer): string {
-  const headerId = request.headers['webhook-id'] ?? request.headers['x-event-id'];
-  if (typeof headerId === 'string' && headerId.length > 0) return headerId;
-  throw new ValidationError(
-    'Webhook has no identifiable event id in body or headers; refusing to process it, because it cannot be deduplicated.',
-  );
+function firstHeader(request: FastifyRequest, names: readonly string[]): string | null {
+  for (const name of names) {
+    const value = request.headers[name];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return null;
 }

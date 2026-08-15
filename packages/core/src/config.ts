@@ -64,6 +64,11 @@ export const RuntimeConfig = z.object({
    * Present-but-invalid refuses to boot on any process.
    */
   workerRole: WorkerRole.optional(),
+  /**
+   * Render service id for the generated storefront. Copied onto `sites.hosting_service_id`
+   * at spec creation / first deploy. Absent is a blocked hosting state, not a fabricated site.
+   */
+  renderStorefrontServiceId: z.string().min(1).optional(),
 });
 export type RuntimeConfig = z.infer<typeof RuntimeConfig>;
 
@@ -134,6 +139,7 @@ export function loadRuntimeConfig(env: EnvSource = processEnvSource): RuntimeCon
     corsFailClosed: parsedEnvironment.data === 'production',
     operatorApiToken: env.get('OPERATOR_API_TOKEN'),
     workerRole: parseWorkerRole(env.get('WORKER_ROLE'), { required: false }),
+    renderStorefrontServiceId: env.get('RENDER_STOREFRONT_SERVICE_ID'),
   };
 
   const parsed = RuntimeConfig.safeParse(config);

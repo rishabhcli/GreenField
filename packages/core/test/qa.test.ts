@@ -7,6 +7,7 @@ import {
   CRITICAL_FLOWS,
   PRODUCTION_REQUIRED_RUN_KINDS,
   evaluateReleaseGate,
+  isReplayQaPhaseComplete,
   type ReleaseGateInput,
 } from '@foundry/core';
 
@@ -62,6 +63,60 @@ describe('evaluateReleaseGate', () => {
     expect(result.warnings.some((w) => w.code === 'qa_run_missing')).toBe(true);
   });
 
+  it('blocks preview on a high-severity commerce-flow defect, not only production', () => {
+    const result = evaluateReleaseGate({
+      environment: 'preview',
+      runs: completedRuns(),
+      openDefects: [
+        { severity: 'high', affectedFlow: 'checkout_initiation', status: 'open' },
+      ],
+      requiredFlows: CRITICAL_FLOWS,
+      requiredRunKinds: PRODUCTION_REQUIRED_RUN_KINDS,
+    });
+    expect(result.verdict).toBe('block');
+    expect(result.blockers.some((b) => b.code === 'critical_flow_defect')).toBe(true);
+    expect(result.warnings.some((w) => w.code === 'critical_flow_defect')).toBe(false);
+  });
+
+  it('blocks preview when a required run is still running — running is not a pass', () => {
+    const result = evaluateReleaseGate({
+      environment: 'preview',
+      runs: [
+        {
+          kind: 'autonomous_exploration',
+          status: 'running',
+          flowsCovered: [],
+          unavailableReason: null,
+        },
+      ],
+      openDefects: [],
+      requiredFlows: ['homepage_loads'],
+      requiredRunKinds: ['autonomous_exploration'],
+    });
+    expect(result.verdict).toBe('block');
+    expect(result.blockers.some((b) => b.code === 'qa_run_incomplete')).toBe(true);
+  });
+
+  it('blocks when Replay is recording-lost even with zero product defects', () => {
+    const result = evaluateReleaseGate({
+      environment: 'preview',
+      runs: [
+        {
+          kind: 'autonomous_exploration',
+          status: 'failed',
+          flowsCovered: [],
+          unavailableReason: 'recording-lost',
+        },
+      ],
+      openDefects: [],
+      requiredFlows: ['homepage_loads'],
+      requiredRunKinds: ['autonomous_exploration'],
+    });
+    expect(result.verdict).toBe('block');
+    expect(result.blockers.some((b) => b.code === 'qa_infra_failed')).toBe(true);
+    expect(result.blockers.some((b) => b.detail.includes('0 product bugs'))).toBe(true);
+  });
+
   it('blocks on an open critical defect even in preview', () => {
     const result = evaluateReleaseGate({
       environment: 'preview',
@@ -87,5 +142,22 @@ describe('evaluateReleaseGate', () => {
     expect(result.verdict).toBe('pass');
     expect(result.blockers).toEqual([]);
     expect(result.uncoveredFlows).toEqual([]);
+    expect(isReplayQaPhaseComplete({ runs: completedRuns(), openDefects: [] })).toBe(true);
+  });
+
+  it('does not treat a recording-lost Replay run as a completed qa phase', () => {
+    expect(
+      isReplayQaPhaseComplete({
+        runs: [
+          {
+            kind: 'autonomous_exploration',
+            status: 'failed',
+            flowsCovered: [],
+            unavailableReason: 'recording-lost',
+          },
+        ],
+        openDefects: [],
+      }),
+    ).toBe(false);
   });
 });

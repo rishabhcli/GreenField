@@ -25,11 +25,9 @@
  *    not independently fetchable).
  *  - No product-search, supplier-detail, or RFQ method name, request field,
  *    or response shape was recoverable from any source reachable in this
- *    pass — despite `ALIBABA_MANIFEST` (written before this file, not by this
- *    pass) already asserting `documented_api` evidence for search/profile.
- *    This adapter does not rely on that earlier, unverified-by-this-pass
- *    claim: per the instruction "do NOT fabricate a client for an API you
- *    could not verify," every method below refuses rather than guesses.
+ *    pass. `ALIBABA_MANIFEST` records search/profile/RFQ as `marketing_claim_only`
+ *    for that reason. Per the instruction "do NOT fabricate a client for an
+ *    API you could not verify," every method below refuses rather than guesses.
  *
  * The GGS program is also, on its face, the wrong program for this business:
  * it onboards *sellers* building apps on top of Alibaba.com, not third-party
