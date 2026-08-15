@@ -36,6 +36,9 @@ import { ANTHROPIC_MANIFEST, SECRETS } from '../manifests.js';
 /** Thinking depth / token spend. Higher costs more and reasons harder. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+/** Cache lifetime. `5m` writes at 1.25x base input, `1h` at 2x. */
+export type CacheTtl = '5m' | '1h';
+
 export interface ToolDefinition {
   readonly name: string;
   readonly description: string;

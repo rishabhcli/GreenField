@@ -23,9 +23,54 @@ import {
 import type { Repositories } from '@foundry/db';
 import type { AnthropicAdapter, BandAdapter, MessageParam, ToolDefinition } from '@foundry/providers';
 import { effortForTier } from '@foundry/providers';
-import { getLogger, metrics, withContext } from '@foundry/obs';
+import { getLogger, withContext } from '@foundry/obs';
 import { executeToolCall, type ToolContext, type ToolRegistry } from './tool-registry.js';
 import type { PolicyGate } from './policy-gate.js';
+
+/**
+ * Cap, in characters, on a single tool result handed back to the model.
+ *
+ * Without a cap one oversized provider response — a full search result set, a
+ * supplier catalog, a raw analytics export — is appended verbatim to the
+ * conversation and the next request blows the context window. The run then dies
+ * as a generic failure that says nothing about what actually happened, which is
+ * the worst possible diagnosis for an operator.
+ *
+ * 16,000 characters is roughly 4,000 tokens at the usual ~4 chars/token, i.e. a
+ * quarter of the 16,000-token `maxTokens` this executor allows the model for a
+ * single turn: a tool result larger than a quarter of the model's own maximum
+ * answer is a bulk dump, not an answer. Against the executor's other limit —
+ * the 20-iteration cap — the worst case is 20 x ~4,000 = ~80,000 tokens of tool
+ * output, which still leaves the system prompt, the objective and twenty
+ * assistant turns comfortable room inside a 200k-token context. It is also
+ * large enough to carry a realistic page of structured results (tens of search
+ * hits with title, url and snippet), so truncation stays the exception.
+ *
+ * The cap applies to the copy the model sees only. `agent_messages` always
+ * stores the full result — see `#execute`.
+ */
+export const MAX_TOOL_RESULT_CHARS = 16_000;
+
+export interface CappedToolResult {
+  readonly content: string;
+  readonly omittedChars: number;
+}
+
+/**
+ * The copy of a tool result the model will see: verbatim when it fits within
+ * `MAX_TOOL_RESULT_CHARS`, otherwise truncated to that cap with the number of
+ * withheld characters reported so the audit trail can record them. The caller
+ * persists the full result regardless — see `#execute`.
+ */
+export function capToolResultForModel(full: string): CappedToolResult {
+  if (full.length <= MAX_TOOL_RESULT_CHARS) {
+    return { content: full, omittedChars: 0 };
+  }
+  return {
+    content: full.slice(0, MAX_TOOL_RESULT_CHARS),
+    omittedChars: full.length - MAX_TOOL_RESULT_CHARS,
+  };
+}
 
 export interface ExecutorDeps {
   readonly repos: Repositories;
@@ -96,32 +141,19 @@ export class AgentExecutor {
     const systemPrompt = buildSystemPrompt(role, request);
     const model = MODEL_BY_TIER[role.tier];
 
-    await repos.agents.runs.markStarted(request.runId);
-    await this.#claimBandAssignment(request);
-    let sequence = await repos.agents.messages.nextSequence(request.runId);
-
-    await repos.agents.messages.append({
-      runId: request.runId,
-      sequence: sequence++,
-      role: 'system',
-      content: { text: systemPrompt },
-    });
-
-    const initialMessages: MessageParam[] = [
-      {
-        role: 'user',
-        content: renderObjective(request),
-      },
-    ];
-    await repos.agents.messages.append({
-      runId: request.runId,
-      sequence: sequence++,
-      role: 'user',
-      content: initialMessages[0]!.content,
-    });
-
     let toolCallCount = 0;
     let blockedReason: string | null = null;
+
+    /**
+     * Marks the boundary between "refused to start" and "started and then
+     * failed". Everything before the tool loop is a precondition — the DB write
+     * that claims the run, the BAND claim, the first two persisted messages. A
+     * failure there must be re-thrown so the queue and the dispatcher see that
+     * dispatch itself is broken; a failure inside the loop is the run's own
+     * outcome and is returned as a `RunOutcome` instead. Both paths must leave
+     * the row terminal, which is the entire point of the restructure below.
+     */
+    let startupComplete = false;
 
     const toolCtx: ToolContext = {
       companyId: request.companyId,
@@ -132,7 +164,57 @@ export class AgentExecutor {
       signal: request.signal,
     };
 
+    /**
+     * Untruncated tool output, keyed by tool_use id, for the results that were
+     * shortened before the model saw them.
+     *
+     * `onStep` is handed exactly what `executeTool` returned, so truncating in
+     * place would silently truncate the audit trail too. Instead the full
+     * string is parked here and `onStep` persists that, while the model gets
+     * the capped copy. Only truncated results are stored, and each entry is
+     * deleted as soon as it is written, so the map holds at most one
+     * iteration's oversized results rather than growing across the run.
+     */
+    const untruncatedToolResults = new Map<string, { full: string; omittedChars: number }>();
+
     try {
+      /* ---------------------------------------------------------------- */
+      /* Startup: claim the run, claim the room, persist the opening turns  */
+      /* ---------------------------------------------------------------- */
+
+      // `markStarted` used to sit outside this try alongside the BAND claim.
+      // When the claim threw — which it does by design when dispatch never
+      // posted an @mention — the row was already `running`, `finish()` was
+      // never called and the `finally` never ran, so the run stayed `running`
+      // forever and its parent waited on a specialist that no longer existed.
+      // Everything that can fail after the row is claimed now lives under the
+      // catch that closes it out.
+      await repos.agents.runs.markStarted(request.runId);
+      await this.#claimBandAssignment(request);
+
+      let sequence = await repos.agents.messages.nextSequence(request.runId);
+      await repos.agents.messages.append({
+        runId: request.runId,
+        sequence: sequence++,
+        role: 'system',
+        content: { text: systemPrompt },
+      });
+
+      const initialMessages: MessageParam[] = [
+        {
+          role: 'user',
+          content: renderObjective(request),
+        },
+      ];
+      await repos.agents.messages.append({
+        runId: request.runId,
+        sequence: sequence++,
+        role: 'user',
+        content: initialMessages[0]!.content,
+      });
+
+      startupComplete = true;
+
       const result = await llm.runToolLoop({
         model,
         system: systemPrompt,
@@ -152,9 +234,25 @@ export class AgentExecutor {
             if (outcome.kind === 'denied' || outcome.kind === 'needs_approval') {
               blockedReason = outcome.reason;
             }
-            return { content: outcome.reason, isError: true };
           }
-          return { content: JSON.stringify(outcome.output ?? null), isError: false };
+          // Failure reasons are capped too: a provider error can carry a body
+          // just as large as a success, and it reaches the model the same way.
+          const full = outcome.ok ? JSON.stringify(outcome.output ?? null) : outcome.reason;
+          const capped = capToolResultForModel(full);
+          if (capped.omittedChars > 0) {
+            untruncatedToolResults.set(call.id, { full, omittedChars: capped.omittedChars });
+            log.warn(
+              {
+                role: role.key,
+                tool: call.name,
+                totalChars: full.length,
+                shownChars: MAX_TOOL_RESULT_CHARS,
+                omittedChars: capped.omittedChars,
+              },
+              'tool result truncated before it reached the model',
+            );
+          }
+          return { content: capped.content, isError: !outcome.ok };
         },
         onStep: async (step) => {
           await repos.agents.messages.append({
@@ -164,11 +262,28 @@ export class AgentExecutor {
             content: step.assistant,
           });
           for (const toolResult of step.toolResults) {
+            // `step.toolResults[].content` is verbatim what `executeTool`
+            // returned, so for a truncated result it is the shortened copy.
+            // The audit trail must hold what the tool actually produced, and
+            // separately record that the model was shown less than that.
+            const untruncated = untruncatedToolResults.get(toolResult.toolUseId);
+            untruncatedToolResults.delete(toolResult.toolUseId);
             await repos.agents.messages.append({
               runId: request.runId,
               sequence: sequence++,
               role: 'tool_result',
-              content: { toolUseId: toolResult.toolUseId, content: toolResult.content },
+              content: {
+                toolUseId: toolResult.toolUseId,
+                content: untruncated?.full ?? toolResult.content,
+                ...(untruncated
+                  ? {
+                      truncatedForModel: {
+                        shownChars: MAX_TOOL_RESULT_CHARS,
+                        omittedChars: untruncated.omittedChars,
+                      },
+                    }
+                  : {}),
+              },
               toolUseId: toolResult.toolUseId,
               isError: toolResult.isError,
             });
@@ -269,9 +384,18 @@ export class AgentExecutor {
         output: { error: detail },
       });
       await this.#audit(request, role, 'failure', detail);
-      metrics.agentRuns.inc({ role: role.key, outcome: status });
 
       log.error({ role: role.key, err: error }, 'agent run failed');
+
+      if (!startupComplete) {
+        // A failure before the tool loop is dispatch itself breaking — the BAND
+        // claim that never happened, a run the worker cannot even claim — not a
+        // run outcome. The queue must see it as a rejection so it does not wait
+        // on a specialist that does not exist. The row was already closed out
+        // above; re-throw for the caller.
+        throw error;
+      }
+
       return {
         status,
         finalText: '',

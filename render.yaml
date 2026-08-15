@@ -196,44 +196,38 @@ services:
       - fromGroup: foundry-operator
 
   # ---------------------------------------------------------------------------
-  # Cron: operating loop tick.
+  # Operating loop tick — NOT a cron service. Do not add one back.
   #
-  # The loop is driven by a scheduled tick rather than an in-process timer, so a
-  # restarted or redeployed worker cannot stall the company. The tick only
-  # enqueues; all work happens on the queues.
+  # The loop ticks every 10 minutes, driven by the repeatable BullMQ job
+  # `operating-loop` declared as OPERATING_LOOP_CRON in
+  # packages/queue/src/contracts.ts. It is consumed by foundry-agents, which is
+  # the only service that passes `installSchedules: true` and the only one that
+  # lists loop.tick in its queue set.
+  #
+  # There used to be a `foundry-loop-tick` cron here on a 15-minute schedule as
+  # well. Two schedules at 10 and 15 minutes coincide every 30 minutes, and when
+  # they did, two ticks read the same cycle, both judged the phase complete, and
+  # both advanced it — skipping a phase and filing the first phase's outputs
+  # under the second phase's name. Worse, the cron was a double tick all by
+  # itself: it fired the `tickCompanyLoop` Render Workflows task, took the 202
+  # back immediately, and then ticked in-process while the workflow task was
+  # ticking the same company against the same database.
+  #
+  # LoopOrchestrator.tick now takes a per-company Postgres advisory lock, so an
+  # overlap is merely wasted work rather than a corrupted cycle. The duplicate
+  # schedule is removed anyway, because the only thing it could still contribute
+  # is a full AppContext boot — pool, Redis, provider registry, migration check —
+  # every 15 minutes in order to log that it did nothing. The cron's one real
+  # argument, that it would keep ticking if the workers died, does not hold: a
+  # tick only enqueues jobs and dispatches agents, and the workers are what
+  # consume those queues, so a tick with no worker running just accumulates
+  # unconsumed jobs.
+  #
+  # Consequence to be aware of: apps/worker/src/cron/loop-tick.js was the only
+  # caller of the `tickCompanyLoop` Render Workflows task. Nothing triggers that
+  # task now. If the Workflows execution path needs to stay demonstrable, give
+  # it its own trigger rather than restoring a second loop scheduler.
   # ---------------------------------------------------------------------------
-  - type: cron
-    name: foundry-loop-tick
-    runtime: node
-    plan: starter
-    region: oregon
-    rootDir: .
-    schedule: "*/15 * * * *"
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
-    startCommand: node apps/worker/dist/cron/loop-tick.js
-    autoDeployTrigger: commit
-    envVars:
-      - key: NODE_VERSION
-        value: "22"
-      - key: APP_ENVIRONMENT
-        value: production
-      - key: NODE_ENV
-        value: production
-      - key: PUBLIC_BASE_URL
-        fromService:
-          name: foundry-api
-          type: web
-          property: hostport
-      - key: DATABASE_URL
-        fromDatabase:
-          name: foundry-postgres
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: foundry-keyvalue
-          type: keyvalue
-          property: connectionString
-      - fromGroup: foundry-provider-secrets
 
   # ---------------------------------------------------------------------------
   # Render Workflows (public beta).

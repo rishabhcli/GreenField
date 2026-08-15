@@ -237,8 +237,35 @@ export interface ScheduledJob {
   readonly payload: Record<string, unknown>;
 }
 
+/**
+ * How often the operating loop ticks: every 10 minutes, UTC.
+ *
+ * This is the *single* authoritative schedule for `loop.tick`. There used to be
+ * a second one — a Render cron service `foundry-loop-tick` running every 15
+ * minutes — and the two drifted in and out of phase, so roughly every 30
+ * minutes both fired inside the same minute and two ticks assessed and advanced
+ * the same cycle concurrently. `LoopOrchestrator.tick` now holds a per-company
+ * advisory lock, so the overlap can no longer corrupt a cycle, but a lock is a
+ * safety net and not a reason to keep paying for a duplicate schedule: the
+ * loser of the race just burns a full Render cron boot to log `skipped_locked`.
+ *
+ * The repeatable job won over the Render cron because it is strictly cheaper
+ * and no less durable. It runs inside the already-warm `foundry-agents` worker
+ * (`numInstances: 1`, the only process that calls `installSchedules`), whereas
+ * a Render cron builds and tears down an entire `AppContext` — pool, Redis,
+ * provider registry, migration check — every single run. The cron's apparent
+ * advantage, surviving a dead worker, is illusory: a tick only enqueues jobs
+ * and dispatches agents, and every one of those queues is consumed by the
+ * workers, so a tick fired while the workers are down accomplishes nothing
+ * except a pile of unconsumed jobs.
+ *
+ * If you change this interval, change the comment in `render.yaml` that records
+ * it too — that file is where an operator looks for the deployment's schedule.
+ */
+export const OPERATING_LOOP_CRON = '*/10 * * * *';
+
 export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
-  { queue: 'loop.tick', name: 'operating-loop', cron: '*/10 * * * *', payload: {} },
+  { queue: 'loop.tick', name: 'operating-loop', cron: OPERATING_LOOP_CRON, payload: {} },
   { queue: 'marketing.metrics_collect', name: 'hourly-ad-metrics', cron: '7 * * * *', payload: {} },
   { queue: 'marketing.decide', name: 'arm-decisions', cron: '20 */4 * * *', payload: {} },
   { queue: 'commerce.reconcile', name: 'payment-reconciliation', cron: '15 */2 * * *', payload: {} },

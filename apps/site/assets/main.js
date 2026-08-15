@@ -161,10 +161,13 @@
 
   if (ledCtx && heroSection) {
     var PITCH = 17; /* grid spacing, CSS px — dense enough to read as a panel */
-    var SIZE = 2.5; /* LED edge length */
-    var LEVELS = 14; /* brightness buckets */
-    var HOT = 0.5; /* above this an LED also gets an additive sprite */
+    var SIZE = 2.5; /* emitter edge length */
+    var LENS = 4.6; /* diode package: the dark lens the emitter sits inside */
+    var LEVELS = 16; /* brightness buckets */
+    var HOT = 0.42; /* above this an LED also gets additive bloom sprites */
     var SPRITE_CAP = 1400; /* hard ceiling on additive draws per frame */
+    var ATTACK = 34; /* per-diode rise rate — LEDs switch on fast */
+    var DECAY = 7.5; /* per-diode fall rate — and bleed off slower */
     var TRAIL_MS = 820; /* pointer sample lifetime */
     var TRAIL_GAP = 16; /* min px between samples */
     var TRAIL_MAX = 30;
@@ -188,10 +191,13 @@
     var vary = null; /* per-LED brightness variance */
     var lit = null; /* scratch: ambient intensity */
     var blm = null; /* scratch: bloom intensity */
+    var drive = null; /* persisted per-diode output — what actually gets drawn */
     var bucket = [];
     var bucketLen = null;
     var levelFill = [];
-    var glowSprite = null;
+    var coreFill = [];
+    var glowNear = null; /* tight halo — the epoxy dome scattering */
+    var glowFar = null; /* wide bloom — light spilling across the panel */
 
     var hasRoundRect = typeof ledCtx.roundRect === "function";
     var phase = 0;
@@ -213,34 +219,63 @@
       return s - Math.floor(s);
     }
 
+    /* Emitter colour ramp. A real yellow LED is not one colour at all drive
+       levels: at low current it sits deep amber, climbs to saturated neon
+       through the middle, and the die overwhelms the phosphor at the top so
+       the centre bleaches toward white while the surrounding dome stays
+       yellow. Two ramps encode that — the body colour and a hotter core. */
     function buildLevels() {
       levelFill = [];
+      coreFill = [];
       for (var i = 0; i < LEVELS; i++) {
         var t = (i + 0.5) / LEVELS;
-        /* Real LEDs clip toward white at the core, so hold neon until the top
-           of the ramp and only then bleach. */
-        var mix = t < 0.62 ? 0 : (t - 0.62) / 0.38;
-        var g = Math.round(232 + (251 - 232) * mix);
-        var b = Math.round(26 + (224 - 26) * mix);
-        var a = 0.05 + 0.9 * Math.pow(t, 1.4);
-        levelFill.push("rgba(255," + g + "," + b + "," + a.toFixed(3) + ")");
+
+        var amber = t < 0.34 ? 1 - t / 0.34 : 0; /* deep amber at low drive */
+        var bleach = t < 0.68 ? 0 : (t - 0.68) / 0.32; /* white-out at high drive */
+
+        var r = 255;
+        var g = Math.round(232 - 54 * amber + 19 * bleach);
+        var b = Math.round(26 - 24 * amber + 198 * bleach);
+        var a = 0.045 + 0.93 * Math.pow(t, 1.45);
+        levelFill.push("rgba(" + r + "," + g + "," + b + "," + a.toFixed(3) + ")");
+
+        /* The core is a smaller, hotter dot drawn on top of the body. It only
+           earns its own pixels once the diode is genuinely driven. */
+        var ct = Math.max(0, (t - 0.4) / 0.6);
+        coreFill.push(
+          "rgba(255," + Math.round(240 + 15 * ct) + "," + Math.round(120 + 135 * ct) + "," + (ct * 0.85).toFixed(3) + ")"
+        );
       }
     }
 
-    function buildGlow() {
-      var size = 28;
+    function radialSprite(size, stops) {
       var c = document.createElement("canvas");
       c.width = size;
       c.height = size;
       var g = c.getContext("2d");
-      if (!g) return;
+      if (!g) return null;
       var grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-      grad.addColorStop(0, "rgba(255,248,170,0.5)");
-      grad.addColorStop(0.34, "rgba(255,232,26,0.2)");
-      grad.addColorStop(1, "rgba(255,232,26,0)");
+      for (var i = 0; i < stops.length; i++) grad.addColorStop(stops[i][0], stops[i][1]);
       g.fillStyle = grad;
       g.fillRect(0, 0, size, size);
-      glowSprite = c;
+      return c;
+    }
+
+    /* Two bloom radii, because that is the actual optical signature of a point
+       emitter behind a lens: a tight bright halo from the dome itself, plus a
+       much wider, much fainter spill. One radius always reads as a fuzzy blob. */
+    function buildGlow() {
+      glowNear = radialSprite(32, [
+        [0, "rgba(255,250,205,0.62)"],
+        [0.26, "rgba(255,236,90,0.28)"],
+        [0.62, "rgba(255,226,20,0.06)"],
+        [1, "rgba(255,226,20,0)"],
+      ]);
+      glowFar = radialSprite(64, [
+        [0, "rgba(255,232,26,0.13)"],
+        [0.34, "rgba(255,226,20,0.055)"],
+        [1, "rgba(255,220,10,0)"],
+      ]);
     }
 
     /* Distance-outside-the-box falloff. The wave crosses the full width; over

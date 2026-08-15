@@ -99,58 +99,46 @@ export type Id<K extends IdKind> = string & { readonly __idKind?: K };
  * fails at import time, which is the only moment where "someone reused a
  * prefix" is still a one-line fix rather than a data-forensics exercise.
  */
+/** Prefixes must be lowercase alphanumeric and must not contain `_`. */
+const PREFIX_SHAPE = /^[a-z][a-z0-9]*$/;
+
+/**
+ * Pure registry check, separated from the throwing guard so it is directly
+ * testable against a synthetic registry. A guard whose only observable
+ * behaviour is "the process did not crash" is a guard nobody can assert on.
+ */
+export function findIdPrefixProblems(prefixes: Readonly<Record<string, string>>): readonly string[] {
+  const problems: string[] = [];
+  const seen = new Map<string, string>();
+  for (const [kind, prefix] of Object.entries(prefixes)) {
+    // An `_` in a prefix would break `idKindOf`, which splits on the first one,
+    // and `isId`, which slices by `prefix.length + 1`. Same class of bug, so it
+    // is caught in the same place.
+    if (!PREFIX_SHAPE.test(prefix)) {
+      problems.push(`prefix "${prefix}" for kind "${kind}" must match ${String(PREFIX_SHAPE)}`);
+      continue;
+    }
+    const owner = seen.get(prefix);
+    if (owner !== undefined) {
+      problems.push(`prefix "${prefix}" is claimed by both "${owner}" and "${kind}"`);
+      continue;
+    }
+    seen.set(prefix, kind);
+  }
+  return problems;
+}
+
 function buildPrefixIndex(): ReadonlyMap<string, IdKind> {
-  const index = new Map<string, IdKind>();
-  const collisions: string[] = [];
-  const malformed: string[] = [];
-  for (const [kind, prefix] of Object.entries(ID_PREFIXES) as [IdKind, string][]) {
-    // An `_` in a prefix would break `idKindOf`, which splits on the first one.
-    // Same class of bug, so it is caught in the same place.
-    if (!/^[a-z][a-z0-9]*$/.test(prefix)) {
-      malformed.push(`"${kind}" -> "${prefix}"`);
-      continue;
-    }
-    const existing = index.get(prefix);
-    if (existing !== undefined) {
-      collisions.push(`"${prefix}" is claimed by both "${existing}" and "${kind}"`);
-      continue;
-    }
-    index.set(prefix, kind);
+  const problems = findIdPrefixProblems(ID_PREFIXES);
+  if (problems.length > 0) {
+    throw new ValidationError(`ID_PREFIXES is not a valid registry: ${problems.join('; ')}`, { problems });
   }
-  if (collisions.length > 0 || malformed.length > 0) {
-    throw new ValidationError(
-      'ID_PREFIXES is not a valid registry: ' +
-        [
-          collisions.length > 0 ? `duplicate prefixes (${collisions.join('; ')})` : '',
-          malformed.length > 0
-            ? `malformed prefixes, expected /^[a-z][a-z0-9]*$/ (${malformed.join('; ')})`
-            : '',
-        ]
-          .filter(Boolean)
-          .join('; '),
-      { collisions, malformed },
-    );
-  }
-  return index;
+  return new Map<string, IdKind>(
+    Object.entries(ID_PREFIXES).map(([kind, prefix]) => [prefix, kind as IdKind]),
+  );
 }
 
 const PREFIX_TO_KIND = buildPrefixIndex();
-
-/**
- * Re-runs the registry validation and returns the problems instead of throwing.
- *
- * The module-load guard above already makes a duplicate prefix unimportable, so
- * this exists for the test that pins the guard itself: a check that can only be
- * observed by crashing the process is a check nobody can assert on.
- */
-export function validateIdPrefixes(): readonly string[] {
-  try {
-    buildPrefixIndex();
-    return [];
-  } catch (error) {
-    return [error instanceof Error ? error.message : String(error)];
-  }
-}
 
 let lastTime = -1;
 let lastRandom: bigint = 0n;
