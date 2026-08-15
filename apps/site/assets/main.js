@@ -451,7 +451,7 @@
         ledCtx.fill();
       }
 
-      if (glowSprite) {
+      if (glowNear || glowFar) {
         ledCtx.globalCompositeOperation = "lighter";
         var drawn = 0;
         /* Brightest bucket first: additive blending is commutative so the
@@ -461,11 +461,19 @@
         for (var lv3 = LEVELS - 1; lv3 >= hotFloor && drawn < SPRITE_CAP; lv3--) {
           var len3 = bucketLen[lv3];
           if (!len3) continue;
-          var scale = 7 + 17 * ((lv3 + 0.5) / LEVELS);
-          var sHalf = scale / 2;
+          var t = (lv3 + 0.5) / LEVELS;
+          var farScale = 16 + 36 * t;
+          var nearScale = 6 + 14 * t;
+          var farHalf = farScale / 2;
+          var nearHalf = nearScale / 2;
           for (var k3 = 0; k3 < len3 && drawn < SPRITE_CAP; k3++) {
             var id3 = bucket[lv3][k3];
-            ledCtx.drawImage(glowSprite, lx[id3] - sHalf, ly[id3] - sHalf, scale, scale);
+            if (glowFar) {
+              ledCtx.drawImage(glowFar, lx[id3] - farHalf, ly[id3] - farHalf, farScale, farScale);
+            }
+            if (glowNear) {
+              ledCtx.drawImage(glowNear, lx[id3] - nearHalf, ly[id3] - nearHalf, nearScale, nearScale);
+            }
             drawn++;
           }
         }
