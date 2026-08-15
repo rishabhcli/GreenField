@@ -1,0 +1,67 @@
+# Clean build, then tests, then lint.
+#
+# `tsc -b` incremental state has produced a confident false failure (a package
+# typechecking against an outdated .d.ts) and can equally produce a false pass.
+# CI therefore starts from `pnpm clean && pnpm build`, not a bare `pnpm build`.
+# `pnpm test` is type-blind (vitest → esbuild strips types) and cannot catch
+# that class of error, which is why the compiler runs first.
+#
+# Postgres is a service container so the DB-backed suites (repositories,
+# policy-gate, executor) actually execute. Those tests talk to
+# `postgres://localhost:5432/` with no password, matching a local `trust`
+# install; `POSTGRES_HOST_AUTH_METHOD: trust` is what makes that true here.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  preflight:
+    name: clean build, test, lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Clean build
+        run: pnpm clean && pnpm build
+
+      - name: Test
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+          TEST_POSTGRES_ADMIN_URL: postgres://postgres@localhost:5432/postgres
+        run: pnpm test
+
+      - name: Lint
+        run: pnpm lint

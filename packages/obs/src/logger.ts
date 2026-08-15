@@ -7,7 +7,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import pino, { type Logger as PinoLogger } from 'pino';
+import pino, { type DestinationStream, type Logger as PinoLogger } from 'pino';
 import { describeError } from '@foundry/core';
 
 export interface RequestContext {
@@ -32,7 +32,7 @@ export function withContext<T>(context: RequestContext, fn: () => T): T {
 }
 
 /** Paths whose values are replaced with `[redacted]` before a line is written. */
-const REDACT_PATHS = [
+export const REDACT_PATHS = [
   'password',
   'secret',
   'token',
@@ -66,6 +66,8 @@ export interface LoggerOptions {
   readonly releaseSha: string;
   /** Pretty output is never used in a deployed environment. */
   readonly pretty?: boolean;
+  /** Test seam: capture lines without writing stdout. */
+  readonly destination?: DestinationStream;
 }
 
 export type Logger = PinoLogger;
@@ -73,41 +75,45 @@ export type Logger = PinoLogger;
 let rootLogger: Logger | undefined;
 
 export function initLogger(options: LoggerOptions): Logger {
-  rootLogger = pino({
-    level: options.level,
-    base: {
-      service: options.serviceName,
-      env: options.environment,
-      instance: options.instanceId,
-      release: options.releaseSha,
+  rootLogger = pino(
+    {
+      level: options.level,
+      base: {
+        service: options.serviceName,
+        env: options.environment,
+        instance: options.instanceId,
+        release: options.releaseSha,
+      },
+      redact: { paths: REDACT_PATHS, censor: '[redacted]' },
+      timestamp: pino.stdTimeFunctions.isoTime,
+      formatters: {
+        level: (label) => ({ level: label }),
+      },
+      mixin() {
+        const ctx = currentContext();
+        return ctx ? { ...ctx } : {};
+      },
+      serializers: {
+        err: (value: unknown) => describeError(value),
+        error: (value: unknown) => describeError(value),
+      },
+      ...(options.pretty
+        ? { transport: { target: 'pino-pretty', options: { colorize: true, singleLine: false } } }
+        : {}),
     },
-    redact: { paths: REDACT_PATHS, censor: '[redacted]' },
-    timestamp: pino.stdTimeFunctions.isoTime,
-    formatters: {
-      level: (label) => ({ level: label }),
-    },
-    // Attach the ambient trace context to every line without threading it
-    // through every call site.
-    mixin() {
-      const ctx = currentContext();
-      return ctx ? { ...ctx } : {};
-    },
-    serializers: {
-      err: (value: unknown) => describeError(value),
-      error: (value: unknown) => describeError(value),
-    },
-    ...(options.pretty
-      ? { transport: { target: 'pino-pretty', options: { colorize: true, singleLine: false } } }
-      : {}),
-  });
+    options.destination,
+  );
   return rootLogger;
 }
 
 export function getLogger(): Logger {
   if (!rootLogger) {
-    // A service that logs before configuring logging still gets valid JSON
-    // rather than throwing during startup diagnostics.
-    rootLogger = pino({ level: process.env['LOG_LEVEL'] ?? 'info', redact: { paths: REDACT_PATHS, censor: '[redacted]' } });
+    // Bootstrap: a line emitted before `initLogger` still has to be valid
+    // JSON. We do not read `process.env` here — that belongs in
+    // `loadRuntimeConfig` / `loadBootstrapLogConfig`. Defaulting to `info`
+    // means a boot-failure line before config loads is slightly less verbose
+    // than the configured level, which is the safer direction.
+    rootLogger = pino({ level: 'info', redact: { paths: REDACT_PATHS, censor: '[redacted]' } });
   }
   return rootLogger;
 }

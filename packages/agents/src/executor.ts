@@ -66,9 +66,17 @@ export function capToolResultForModel(full: string): CappedToolResult {
   if (full.length <= MAX_TOOL_RESULT_CHARS) {
     return { content: full, omittedChars: 0 };
   }
+  // The notice is part of the cap, not an extra. A silently sliced payload
+  // would let the model reason over a fragment believing it is complete —
+  // which is the honesty failure this function exists to prevent.
+  const omitted = full.length - MAX_TOOL_RESULT_CHARS;
+  const notice =
+    `\n\n[truncated: ${omitted} characters omitted of ${full.length}; ` +
+    `the audit trail holds the full result]`;
+  const budget = Math.max(0, MAX_TOOL_RESULT_CHARS - notice.length);
   return {
-    content: full.slice(0, MAX_TOOL_RESULT_CHARS),
-    omittedChars: full.length - MAX_TOOL_RESULT_CHARS,
+    content: full.slice(0, budget) + notice,
+    omittedChars: full.length - budget,
   };
 }
 

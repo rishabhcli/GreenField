@@ -16,7 +16,7 @@
  * allowed to finish before the connections close.
  */
 
-import { describeError } from '@foundry/core';
+import { describeError, loadWorkerRole, serviceNameFromEnv } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { QUEUE_NAMES, WorkerSet, type HandlerMap, type QueueName } from '@foundry/queue';
 import { buildContext, bootstrapOperatingCompany, wireRuntime } from '@foundry/runtime';
@@ -29,10 +29,10 @@ const EXPECTED_MIGRATIONS = 6;
 const AGENT_QUEUES: readonly QueueName[] = ['agent.run', 'loop.tick'];
 
 async function main(): Promise<void> {
-  const role = (process.env['WORKER_ROLE'] ?? 'general') as 'general' | 'agents';
+  const role = loadWorkerRole();
 
   const ctx = await buildContext({
-    serviceName: process.env['RENDER_SERVICE_NAME'] ?? `foundry-worker-${role}`,
+    serviceName: serviceNameFromEnv(`foundry-worker-${role}`),
     expectedMigrations: EXPECTED_MIGRATIONS,
     // Only one process may own the repeatable schedules, otherwise every
     // instance re-registers them and the cron fires N times.

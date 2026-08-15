@@ -20,7 +20,9 @@
  *    order, send a message, charge a card, or publish a site.
  */
 
-import { describeError } from '@foundry/core';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+import { describeError, serviceNameFromEnv } from '@foundry/core';
 import type { ProviderId } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { buildContext } from '@foundry/runtime';
@@ -40,7 +42,7 @@ export interface ProbeOutcome {
 
 async function main(): Promise<void> {
   const ctx = await buildContext({
-    serviceName: process.env['RENDER_SERVICE_NAME'] ?? 'foundry-verifier',
+    serviceName: serviceNameFromEnv('foundry-verifier'),
     expectedMigrations: EXPECTED_MIGRATIONS,
     installSchedules: false,
   });
@@ -191,7 +193,19 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, provider: string)
   }
 }
 
-main().catch((error) => {
-  console.error('Verifier failed to start:', error);
-  process.exit(1);
-});
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(resolve(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main().catch((error) => {
+    console.error('Verifier failed to start:', error);
+    process.exit(1);
+  });
+}

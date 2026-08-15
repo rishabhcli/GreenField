@@ -9,19 +9,36 @@
 
 export type Labels = Readonly<Record<string, string>>;
 
+/**
+ * Identity labels merged into every series at scrape time.
+ *
+ * These counters live in a per-process Map. `foundry-api` and `foundry-worker`
+ * both run two instances, so a scrape of `/metrics` is one replica's slice
+ * and resets on every deploy. Render does not attach `instance` at scrape
+ * time the way Kubernetes service discovery would, so the only way a scraper
+ * can sum across replicas instead of silently reading one is to label the
+ * series here. This is not an aggregator — it makes the partial view honest.
+ */
+let identityLabels: Labels = {};
+
+export function configureMetricIdentity(labels: Labels): void {
+  identityLabels = labels;
+}
+
+export function escapeLabelValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+}
+
 function labelKey(labels: Labels): string {
   const entries = Object.entries(labels).sort(([a], [b]) => (a < b ? -1 : 1));
   return entries.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(',');
 }
 
 function renderLabels(labels: Labels): string {
-  const entries = Object.entries(labels).sort(([a], [b]) => (a < b ? -1 : 1));
+  const merged = { ...identityLabels, ...labels };
+  const entries = Object.entries(merged).sort(([a], [b]) => (a < b ? -1 : 1));
   if (entries.length === 0) return '';
   return `{${entries.map(([k, v]) => `${k}="${escapeLabelValue(v)}"`).join(',')}}`;
-}
-
-function escapeLabelValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
 }
 
 abstract class Metric {
@@ -49,7 +66,7 @@ export class Counter extends Metric {
   }
   override render(): string {
     const lines = [`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} counter`];
-    if (this.#values.size === 0) lines.push(`${this.name} 0`);
+    if (this.#values.size === 0) lines.push(`${this.name}${renderLabels({})} 0`);
     for (const { labels, value } of this.#values.values()) {
       lines.push(`${this.name}${renderLabels(labels)} ${value}`);
     }

@@ -14,10 +14,11 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
 import rateLimit from '@fastify/rate-limit';
-import { describeError } from '@foundry/core';
+import { describeError, serviceNameFromEnv } from '@foundry/core';
 import { getLogger, metrics, withContext } from '@foundry/obs';
 import { buildContext, bootstrapOperatingCompany, wireRuntime, type AppContext } from '@foundry/runtime';
 import { registerErrorHandler } from './errors.js';
+import { corsAllowsOrigin, isWebhookPath } from './http-policy.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 import { registerReadinessRoutes } from './routes/readiness.js';
 import { registerGovernanceRoutes } from './routes/governance.js';
@@ -29,7 +30,7 @@ const EXPECTED_MIGRATIONS = 6;
 
 async function main(): Promise<void> {
   const ctx = await buildContext({
-    serviceName: process.env['RENDER_SERVICE_NAME'] ?? 'foundry-api',
+    serviceName: serviceNameFromEnv('foundry-api'),
     expectedMigrations: EXPECTED_MIGRATIONS,
     installSchedules: false,
   });
@@ -61,8 +62,14 @@ async function main(): Promise<void> {
 
   await app.register(sensible);
   await app.register(cors, {
-    // The generated storefront calls this API from its own origin.
-    origin: (origin, cb) => cb(null, true),
+    origin: (origin, cb) =>
+      cb(
+        null,
+        corsAllowsOrigin(origin, {
+          allowlist: ctx.config.corsAllowedOrigins,
+          failClosed: ctx.config.corsFailClosed,
+        }),
+      ),
     credentials: false,
   });
 
@@ -70,11 +77,26 @@ async function main(): Promise<void> {
    * Rate limiting protects the control plane from a runaway agent as much as
    * from the outside world. Webhooks are exempted: a provider retry storm is
    * legitimate traffic and dropping it would lose money state.
+   *
+   * The store is Redis, not the default in-process Map: this API runs two
+   * instances, so an in-memory 300/min is really 600/min and resets on every
+   * deploy. Keys are written with the window as TTL (`@fastify/rate-limit`
+   * `incr` takes `timeWindow` and expires the key); they cannot accumulate
+   * unbounded in a `noeviction` Key Value instance. `continueExceeding` stays
+   * off so a client over the limit does not refresh the TTL on every hit.
+   *
+   * `skipOnError: true` — if Redis is unreachable the limiter lets the
+   * request through rather than taking the API down. A missing rate limit is
+   * worse than a 500 on every request, but not worse than dropping webhooks
+   * and checkouts. Health checks still have to answer.
    */
   await app.register(rateLimit, {
     max: 300,
     timeWindow: '1 minute',
-    allowList: (request) => request.url.startsWith('/webhooks/'),
+    redis: ctx.redis,
+    nameSpace: 'foundry-rl-',
+    skipOnError: true,
+    allowList: (request) => isWebhookPath(request.url),
     keyGenerator: (request) => request.ip,
   });
 

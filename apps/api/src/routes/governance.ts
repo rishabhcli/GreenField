@@ -12,11 +12,10 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { KillSwitchScope, PolicyDeniedError, ValidationError, type BudgetScope } from '@foundry/core';
+import { KillSwitchScope, ValidationError, type BudgetScope } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import type { AppContext } from '@foundry/runtime';
-
-const OPERATOR_TOKEN_ENV = 'OPERATOR_API_TOKEN';
+import { requireOperator } from '../auth.js';
 
 const DecideApproval = z.object({
   decision: z.enum(['approved', 'rejected']),
@@ -44,28 +43,8 @@ const SetBudget = z.object({
 export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const log = getLogger();
 
-  /**
-   * Operator authentication.
-   *
-   * Deliberately fails closed: with no token configured, every mutating
-   * governance route is refused rather than left open. An unprotected approval
-   * endpoint would make the whole approval mechanism decorative.
-   */
-  const requireOperator = async (request: { headers: Record<string, unknown> }): Promise<string> => {
-    const configured = process.env[OPERATOR_TOKEN_ENV];
-    if (!configured) {
-      throw new PolicyDeniedError(
-        `${OPERATOR_TOKEN_ENV} is not configured, so operator actions are refused. ` +
-          `Set it on the Render service to enable the approval and kill-switch controls.`,
-      );
-    }
-    const header = request.headers['authorization'];
-    const presented = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
-    if (!presented || !timingSafeEqual(presented, configured)) {
-      throw new PolicyDeniedError('Operator token missing or invalid.');
-    }
-    return 'operator';
-  };
+  const operator = async (request: { headers: Record<string, unknown> }): Promise<string> =>
+    requireOperator(request, ctx.config.operatorApiToken);
 
   const company = async (): Promise<string> => {
     const row = await ctx.repos.companies.first();
@@ -97,7 +76,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>('/api/approvals/:id/decide', async (request, reply) => {
-    await requireOperator(request as never);
+    await operator(request as never);
     const body = DecideApproval.parse(request.body);
     const approval = await ctx.repos.governance.approvals.decide(
       request.params.id,
@@ -146,7 +125,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   });
 
   app.post<{ Body: unknown }>('/api/kill-switches/engage', async (request, reply) => {
-    await requireOperator(request as never);
+    await operator(request as never);
     const body = EngageKillSwitch.parse(request.body);
     const companyId = await company();
 
@@ -168,7 +147,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   });
 
   app.post<{ Params: { scope: string }; Body: unknown }>('/api/kill-switches/:scope/release', async (request, reply) => {
-    await requireOperator(request as never);
+    await operator(request as never);
     const scope = KillSwitchScope.parse(request.params.scope);
     const releasedBy = z.object({ releasedBy: z.string().min(3) }).parse(request.body).releasedBy;
     const companyId = await company();
@@ -213,7 +192,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   });
 
   app.put<{ Body: unknown }>('/api/budgets', async (request, reply) => {
-    await requireOperator(request as never);
+    await operator(request as never);
     const body = SetBudget.parse(request.body);
     const companyId = await company();
 
@@ -344,12 +323,4 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
       children: children.map((c) => ({ id: c.id, roleKey: c.role_key, status: c.status })),
     };
   });
-}
-
-/** Constant-time compare, so a token cannot be guessed byte by byte. */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }

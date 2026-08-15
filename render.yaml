@@ -350,10 +350,15 @@ services:
 envVarGroups:
   - name: foundry-operator
     envVars:
-      # Gates every mutating governance route (approvals, kill switches,
-      # budgets). Unset means those routes refuse, not that they are open.
+      # Gates mutating governance routes (approvals, kill switches, budgets)
+      # and GET /metrics. Unset means those routes refuse, not that they are open.
       - key: OPERATOR_API_TOKEN
         generateValue: true
+      # Extra browser origins the API will reflect, comma-separated. The origin
+      # of PUBLIC_BASE_URL is always allowed. Production refuses unknown origins,
+      # so a storefront on a different host must be listed here.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
       - key: OWNER_EMAIL
         sync: false
       - key: ALERT_WEBHOOK_URL

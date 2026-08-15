@@ -32,6 +32,15 @@ import { getLogger, metrics } from '@foundry/obs';
 import type { z } from 'zod';
 import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/adapter.js';
 import { ANTHROPIC_MANIFEST, SECRETS } from '../manifests.js';
+import { applyPromptCache } from './cache.js';
+
+export {
+  applyPromptCache,
+  countCacheBreakpoints,
+  MAX_CACHE_BREAKPOINTS,
+  CACHE_TTL,
+  EPHEMERAL_CACHE,
+} from './cache.js';
 
 /** Thinking depth / token spend. Higher costs more and reasons harder. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -147,27 +156,19 @@ export class AnthropicAdapter extends ProviderAdapter {
     this.assertActivated();
     const client = this.#anthropic();
 
-    const system = input.system
-      ? input.cacheSystemPrompt !== false
-        ? [{ type: 'text' as const, text: input.system, cache_control: { type: 'ephemeral' as const } }]
-        : input.system
-      : undefined;
+    const cached = applyPromptCache({
+      system: input.system,
+      cacheSystemPrompt: input.cacheSystemPrompt,
+      tools: input.tools,
+      messages: input.messages,
+    });
 
     const params: Anthropic.MessageCreateParamsNonStreaming = {
       model: input.model,
       max_tokens: input.maxTokens ?? 16_000,
-      messages: input.messages as Anthropic.MessageParam[],
-      ...(system ? { system } : {}),
-      ...(input.tools && input.tools.length > 0
-        ? {
-            tools: input.tools.map((t) => ({
-              name: t.name,
-              description: t.description,
-              input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-              ...(t.strict ? { strict: true } : {}),
-            })),
-          }
-        : {}),
+      messages: cached.messages,
+      ...(cached.system ? { system: cached.system } : {}),
+      ...(cached.tools && cached.tools.length > 0 ? { tools: cached.tools } : {}),
       // Adaptive thinking lets the model decide depth per request; effort caps
       // the overall spend. `budget_tokens` is rejected on current models.
       ...(input.thinking === false
@@ -252,6 +253,7 @@ export class AnthropicAdapter extends ProviderAdapter {
     metrics.agentTokens.inc({ model: response.model, direction: 'input' }, u.input_tokens);
     metrics.agentTokens.inc({ model: response.model, direction: 'output' }, u.output_tokens);
     if (cacheRead > 0) metrics.agentTokens.inc({ model: response.model, direction: 'cache_read' }, cacheRead);
+    if (cacheCreate > 0) metrics.agentTokens.inc({ model: response.model, direction: 'cache_write' }, cacheCreate);
 
     return {
       inputTokens: u.input_tokens,

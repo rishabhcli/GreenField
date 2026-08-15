@@ -25,19 +25,18 @@ This is not a convention, it is load-bearing structure (`packages/core/src/capab
 pnpm build           # tsc -b tsconfig.build.json (composite project references)
 pnpm typecheck       # identical to build plus --pretty — it DOES emit, not a noEmit check
 pnpm clean           # tsc -b --clean && rm -rf packages/*/dist apps/*/dist
-pnpm test            # vitest run — currently 549 passed / 13 skipped
+pnpm test            # vitest run — currently 617 passed / 13 skipped
 pnpm test path/to/file.test.ts
 pnpm test:watch
 pnpm migrate         # node packages/db/dist/cli/migrate.js — requires a build first
+pnpm verify          # one-shot CLI (apps/verifier/src/cli.ts). Exit 1 only when a probe ran and failed. Missing credentials print BLOCKED and exit 0. Does not say VERIFIED.
+pnpm lint            # ESLint 9 CommonJS flat config — exit 0, two known dead-import warnings
+pnpm preflight       # build && test && lint — incremental, so not the honest compiler gate (see CI)
 ```
 
-**One root script is broken; don't trust it:**
+`pnpm --filter @foundry/verifier start` is the Render cron: it always exits 0, because a missing key is a true statement about the world. `pnpm verify` is the human CLI.
 
-| Script | Problem | Use instead |
-| --- | --- | --- |
-| `pnpm verify` | points at `apps/verifier/dist/cli.js`, which does not exist (and there is no `src/cli.ts`) | `pnpm --filter @foundry/verifier start` |
-
-`pnpm lint` is **not** broken anymore. It is a CommonJS flat config (`eslint.config.js`) that passes — exit 0 with exactly two warnings, both dead imports in files deliberately left untouched. `pnpm preflight` (`build && test && lint`) is green.
+`.github/workflows/ci.yml` is the honest gate: Node 22, `pnpm clean && pnpm build`, then `pnpm test` against a Postgres service (`trust` auth, matching `postgres://localhost:5432/`), then `pnpm lint`. `pnpm preflight` still uses a bare `pnpm build` and can inherit a lying `.tsbuildinfo`.
 
 ### Tests
 
@@ -114,7 +113,7 @@ Every adapter extends `ProviderAdapter` and implements exactly two things: a `Pr
 
 **Adapters never call `fetch` directly.** `ProviderHttpClient` centralises retry, circuit breaker, client-side token-bucket rate limiting, error classification (401/403 → auth, 429 → rate-limited with `retry-after`, ≥500 → unavailable), and Zod validation of every response — a mismatch is a `ProviderContractError`, never coerced. Retryability is derived, so an unkeyed POST is never retried. SDK-based adapters (Anthropic, Stripe) set the SDK's own retries to 0 and translate into the same taxonomy.
 
-Inference cost is computed in `estimateCostMinorUsd` (cents, rounded up, with explicit 1.25× cache-write and 0.1× cache-read multipliers), written per loop step so a killed run still reports what it consumed, and rolled up per role. An unpriced model logs a warning and returns 0 — silence is wrong, but inventing a price is worse. The invariant that every model in `MODEL_BY_TIER` has pricing is enforced **only by `packages/providers/test/anthropic-cost.test.ts`**, not at boot.
+Inference cost is computed in `estimateCostMinorUsd` (cents, rounded up, with explicit 1.25× cache-write and 0.1× cache-read multipliers), written per loop step so a killed run still reports what it consumed, and rolled up per role. An unpriced model logs a warning and returns 0 — silence is wrong, but inventing a price is worse. The invariant that every model in `MODEL_BY_TIER` has pricing is enforced **only by `packages/providers/test/anthropic-cost.test.ts`**, not at boot. Prompt-cache breakpoints (`packages/providers/src/anthropic/cache.ts`) sit on the system prompt, the last tool, and the first+last messages (≤4, 5m TTL) so a 20-iteration tool loop actually hits those multipliers; `cache_write` / `cache_read` token metrics are incremented from the API usage block.
 
 ### Database
 
@@ -139,7 +138,9 @@ Fastify with `logger: false` (pino is configured centrally in `@foundry/obs`). A
 
 `src/errors.ts` exists because Fastify reads `error.statusCode` while Foundry errors expose `httpStatus` — without it a `ValidationError` serves as 500. It walks the `cause` chain and duck-types `isFoundryError` in case `instanceof` fails across duplicate `@foundry/core` copies. Note that `routes/company.ts` also has its own `sendFoundryError` helper for explicit-return paths, so two conventions coexist.
 
-Auth covers **only** governance routes: a bearer `OPERATOR_API_TOKEN` compared in constant time, failing closed — with no token configured, every mutating governance route refuses. Commerce and company routes are unauthenticated by design and compensate by never trusting client input (prices come from the database). Webhooks authenticate by signature. Rate limiting is global at 300/min per IP with `/webhooks/*` exempted, because a provider retry storm is legitimate traffic and dropping it loses money state.
+Auth is a bearer `OPERATOR_API_TOKEN` compared in constant time (`apps/api/src/auth.ts`), failing closed — with no token configured, mutating governance routes and `/metrics` refuse. `/health` and `/ready` stay open so Render can probe them. Commerce and company routes are unauthenticated by design and compensate by never trusting client input (prices come from the database). Webhooks authenticate by signature.
+
+CORS is an allowlist (`corsAllowedOrigins`), always including the origin of `PUBLIC_BASE_URL`, plus optional `CORS_ALLOWED_ORIGINS` (comma-separated). Production is fail-closed; preview/staging are fail-open. Webhooks send no Origin and are not CORS-blocked. Rate limiting is Redis-backed (`foundry-rl-` keys, TTL = window, `skipOnError: true`) at 300/min per IP with `/webhooks/*` exempted, because a provider retry storm is legitimate traffic and dropping it loses money state. An in-process limiter on two API instances would be 600/min and would reset on every deploy.
 
 ## Adding things
 
@@ -176,8 +177,9 @@ Seven services, all built with `corepack enable && pnpm install --frozen-lockfil
 
 ## Notes
 
-- `.env` and `hackathon-sponsor-credentials.md` are gitignored and must never be committed. When adding a secret, its **name** must also be added to the Render env group.
-- **`tsc -b` incremental state can lie.** A stale `.tsbuildinfo` has produced a confident false failure (a package typechecking against an outdated `.d.ts`) and can equally produce a false pass. After changing a cross-package type, verify with `pnpm clean && pnpm build` rather than a bare `pnpm build`. `pnpm test` is type-blind (vitest → esbuild strips types) and cannot catch this.
+- `.env` and `hackathon-sponsor-credentials.md` are gitignored and must never be committed. When adding a secret, its **name** must also be added to the Render env group. `CORS_ALLOWED_ORIGINS` is the extra browser origin list (the storefront host, if it is not `PUBLIC_BASE_URL`); production CORS refuses unknown origins.
+- **`WORKER_ROLE` is validated.** A dashboard typo (`agent` instead of `agents`) refuses to boot rather than silently creating a second `general` worker. Unset still defaults to `general` on the worker binary only.
+- **`tsc -b` incremental state can lie.** A stale `.tsbuildinfo` has produced a confident false failure (a package typechecking against an outdated `.d.ts`) and can equally produce a false pass. After changing a cross-package type, verify with `pnpm clean && pnpm build` rather than a bare `pnpm build`. `pnpm test` is type-blind (vitest → esbuild strips types) and cannot catch this. CI starts from a clean build for that reason.
 - The `Clock` interface is consumed by `retry.ts` and `packages/providers`, but is **not** threaded through `packages/agents` — `PolicyGate.evaluate` calls `new Date()` directly.
 - `QueueEvents` is imported and closed in `packages/queue/src/queues.ts` but never instantiated (dead code).
 - No enforced commit convention; git history uses freeform subjects.

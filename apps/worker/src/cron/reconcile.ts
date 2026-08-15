@@ -16,6 +16,18 @@ async function main(): Promise<void> {
   const log = getLogger();
   try {
     const services = wireRuntime(ctx);
+
+    // Agent runs that blew past their deadline (process kill, OOM, a
+    // deploy) otherwise sit in `running` until a parent waits forever.
+    // `reapOverdueRuns` uses `deadline_at`, which was set from the role's
+    // `runBudgetSeconds` at dispatch — that is the honest timeout, not a
+    // second invented threshold. Daily is a backstop; `loop.tick` (every
+    // 10 minutes) also reaps, so a stranded run does not wait 24 hours.
+    const reaped = await ctx.dispatcher.reapOverdueRuns();
+    if (reaped > 0) {
+      log.info({ reaped }, 'reaped overdue agent runs');
+    }
+
     const companies = await ctx.repos.companies.list();
     if (companies.length === 0) {
       log.info('reconcile cron: no companies yet');

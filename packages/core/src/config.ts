@@ -14,6 +14,17 @@ import { processEnvSource } from './secrets.js';
 export const DeploymentEnvironment = z.enum(['production', 'staging', 'preview']);
 export type DeploymentEnvironment = z.infer<typeof DeploymentEnvironment>;
 
+export const LogLevel = z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']);
+export type LogLevel = z.infer<typeof LogLevel>;
+
+/**
+ * The two complementary queue sets the worker binary can consume. A typo in
+ * the Render dashboard must refuse to boot — falling through an unvalidated
+ * cast to a second `general` worker is how agent jobs silently accumulate.
+ */
+export const WorkerRole = z.enum(['general', 'agents']);
+export type WorkerRole = z.infer<typeof WorkerRole>;
+
 export const RuntimeConfig = z.object({
   /** Which deployed environment this process is. Never defaults silently. */
   environment: DeploymentEnvironment,
@@ -24,7 +35,7 @@ export const RuntimeConfig = z.object({
   /** Git SHA of the running build. */
   releaseSha: z.string().min(1),
   port: z.number().int().positive(),
-  logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
+  logLevel: LogLevel,
   /** Public base URL of the control plane, used to build webhook URLs. */
   publicBaseUrl: z.string().url(),
   databaseUrl: z.string().min(1),
@@ -33,6 +44,26 @@ export const RuntimeConfig = z.object({
   workerConcurrency: z.number().int().positive(),
   /** Global switch that stops all agent execution without a redeploy. */
   agentsEnabled: z.boolean(),
+  /**
+   * Origins the API will reflect in CORS. Always includes the origin of
+   * `PUBLIC_BASE_URL`. Extra origins come from `CORS_ALLOWED_ORIGINS`
+   * (comma-separated). Production refuses unknown browser origins; preview
+   * and staging do not, because a local storefront and the API rarely share
+   * a host.
+   */
+  corsAllowedOrigins: z.array(z.string().min(1)),
+  /** True when unknown browser origins are rejected. */
+  corsFailClosed: z.boolean(),
+  /**
+   * Bearer token for operator routes and `/metrics`. Absent means those
+   * routes refuse (fail closed). Never logged.
+   */
+  operatorApiToken: z.string().min(1).optional(),
+  /**
+   * Set only on worker processes. Absent on the API/verifier is correct.
+   * Present-but-invalid refuses to boot on any process.
+   */
+  workerRole: WorkerRole.optional(),
 });
 export type RuntimeConfig = z.infer<typeof RuntimeConfig>;
 
@@ -71,6 +102,13 @@ export function loadRuntimeConfig(env: EnvSource = processEnvSource): RuntimeCon
     );
   }
 
+  const logLevel = parseLogLevel(optional(env, 'LOG_LEVEL', 'info'));
+  const publicBaseUrl = required(
+    env,
+    'PUBLIC_BASE_URL',
+    'This is the externally reachable https URL of the API service; webhook URLs are built from it.',
+  );
+
   const config: RuntimeConfig = {
     environment: parsedEnvironment.data,
     // Render sets RENDER_SERVICE_NAME and RENDER_INSTANCE_ID automatically.
@@ -78,12 +116,8 @@ export function loadRuntimeConfig(env: EnvSource = processEnvSource): RuntimeCon
     instanceId: optional(env, 'RENDER_INSTANCE_ID', 'local-instance'),
     releaseSha: optional(env, 'RENDER_GIT_COMMIT', optional(env, 'RELEASE_SHA', 'unknown')),
     port: Number.parseInt(optional(env, 'PORT', '10000'), 10),
-    logLevel: (optional(env, 'LOG_LEVEL', 'info') as RuntimeConfig['logLevel']),
-    publicBaseUrl: required(
-      env,
-      'PUBLIC_BASE_URL',
-      'This is the externally reachable https URL of the API service; webhook URLs are built from it.',
-    ),
+    logLevel,
+    publicBaseUrl,
     databaseUrl: required(
       env,
       'DATABASE_URL',
@@ -96,6 +130,10 @@ export function loadRuntimeConfig(env: EnvSource = processEnvSource): RuntimeCon
     ),
     workerConcurrency: Number.parseInt(optional(env, 'WORKER_CONCURRENCY', '8'), 10),
     agentsEnabled: optional(env, 'AGENTS_ENABLED', 'true') !== 'false',
+    corsAllowedOrigins: parseCorsOrigins(env, publicBaseUrl),
+    corsFailClosed: parsedEnvironment.data === 'production',
+    operatorApiToken: env.get('OPERATOR_API_TOKEN'),
+    workerRole: parseWorkerRole(env.get('WORKER_ROLE'), { required: false }),
   };
 
   const parsed = RuntimeConfig.safeParse(config);
@@ -110,6 +148,85 @@ export function loadRuntimeConfig(env: EnvSource = processEnvSource): RuntimeCon
   }
 
   return parsed.data;
+}
+
+export function parseLogLevel(raw: string): LogLevel {
+  const parsed = LogLevel.safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError(
+      `LOG_LEVEL must be one of ${LogLevel.options.join(' | ')}, got "${raw}"`,
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * Parse `WORKER_ROLE`. A typo must not silently become `general`.
+ *
+ * `required: false` (API, verifier, migrate): unset is fine, a present-but
+ * invalid value still throws so a dashboard typo cannot hide.
+ * `required: true` (the worker binary): unset defaults to `general` only when
+ * the variable is actually absent, never when it is a typo.
+ */
+export function parseWorkerRole(
+  raw: string | undefined,
+  options: { required: boolean } = { required: false },
+): WorkerRole | undefined {
+  if (raw === undefined || raw === '') {
+    return options.required ? 'general' : undefined;
+  }
+  const parsed = WorkerRole.safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError(
+      `WORKER_ROLE must be one of ${WorkerRole.options.join(' | ')}, got "${raw}". ` +
+        `A typo here silently creates a second general worker and agent jobs are never consumed.`,
+    );
+  }
+  return parsed.data;
+}
+
+/** Worker entrypoint: validate `WORKER_ROLE` before `buildContext`. */
+export function loadWorkerRole(env: EnvSource = processEnvSource): WorkerRole {
+  return parseWorkerRole(env.get('WORKER_ROLE'), { required: true }) ?? 'general';
+}
+
+export function serviceNameFromEnv(fallback: string, env: EnvSource = processEnvSource): string {
+  return env.get('RENDER_SERVICE_NAME') ?? env.get('SERVICE_NAME') ?? fallback;
+}
+
+/** Migrate CLI: DATABASE_URL without requiring the rest of RuntimeConfig. */
+export function readDatabaseUrl(env: EnvSource = processEnvSource): string | undefined {
+  return env.get('DATABASE_URL');
+}
+
+/**
+ * Logger settings that do not require DATABASE_URL. The migrate CLI and the
+ * logger's own first line run before a full `RuntimeConfig` exists; this is
+ * the documented bootstrap exception, not a second env-reading system.
+ */
+export function loadBootstrapLogConfig(env: EnvSource = processEnvSource): {
+  readonly level: LogLevel;
+  readonly serviceName: string;
+  readonly environment: string;
+  readonly instanceId: string;
+  readonly releaseSha: string;
+} {
+  return {
+    level: parseLogLevel(env.get('LOG_LEVEL') ?? 'info'),
+    serviceName: serviceNameFromEnv('unknown-service', env),
+    environment: env.get('APP_ENVIRONMENT') ?? 'unknown',
+    instanceId: env.get('RENDER_INSTANCE_ID') ?? 'local-instance',
+    releaseSha: env.get('RENDER_GIT_COMMIT') ?? env.get('RELEASE_SHA') ?? 'unknown',
+  };
+}
+
+function parseCorsOrigins(env: EnvSource, publicBaseUrl: string): string[] {
+  const fromPublic = new URL(publicBaseUrl).origin;
+  const extra = (env.get('CORS_ALLOWED_ORIGINS') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return [...new Set([fromPublic, ...extra])];
 }
 
 /**

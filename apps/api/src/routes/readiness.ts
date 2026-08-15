@@ -13,6 +13,7 @@ import { ACTIVATION_STATE_IS_USABLE, type ActivationState } from '@foundry/core'
 import { registry as metricsRegistry } from '@foundry/obs';
 import { allSecretSpecs } from '@foundry/providers';
 import type { AppContext } from '@foundry/runtime';
+import { requireOperator } from '../auth.js';
 
 export async function registerReadinessRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   /**
@@ -35,7 +36,8 @@ export async function registerReadinessRoutes(app: FastifyInstance, ctx: AppCont
     return reply.code(code).send(report);
   });
 
-  app.get('/metrics', async (_request, reply) => {
+  app.get('/metrics', async (request, reply) => {
+    await requireOperator(request, ctx.config.operatorApiToken);
     ctx.providers.publishCapabilityMetrics();
     return reply.type('text/plain; version=0.0.4').send(metricsRegistry.render());
   });

@@ -38,7 +38,7 @@ interface BlockedResult {
  * Wraps a handler so a "this cannot run yet" error becomes a recorded blocked
  * result rather than a retry loop against a credential that does not exist.
  */
-function tolerateMissingCapability<T>(
+export function tolerateMissingCapability<T>(
   fn: () => Promise<T>,
 ): Promise<T | BlockedResult> {
   return fn().catch((error: unknown) => {
@@ -91,6 +91,11 @@ export function buildHandlers(ctx: AppContext, services: Services): HandlerMap {
     },
 
     'loop.tick': async (payload) => {
+      // Every 10 minutes is soon enough that a killed run does not pin a
+      // parent for a day, and rare enough that the extra `deadline_at`
+      // query is noise. Daily reconcile is the backstop if this worker
+      // is the one that is down.
+      const reaped = await ctx.dispatcher.reapOverdueRuns();
       const ids = await companyIds(payload.companyId);
       const ticks = [];
       for (const companyId of ids) {
@@ -98,7 +103,7 @@ export function buildHandlers(ctx: AppContext, services: Services): HandlerMap {
         log.info({ companyId, ...tick }, 'loop tick');
         ticks.push({ companyId, ...tick });
       }
-      return { ticks, forcePhaseIgnored: payload.forcePhase };
+      return { ticks, reaped, forcePhaseIgnored: payload.forcePhase };
     },
 
     /* ------------------------------------------------------------------ */

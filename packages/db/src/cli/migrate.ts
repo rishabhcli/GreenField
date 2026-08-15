@@ -6,7 +6,7 @@
  * instance takes traffic, and available manually for `status` and `--dry-run`.
  */
 
-import { describeError } from '@foundry/core';
+import { describeError, loadBootstrapLogConfig, readDatabaseUrl } from '@foundry/core';
 import { initLogger, getLogger } from '@foundry/obs';
 import { createPool } from '../pool.js';
 import { migrate, migrationStatus } from '../migrate.js';
@@ -17,16 +17,17 @@ async function main(): Promise<number> {
   const dryRun = args.includes('--dry-run');
   const acceptDrift = args.includes('--accept-drift');
 
+  const boot = loadBootstrapLogConfig();
   initLogger({
-    level: process.env['LOG_LEVEL'] ?? 'info',
-    serviceName: process.env['RENDER_SERVICE_NAME'] ?? 'migrate',
-    environment: process.env['APP_ENVIRONMENT'] ?? 'unknown',
-    instanceId: process.env['RENDER_INSTANCE_ID'] ?? 'cli',
-    releaseSha: process.env['RENDER_GIT_COMMIT'] ?? 'unknown',
+    level: boot.level,
+    serviceName: boot.serviceName === 'unknown-service' ? 'migrate' : boot.serviceName,
+    environment: boot.environment,
+    instanceId: boot.instanceId,
+    releaseSha: boot.releaseSha,
   });
   const log = getLogger();
 
-  const connectionString = process.env['DATABASE_URL'];
+  const connectionString = readDatabaseUrl();
   if (!connectionString) {
     log.error(
       'DATABASE_URL is not set. Bind it from the Render Postgres instance with ' +

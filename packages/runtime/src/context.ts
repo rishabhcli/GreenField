@@ -14,7 +14,7 @@ import {
   type RuntimeConfig,
 } from '@foundry/core';
 import { Repositories, createPool, databaseHealthCheck, schemaHealthCheck, DbVerificationLookup, type DbPool } from '@foundry/db';
-import { HealthRegistry, initLogger, getLogger } from '@foundry/obs';
+import { HealthRegistry, configureMetricIdentity, initLogger, getLogger } from '@foundry/obs';
 import {
   ALL_MANIFESTS,
   AlibabaSourcingAdapter,
@@ -137,6 +137,10 @@ export async function buildContext(options: BuildOptions): Promise<AppContext> {
     environment: config.environment,
     instanceId: config.instanceId,
     releaseSha: config.releaseSha,
+  });
+  configureMetricIdentity({
+    service: options.serviceName,
+    instance: config.instanceId,
   });
   const log = getLogger();
 
