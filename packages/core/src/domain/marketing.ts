@@ -209,6 +209,151 @@ export const ExperimentArm = z.object({
 });
 export type ExperimentArm = z.infer<typeof ExperimentArm>;
 
+/* -------------------------------------------------------------------------- */
+/* Audience segments                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Who we are selling to, stated precisely enough to hand to an ad platform.
+ *
+ * This exists because `Experiment.audienceSpec` used to be an untyped bag that
+ * nothing populated, while the Meta ad-set builder correctly refused to invent
+ * geo/age targeting. The result was an experiment that could be created and
+ * could never launch. A segment is the thing that fills that gap.
+ *
+ * The load-bearing rule is `evidenceIds`: a segment must cite the evidence it
+ * was derived from. A demographic guessed by a model is exactly the kind of
+ * fabricated claim the rest of this system refuses to make, and targeting spend
+ * at an invented audience costs real money.
+ */
+
+/** ISO 3166-1 alpha-2. Meta and Google both key geo targeting on these. */
+export const CountryCode = z.string().length(2).regex(/^[A-Z]{2}$/, 'ISO 3166-1 alpha-2, uppercase');
+
+export const GeoTarget = z.object({
+  countries: z.array(CountryCode).min(1),
+  regions: z.array(z.string().min(1)).default([]),
+  cities: z.array(z.string().min(1)).default([]),
+});
+export type GeoTarget = z.infer<typeof GeoTarget>;
+
+/** Meta rejects ad sets outside 13..65; 65 is treated as "65 or older". */
+export const AGE_MIN = 13;
+export const AGE_MAX = 65;
+
+export const AgeRange = z
+  .object({
+    min: z.number().int().min(AGE_MIN).max(AGE_MAX),
+    max: z.number().int().min(AGE_MIN).max(AGE_MAX),
+  })
+  .refine((r) => r.max >= r.min, { message: 'ageRange.max must be >= ageRange.min' });
+export type AgeRange = z.infer<typeof AgeRange>;
+
+export const AudienceGender = z.enum(['all', 'male', 'female']);
+export type AudienceGender = z.infer<typeof AudienceGender>;
+
+export const AudienceSegment = z.object({
+  id: z.string().min(1),
+  companyId: z.string().min(1),
+  /** The opportunity this audience was derived for, when one is selected. */
+  opportunityId: z.string().nullable().default(null),
+  name: z.string().min(1),
+  /** Plain-language ICP statement: who they are and what they are trying to do. */
+  description: z.string().min(1),
+  geo: GeoTarget,
+  ageRange: AgeRange,
+  gender: AudienceGender.default('all'),
+  /** Free-text interest labels. Resolved to platform interest ids at launch. */
+  interests: z.array(z.string().min(1)).default([]),
+  /** BCP-47 language tags. */
+  languages: z.array(z.string().min(1)).default([]),
+  /**
+   * Evidence rows this segment was inferred from. At least one is required:
+   * an audience nobody observed is an invention, and this system does not
+   * spend money against inventions.
+   */
+  evidenceIds: z.array(z.string().min(1)).min(1),
+  /**
+   * True only when every contributing evidence item was itself grounded in a
+   * fetched source rather than asserted. Mirrors `DimensionScore.grounded`.
+   */
+  grounded: z.boolean(),
+  /** Platform-reported reach, when a platform has been asked. Never estimated. */
+  estimatedReachLower: z.number().int().nonnegative().nullable().default(null),
+  estimatedReachUpper: z.number().int().nonnegative().nullable().default(null),
+  status: z.enum(['draft', 'active', 'retired']).default('draft'),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type AudienceSegment = z.infer<typeof AudienceSegment>;
+
+/** Meta encodes gender as 1=male, 2=female, and omission as "all". */
+const META_GENDER: Readonly<Record<AudienceGender, readonly number[] | undefined>> = {
+  all: undefined,
+  male: [1],
+  female: [2],
+};
+
+/**
+ * Project a segment into Meta's Targeting spec.
+ *
+ * Interests are emitted as `interests_by_name` rather than `interests`, because
+ * Meta's `interests` field takes numeric interest ids from its own taxonomy.
+ * Passing a name where an id belongs would be silently dropped by the API and
+ * we would be paying for broader targeting than we asked for.
+ */
+export function toMetaTargeting(segment: AudienceSegment): Record<string, unknown> {
+  const genders = META_GENDER[segment.gender];
+  return {
+    geo_locations: {
+      countries: [...segment.geo.countries],
+      ...(segment.geo.regions.length > 0 ? { regions: segment.geo.regions.map((key) => ({ key })) } : {}),
+      ...(segment.geo.cities.length > 0 ? { cities: segment.geo.cities.map((key) => ({ key })) } : {}),
+    },
+    age_min: segment.ageRange.min,
+    age_max: segment.ageRange.max,
+    ...(genders ? { genders: [...genders] } : {}),
+    ...(segment.languages.length > 0 ? { locales: [...segment.languages] } : {}),
+    ...(segment.interests.length > 0 ? { interests_by_name: [...segment.interests] } : {}),
+  };
+}
+
+/**
+ * Project a segment into the criteria Google Ads applies at the ad-group level.
+ * Google has no single targeting blob, so this returns the pieces the caller
+ * attaches individually.
+ */
+export function toGoogleTargeting(segment: AudienceSegment): Record<string, unknown> {
+  return {
+    locations: [...segment.geo.countries],
+    ...(segment.geo.regions.length > 0 ? { regions: [...segment.geo.regions] } : {}),
+    ageRanges: [segment.ageRange.min, segment.ageRange.max],
+    ...(segment.gender !== 'all' ? { gender: segment.gender } : {}),
+    ...(segment.languages.length > 0 ? { languages: [...segment.languages] } : {}),
+    ...(segment.interests.length > 0 ? { affinityTerms: [...segment.interests] } : {}),
+  };
+}
+
+/**
+ * The `audience_spec` JSONB an experiment stores. `targeting` is the key the
+ * Meta launch path reads; `segmentId` keeps the row traceable to the segment
+ * and the evidence behind it.
+ *
+ * The platform comes from the experiment, not the segment — the same audience
+ * can be tested on more than one platform, and each needs its own projection.
+ */
+export function audienceSpecFor(segment: AudienceSegment, platform: AdPlatform): Record<string, unknown> {
+  const spec: Record<string, unknown> = { segmentId: segment.id, evidenceIds: [...segment.evidenceIds] };
+  if (platform === 'google') {
+    spec['targeting'] = toGoogleTargeting(segment);
+  } else {
+    // Meta is the default projection: organic, email and sms carry the same
+    // audience definition for reporting even though they do not call an ads API.
+    spec['targeting'] = toMetaTargeting(segment);
+  }
+  return spec;
+}
+
 export const Experiment = z.object({
   id: z.string().min(1),
   companyId: z.string().min(1),

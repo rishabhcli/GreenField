@@ -199,6 +199,7 @@ const ExperimentRow = z.object({
   platform: z.string(),
   objective: z.string(),
   audience_spec: z.record(z.string(), z.unknown()),
+  audience_segment_id: z.string().nullable(),
   total_budget_minor: z.number(),
   currency: z.string(),
   stop_conditions: z.array(z.record(z.string(), z.unknown())),
@@ -226,8 +227,8 @@ export type ExperimentRow = z.infer<typeof ExperimentRow>;
 export type ArmRow = z.infer<typeof ArmRow>;
 
 const EXP_COLUMNS = `id, company_id, brand_id, name, hypothesis, platform, objective, audience_spec,
-  total_budget_minor, currency, stop_conditions, attribution_model, status, approval_id, started_at,
-  ended_at, conclusion`;
+  audience_segment_id, total_budget_minor, currency, stop_conditions, attribution_model, status,
+  approval_id, started_at, ended_at, conclusion`;
 const ARM_COLUMNS = `id, experiment_id, name, creative_concept_id, landing_path, external_refs,
   daily_budget_minor, status, stop_reason`;
 
@@ -242,6 +243,7 @@ export class ExperimentRepository {
     platform: AdPlatform;
     objective: ExperimentObjective;
     audienceSpec: Record<string, unknown>;
+    audienceSegmentId?: string | null;
     totalBudgetMinor: number;
     currency: string;
     stopConditions: readonly StopCondition[];
@@ -253,13 +255,14 @@ export class ExperimentRepository {
     return qOne(
       this.pool,
       `INSERT INTO experiments (id, company_id, brand_id, name, hypothesis, platform, objective,
-                                audience_spec, total_budget_minor, currency, stop_conditions,
-                                attribution_model, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11::jsonb,$12,'draft')
+                                audience_spec, audience_segment_id, total_budget_minor, currency,
+                                stop_conditions, attribution_model, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12::jsonb,$13,'draft')
        RETURNING ${EXP_COLUMNS}`,
       [
         newId('experiment'), input.companyId, input.brandId, input.name, input.hypothesis, input.platform,
-        input.objective, JSON.stringify(input.audienceSpec), input.totalBudgetMinor, input.currency,
+        input.objective, JSON.stringify(input.audienceSpec), input.audienceSegmentId ?? null,
+        input.totalBudgetMinor, input.currency,
         JSON.stringify(input.stopConditions), input.attributionModel,
       ],
       ExperimentRow,
@@ -760,17 +763,134 @@ export class SupportRepository {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Audience segments                                                           */
+/* -------------------------------------------------------------------------- */
+
+const SegmentRow = z.object({
+  id: z.string(),
+  company_id: z.string(),
+  opportunity_id: z.string().nullable(),
+  name: z.string(),
+  description: z.string(),
+  geo: z.record(z.string(), z.unknown()),
+  age_min: z.number(),
+  age_max: z.number(),
+  gender: z.string(),
+  interests: z.array(z.string()),
+  languages: z.array(z.string()),
+  evidence_ids: z.array(z.string()),
+  grounded: z.boolean(),
+  estimated_reach_lower: z.number().nullable(),
+  estimated_reach_upper: z.number().nullable(),
+  status: z.string(),
+  created_at: z.date(),
+  updated_at: z.date(),
+});
+export type SegmentRow = z.infer<typeof SegmentRow>;
+
+const SEGMENT_COLUMNS = `id, company_id, opportunity_id, name, description, geo, age_min, age_max,
+  gender, interests, languages, evidence_ids, grounded, estimated_reach_lower,
+  estimated_reach_upper, status, created_at, updated_at`;
+
+export class AudienceSegmentRepository {
+  constructor(private readonly pool: DbPool) {}
+
+  /**
+   * The evidence check is repeated here rather than left to the CHECK constraint
+   * so the caller gets a domain error naming the problem, instead of a raw
+   * constraint violation surfacing as a generic ValidationError.
+   */
+  async create(input: {
+    companyId: string;
+    opportunityId: string | null;
+    name: string;
+    description: string;
+    geo: { countries: readonly string[]; regions?: readonly string[]; cities?: readonly string[] };
+    ageMin: number;
+    ageMax: number;
+    gender: 'all' | 'male' | 'female';
+    interests: readonly string[];
+    languages: readonly string[];
+    evidenceIds: readonly string[];
+    grounded: boolean;
+  }): Promise<SegmentRow> {
+    if (input.evidenceIds.length === 0) {
+      throw new ConflictError(
+        'An audience segment must cite at least one evidence item. Targeting spend at an audience nobody observed is forbidden.',
+        { companyId: input.companyId, name: input.name },
+      );
+    }
+    if (input.geo.countries.length === 0) {
+      throw new ConflictError('An audience segment must target at least one country', { name: input.name });
+    }
+    return qOne(
+      this.pool,
+      `INSERT INTO audience_segments (id, company_id, opportunity_id, name, description, geo,
+                                      age_min, age_max, gender, interests, languages,
+                                      evidence_ids, grounded, status)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13,'draft')
+       RETURNING ${SEGMENT_COLUMNS}`,
+      [
+        newId('audienceSegment'), input.companyId, input.opportunityId, input.name, input.description,
+        JSON.stringify(input.geo), input.ageMin, input.ageMax, input.gender,
+        JSON.stringify(input.interests), JSON.stringify(input.languages),
+        JSON.stringify(input.evidenceIds), input.grounded,
+      ],
+      SegmentRow,
+      'audience_segment',
+      input.name,
+    );
+  }
+
+  async byId(id: string): Promise<SegmentRow> {
+    return qOne(this.pool, `SELECT ${SEGMENT_COLUMNS} FROM audience_segments WHERE id=$1`, [id], SegmentRow, 'audience_segment', id);
+  }
+
+  async list(companyId: string, status?: readonly string[]): Promise<readonly SegmentRow[]> {
+    if (status && status.length > 0) {
+      return q(
+        this.pool,
+        `SELECT ${SEGMENT_COLUMNS} FROM audience_segments WHERE company_id=$1 AND status = ANY($2) ORDER BY created_at DESC`,
+        [companyId, [...status]],
+        SegmentRow,
+      );
+    }
+    return q(
+      this.pool,
+      `SELECT ${SEGMENT_COLUMNS} FROM audience_segments WHERE company_id=$1 ORDER BY created_at DESC`,
+      [companyId],
+      SegmentRow,
+    );
+  }
+
+  async activate(id: string): Promise<void> {
+    await exec(this.pool, `UPDATE audience_segments SET status='active' WHERE id=$1 AND status='draft'`, [id]);
+  }
+
+  /** Reach is only ever written from a platform response, never computed here. */
+  async recordReach(id: string, lower: number, upper: number): Promise<void> {
+    await exec(
+      this.pool,
+      `UPDATE audience_segments SET estimated_reach_lower=$2, estimated_reach_upper=$3 WHERE id=$1`,
+      [id, lower, upper],
+    );
+  }
+}
+
 export class GrowthRepositories {
   readonly creative: CreativeRepository;
   readonly experiments: ExperimentRepository;
   readonly metrics: MetricRepository;
   readonly support: SupportRepository;
+  readonly audience: AudienceSegmentRepository;
 
   constructor(pool: DbPool) {
     this.creative = new CreativeRepository(pool);
     this.experiments = new ExperimentRepository(pool);
     this.metrics = new MetricRepository(pool);
     this.support = new SupportRepository(pool);
+    this.audience = new AudienceSegmentRepository(pool);
   }
 }
 

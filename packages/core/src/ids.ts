@@ -53,6 +53,12 @@ export const ID_PREFIXES = {
   adSet: 'adset',
   creative: 'crea',
   experiment: 'exp',
+  // NOT `aud` — that belongs to `auditEvent` below, and has since the schema was
+  // laid down. Two kinds sharing a prefix silently breaks `idKindOf` (the later
+  // registry entry wins) and, worse, makes `isId`/`assertId` accept an id of the
+  // wrong kind. `auditEvent` cannot move: `audit_events` is append-only and
+  // hash-chained, so its ids are already baked into the chain material.
+  audienceSegment: 'aseg',
   experimentArm: 'arm',
   metricSnapshot: 'msnap',
   ticket: 'tkt',
@@ -75,9 +81,76 @@ export const ID_PREFIXES = {
 export type IdKind = keyof typeof ID_PREFIXES;
 export type Id<K extends IdKind> = string & { readonly __idKind?: K };
 
-const PREFIX_TO_KIND = new Map<string, IdKind>(
-  Object.entries(ID_PREFIXES).map(([kind, prefix]) => [prefix, kind as IdKind]),
-);
+/**
+ * Reverse index, built with the uniqueness check that the registry itself
+ * cannot express.
+ *
+ * `new Map(entries)` silently keeps the *last* writer for a repeated key, so a
+ * duplicate prefix used to degrade quietly in two directions at once:
+ * `idKindOf` reported the wrong kind for every id of the shadowed type, and
+ * `isId(value, shadowedKind)` returned true for an id belonging to the other
+ * kind — meaning `assertId` would wave through, say, an audit-event id where an
+ * audience-segment id was required. Neither failure surfaces at the point of
+ * the mistake; both surface later as a cross-entity lookup that returns the
+ * wrong row.
+ *
+ * So the registry is validated when the module loads. This is cheap (one pass
+ * over ~55 literals, no I/O, well inside `packages/core`'s purity rule) and it
+ * fails at import time, which is the only moment where "someone reused a
+ * prefix" is still a one-line fix rather than a data-forensics exercise.
+ */
+function buildPrefixIndex(): ReadonlyMap<string, IdKind> {
+  const index = new Map<string, IdKind>();
+  const collisions: string[] = [];
+  const malformed: string[] = [];
+  for (const [kind, prefix] of Object.entries(ID_PREFIXES) as [IdKind, string][]) {
+    // An `_` in a prefix would break `idKindOf`, which splits on the first one.
+    // Same class of bug, so it is caught in the same place.
+    if (!/^[a-z][a-z0-9]*$/.test(prefix)) {
+      malformed.push(`"${kind}" -> "${prefix}"`);
+      continue;
+    }
+    const existing = index.get(prefix);
+    if (existing !== undefined) {
+      collisions.push(`"${prefix}" is claimed by both "${existing}" and "${kind}"`);
+      continue;
+    }
+    index.set(prefix, kind);
+  }
+  if (collisions.length > 0 || malformed.length > 0) {
+    throw new ValidationError(
+      'ID_PREFIXES is not a valid registry: ' +
+        [
+          collisions.length > 0 ? `duplicate prefixes (${collisions.join('; ')})` : '',
+          malformed.length > 0
+            ? `malformed prefixes, expected /^[a-z][a-z0-9]*$/ (${malformed.join('; ')})`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('; '),
+      { collisions, malformed },
+    );
+  }
+  return index;
+}
+
+const PREFIX_TO_KIND = buildPrefixIndex();
+
+/**
+ * Re-runs the registry validation and returns the problems instead of throwing.
+ *
+ * The module-load guard above already makes a duplicate prefix unimportable, so
+ * this exists for the test that pins the guard itself: a check that can only be
+ * observed by crashing the process is a check nobody can assert on.
+ */
+export function validateIdPrefixes(): readonly string[] {
+  try {
+    buildPrefixIndex();
+    return [];
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)];
+  }
+}
 
 let lastTime = -1;
 let lastRandom: bigint = 0n;

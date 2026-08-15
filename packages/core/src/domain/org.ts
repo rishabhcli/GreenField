@@ -306,6 +306,8 @@ const MANAGERS: readonly RoleDefinition[] = [
       'marketing.create_concept',
       'marketing.check_claims',
       'expert.request_review',
+      'marketing.define_audience_segment',
+      'marketing.list_audience_segments',
       'marketing.create_experiment',
       'marketing.launch_arm',
       'marketing.pause_arm',
@@ -580,7 +582,8 @@ const SPECIALISTS: readonly RoleDefinition[] = [
   // Growth
   specialist('ad_strategist', 'Ad Strategist', 'growth_manager', 'growth',
     'Turn the pain evidence into testable acquisition hypotheses with a named audience, a promise and a measurable objective.',
-    ['marketing.create_concept', 'marketing.create_experiment']),
+    ['marketing.create_concept', 'marketing.define_audience_segment', 'marketing.list_audience_segments',
+      'marketing.create_experiment']),
   specialist('meta_ads_operator', 'Meta Ads Operator', 'growth_manager', 'growth',
     'Operate Meta campaigns within budget and policy. Never exceed an approved budget and never launch unreviewed creative.',
     ['marketing.launch_arm', 'marketing.pause_arm', 'marketing.collect_metrics'], ['ads.create_campaign'], ['ads.campaign_manage']),

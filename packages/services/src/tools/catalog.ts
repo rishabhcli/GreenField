@@ -1568,8 +1568,66 @@ function growthSupportTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
     ),
     tool(
       {
+        name: 'marketing.define_audience_segment',
+        description:
+          'Define who a campaign targets, derived from collected evidence. Every cited evidence id must exist for this company; ' +
+          'an audience that cannot be traced to evidence is refused. Required before an experiment can be created.',
+        // Same delegation as campaign creation: defining who we target is the
+        // decision that campaign spend acts on. No external call, no spend.
+        authority: 'ads.create_campaign',
+        consequential: false,
+        input: z.object({
+          name: Text,
+          description: Text,
+          opportunityId: Id.nullable().default(null),
+          countries: z.array(z.string().length(2)).min(1),
+          regions: z.array(Text).default([]),
+          cities: z.array(Text).default([]),
+          ageMin: z.number().int().min(13).max(65),
+          ageMax: z.number().int().min(13).max(65),
+          gender: z.enum(['all', 'male', 'female']).default('all'),
+          interests: z.array(Text).default([]),
+          languages: z.array(Text).default([]),
+          evidenceIds: z.array(Id).min(1),
+        }),
+        execute: async (input, ctx) =>
+          s.audience.defineSegment({
+            companyId: ctx.companyId,
+            opportunityId: input.opportunityId,
+            name: input.name,
+            description: input.description,
+            countries: input.countries,
+            regions: input.regions,
+            cities: input.cities,
+            ageMin: input.ageMin,
+            ageMax: input.ageMax,
+            gender: input.gender,
+            interests: input.interests,
+            languages: input.languages,
+            evidenceIds: input.evidenceIds,
+          }),
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'marketing.list_audience_segments',
+        description: 'List audience segments defined for this company, with the evidence each was derived from.',
+        authority: 'ads.create_campaign',
+        consequential: false,
+        input: z.object({ status: z.array(z.enum(['draft', 'active', 'retired'])).default([]) }),
+        execute: async (input, ctx) =>
+          s.audience.list(ctx.companyId, input.status.length > 0 ? input.status : undefined),
+      },
+      s,
+    ),
+    tool(
+      {
         name: 'marketing.create_experiment',
-        description: 'Create an experiment definition. Spend starts only after launch_arm succeeds on the ad platform.',
+        description:
+          'Create an experiment definition. Requires an audience segment and at least one stop condition — ' +
+          'an experiment with no audience cannot launch, and one with no stop condition spends until someone notices. ' +
+          'Spend starts only after launch_arm succeeds on the ad platform.',
         authority: 'ads.create_campaign',
         consequential: true,
         input: z.object({
@@ -1578,6 +1636,24 @@ function growthSupportTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
           hypothesis: Text,
           platform: z.enum(['meta', 'google']),
           objective: ExperimentObjective,
+          audienceSegmentId: Id,
+          stopConditions: z
+            .array(
+              z.object({
+                kind: z.enum([
+                  'max_spend',
+                  'max_duration_hours',
+                  'min_impressions',
+                  'min_conversions',
+                  'cac_ceiling',
+                  'negative_contribution',
+                  'policy_violation',
+                ]),
+                threshold: z.number(),
+                action: z.enum(['pause_arm', 'pause_experiment', 'alert_only', 'escalate_to_ceo']),
+              }),
+            )
+            .min(1),
           totalBudgetMinor: z.number().int().positive(),
           currency: z.string().length(3),
         }),
@@ -1589,10 +1665,10 @@ function growthSupportTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
             hypothesis: input.hypothesis,
             platform: input.platform,
             objective: input.objective,
-            audienceSpec: {},
+            audienceSegmentId: input.audienceSegmentId,
             totalBudgetMinor: input.totalBudgetMinor,
             currency: input.currency,
-            stopConditions: [],
+            stopConditions: input.stopConditions,
             attributionModel: 'platform_reported',
           }),
       },

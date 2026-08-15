@@ -40,6 +40,7 @@ export * from './site/deploy.js';
 
 export * from './marketing/creative.js';
 export * from './marketing/experiments.js';
+export * from './marketing/audience.js';
 
 export * from './support/inbox.js';
 export * from './legal/documents.js';

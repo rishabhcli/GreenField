@@ -8,7 +8,7 @@
  * dispatches agent runs, so a restarted worker resumes from the database rather
  * than from memory.
  *
- * Two properties matter most:
+ * Three properties matter most:
  *
  *  1. **A phase only completes on evidence.** "Discover" is not done because an
  *     agent was dispatched; it is done because opportunity rows with cited
@@ -18,10 +18,16 @@
  *     a capability is unavailable, the cycle records `blocked` with the
  *     capability name and remediation. It does not skip ahead, and it does not
  *     pretend the phase succeeded.
+ *  3. **One tick at a time, per company.** Assessment and advancement are a
+ *     read-then-write pair with no protection of their own, so two overlapping
+ *     ticks would each read the same phase, each conclude it was complete, and
+ *     each advance — skipping a phase outright and spending money twice on the
+ *     way. `tick` therefore runs under a per-company advisory lock. See the
+ *     comment on `tick` for what specifically goes wrong without it.
  */
 
 import { LOOP_PHASE_ORDER, DEFAULT_SELECTION_GATES, ValidationError, type Capability, type LoopPhase } from '@foundry/core';
-import { companyConfig } from '@foundry/db';
+import { companyConfig, tryAdvisoryLock } from '@foundry/db';
 import { getLogger } from '@foundry/obs';
 import type { ServiceDeps } from '../deps.js';
 import { ExpertReviewService } from '../research/expert.js';
@@ -31,10 +37,45 @@ export interface TickResult {
   readonly cycleId: string;
   readonly cycleNumber: number;
   readonly phase: LoopPhase;
-  readonly action: 'advanced' | 'waiting' | 'blocked' | 'started_work' | 'cycle_completed';
+  /**
+   * What this tick did.
+   *
+   * `skipped_locked` is deliberately distinct from both `waiting` and
+   * `blocked`, and neither of those was reused:
+   *
+   *   - `blocked` means a *capability* is unavailable and the cycle has been
+   *     written to the `blocked` state with a remediation. Lock contention is
+   *     not a capability problem and must never be reported as one, or the
+   *     loop's blocked reporting stops meaning "something needs a credential".
+   *   - `waiting` means the phase was assessed and found incomplete with no new
+   *     work to start. A tick that lost the lock never assessed anything, so
+   *     claiming the phase is "waiting" would assert a conclusion it did not
+   *     reach — the one thing this codebase is built not to do.
+   *
+   * `skipped_locked` says exactly what happened: another tick owns this
+   * company right now, and this one did nothing at all.
+   */
+  readonly action: 'advanced' | 'waiting' | 'blocked' | 'started_work' | 'cycle_completed' | 'skipped_locked';
   readonly detail: string;
   readonly blockedOnCapability?: Capability;
   readonly nextPhase?: LoopPhase;
+}
+
+/**
+ * Advisory-lock key for one company's tick.
+ *
+ * Keyed on the company, not on the loop as a whole: the thing that must not
+ * overlap is two ticks of the *same* cycle. Two companies advancing their own
+ * cycles at the same moment is normal and must stay parallel, so a global lock
+ * would be a correctness fix that quietly becomes a scaling ceiling.
+ *
+ * The `foundry:loop:tick:` prefix keeps this in a different part of the hashed
+ * key space from the other advisory locks in the system (`foundry:migrations`),
+ * which share one 64-bit namespace because Postgres advisory locks are global
+ * to the database.
+ */
+function tickLockKey(companyId: string): string {
+  return `foundry:loop:tick:${companyId}`;
 }
 
 /** What a phase must be able to show before the loop moves past it. */
@@ -52,12 +93,82 @@ export class LoopOrchestrator {
   /**
    * One tick of the loop.
    *
-   * Deliberately does a small amount of work and returns. The cron schedule,
-   * not a long-running process, is what keeps the company moving — a wedged
-   * tick costs one interval, not the whole operation.
+   * Deliberately does a small amount of work and returns. The schedule, not a
+   * long-running process, is what keeps the company moving — a wedged tick
+   * costs one interval, not the whole operation.
+   *
+   * ## Why this is behind a lock
+   *
+   * `tick` reads the current phase, decides whether it is complete, and then
+   * writes that decision by advancing the cycle. Nothing in that read-then-write
+   * pair is atomic, and there is more than one thing in the deployment that can
+   * call it: the repeatable `loop.tick` job, an operator hitting
+   * `POST /api/companies/:id/loop/tick`, and the `tickCompanyLoop` Render
+   * Workflows task. Two of those overlapping produces a specific, silent
+   * corruption rather than a visible error:
+   *
+   *   1. Tick A and tick B both read the cycle at phase `observe`.
+   *   2. Both assess `observe` and both find it complete — correctly, because
+   *      it is.
+   *   3. A calls `advance`, which takes `FOR UPDATE` on the cycle row, reads
+   *      phase `observe`, and moves it to `discover`.
+   *   4. B calls `advance`. The row lock made it wait, so it now re-reads the
+   *      row and sees phase `discover` — and advances *that* to `score`.
+   *
+   * The cycle has skipped `discover` entirely, and `observe`'s outputs were
+   * filed under the `discover` key because `advance` labels the outputs with
+   * the phase it re-read rather than the phase that was assessed. The row lock
+   * inside `advance` cannot prevent this: it correctly serialises the two
+   * writes, but the second write was decided on evidence gathered before the
+   * first one happened. The mutual exclusion has to span assess *and* advance,
+   * which means it belongs here.
+   *
+   * A tick that cannot get the lock returns `skipped_locked` and does nothing.
+   * It does not wait, retry or throw: another tick is already doing this exact
+   * work, and the whole design of the loop is that a missed tick costs one
+   * interval because the next tick re-derives everything from the database.
+   * Throwing would additionally be wrong — `loop.tick` has `attempts: 1`, so a
+   * throw is a dead-lettered job, and a queued retry of a tick is just another
+   * racing tick.
    */
   async tick(companyId: string): Promise<TickResult> {
+    // Establish which cycle this tick concerns *before* contending for the
+    // lock, so that even a tick which does nothing can name the cycle it
+    // declined to touch — a `TickResult` with no cycle would be useless to the
+    // operator reading the log line. Calling this outside the lock is safe:
+    // `currentOrStart` runs SERIALIZABLE, so two ticks racing to open the very
+    // first cycle produce one row and one 40001 retry, not two cycles.
+    const opened = await this.deps.repos.loop.currentOrStart(companyId);
+
+    const result = await tryAdvisoryLock(this.deps.repos.pool, tickLockKey(companyId), () =>
+      this.#tickExclusive(companyId),
+    );
+    if (result !== undefined) return result;
+
+    getLogger().info(
+      { companyId, cycleId: opened.id, phase: opened.phase },
+      'loop tick skipped: another tick holds the lock for this company',
+    );
+    return {
+      cycleId: opened.id,
+      cycleNumber: opened.cycle_number,
+      phase: opened.phase as LoopPhase,
+      action: 'skipped_locked',
+      detail: 'another tick already holds the operating-loop lock for this company; this tick did nothing',
+    };
+  }
+
+  /**
+   * The body of a tick, guaranteed to be the only one running for this company.
+   */
+  async #tickExclusive(companyId: string): Promise<TickResult> {
     const log = getLogger();
+    // Re-read under the lock instead of reusing the row `tick` already fetched.
+    // Between that read and the lock being granted, the previous holder may
+    // have advanced the phase — or wrapped the cycle and opened the next one —
+    // and an assessment made against a stale phase is precisely the corruption
+    // the lock exists to prevent. This costs one cheap query and is consistent
+    // with the rest of the loop, which never trusts in-memory state.
     const cycle = await this.deps.repos.loop.currentOrStart(companyId);
     const phase = cycle.phase as LoopPhase;
 

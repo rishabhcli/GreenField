@@ -159,6 +159,34 @@ describe('operator console', () => {
     expect(js).toContain("sessionStorage.setItem('yf.token'");
   });
 
+  it('replaces every skeleton with a failure state when the API is unreachable', () => {
+    // A skeleton means "not yet known". Once a read has failed, leaving one up
+    // would report a dead API as a slow one.
+    expect(js).toContain('function renderUnreachable');
+
+    const fn = js.slice(js.indexOf('function renderUnreachable'));
+    const bodyIds = ['approvalsBody', 'switchBody', 'budgetBody', 'runsBody', 'providerBody', 'orderBody', 'auditBody'];
+    const covered = fn.slice(0, fn.indexOf('/* ---'));
+    for (const id of bodyIds) {
+      expect(covered.includes(id), `renderUnreachable does not clear ${id}`).toBe(true);
+    }
+    expect(covered).toContain("emptyState(text, 'danger'");
+    expect(js).toContain('renderUnreachable(');
+  });
+
+  it('never reassures on a value it did not read', () => {
+    // `null` is "not read", which is not `0`. The KPI footers must not say
+    // "all clear" or "nothing queued" for an unread count.
+    const kpi = js.slice(js.indexOf('function renderKpis'), js.indexOf('function renderApprovals'));
+    for (const phrase of ['all clear', 'nothing queued']) {
+      const idx = kpi.indexOf(phrase);
+      expect(idx, `missing ${phrase}`).toBeGreaterThan(-1);
+      // Each reassurance must be guarded by an explicit null check.
+      expect(kpi.slice(Math.max(0, idx - 200), idx)).toMatch(/=== null \?/);
+    }
+    expect(kpi).toContain("var unread = 'not read'");
+  });
+
   it('distinguishes loading, empty and failed states', () => {
     for (const fn of ['skeleton', 'emptyState']) {
       expect(js.includes(`function ${fn}`), `missing ${fn}`).toBe(true);

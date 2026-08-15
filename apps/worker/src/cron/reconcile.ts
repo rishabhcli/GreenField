@@ -6,7 +6,7 @@ import { describeError } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { buildContext, wireRuntime } from '@foundry/runtime';
 
-const EXPECTED_MIGRATIONS = 5;
+const EXPECTED_MIGRATIONS = 6;
 
 async function main(): Promise<void> {
   const ctx = await buildContext({

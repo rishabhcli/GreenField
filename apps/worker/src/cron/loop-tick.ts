@@ -13,7 +13,7 @@ import { getLogger } from '@foundry/obs';
 import { RenderAdapter } from '@foundry/providers';
 import { buildContext, bootstrapOperatingCompany, wireRuntime } from '@foundry/runtime';
 
-const EXPECTED_MIGRATIONS = 5;
+const EXPECTED_MIGRATIONS = 6;
 
 async function main(): Promise<void> {
   const ctx = await buildContext({

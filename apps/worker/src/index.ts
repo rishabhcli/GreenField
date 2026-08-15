@@ -23,7 +23,7 @@ import { buildContext, bootstrapOperatingCompany, wireRuntime } from '@foundry/r
 import { buildHandlers, unhandledQueues } from './handlers.js';
 
 /** Kept in sync with `packages/db/src/migrations`; the schema health check reads it. */
-const EXPECTED_MIGRATIONS = 5;
+const EXPECTED_MIGRATIONS = 6;
 
 /** Queues each role consumes. A queue in neither list is consumed by nobody. */
 const AGENT_QUEUES: readonly QueueName[] = ['agent.run', 'loop.tick'];

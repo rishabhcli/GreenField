@@ -28,10 +28,15 @@
 
   /**
    * API base resolution, most explicit wins:
-   *   1. ?api=https://…      (also persisted, so a bookmark keeps working)
+   *   1. ?api=https://…            (also persisted, so a bookmark keeps working)
    *   2. localStorage
-   *   3. the page's own origin, when served from something other than a file
-   *   4. localhost:3000
+   *   3. window.YELLOFIELD_API_BASE from console-config.js
+   *   4. the page's own origin, when served from something other than a file
+   *   5. localhost:3000
+   *
+   * Step 3 exists because on Render the site and the API are separate services,
+   * so the site's own origin is the wrong default in the one environment that
+   * matters. See assets/console-config.js.
    */
   function resolveApiBase() {
     var qs = new URLSearchParams(window.location.search);
@@ -51,6 +56,7 @@
       /* ignore */
     }
     if (stored) return stored.replace(/\/+$/, '');
+    if (window.YELLOFIELD_API_BASE) return String(window.YELLOFIELD_API_BASE).replace(/\/+$/, '');
     if (window.location.protocol === 'file:') return 'http://localhost:3000';
     return window.location.origin;
   }
@@ -372,30 +378,36 @@
     );
   }
 
+  /**
+   * A null count means "we did not read this", which is not the same as zero.
+   * The footer strings below never say "all clear" for a value we do not have —
+   * a reassurance on missing data is the exact failure this system forbids.
+   */
   function renderKpis(s) {
+    var unread = 'not read';
     $('kpiStats').innerHTML =
-      stat('Cycle', s.cycle, s.cycle === null ? 'muted' : 'neon', s.cyclePhase) +
+      stat('Cycle', s.cycle, s.cycle === null ? 'muted' : 'neon', s.cycle === null ? unread : s.cyclePhase) +
       stat(
         'Approvals waiting',
         s.approvals,
         s.approvals > 0 ? 'warn' : s.approvals === 0 ? 'live' : 'muted',
-        s.approvals > 0 ? 'needs a human' : 'nothing queued',
+        s.approvals === null ? unread : s.approvals > 0 ? 'needs a human' : 'nothing queued',
       ) +
       stat(
         'Kill switches',
         s.switches,
         s.switches > 0 ? 'danger' : s.switches === 0 ? 'live' : 'muted',
-        s.switches > 0 ? 'engaged' : 'all clear',
+        s.switches === null ? unread : s.switches > 0 ? 'engaged' : 'all clear',
       ) +
-      stat('Agent runs', s.runs, s.runs > 0 ? 'neon' : 'muted', 'active now') +
-      stat('Agent spend', s.spend, null, 'last 24h') +
+      stat('Agent runs', s.runs, s.runs > 0 ? 'neon' : 'muted', s.runs === null ? unread : 'active now') +
+      stat('Agent spend', s.spend, s.spend === null ? 'muted' : null, s.spend === null ? unread : 'last 24h') +
+      stat('Capabilities', s.caps, s.capsTone, s.capsFoot) +
       stat(
-        'Capabilities',
-        s.caps,
-        s.capsTone,
-        s.capsFoot,
-      ) +
-      stat('Orders in flight', s.orders, s.orders > 0 ? 'neon' : 'muted', 'paid → shipped');
+        'Orders in flight',
+        s.orders,
+        s.orders > 0 ? 'neon' : 'muted',
+        s.orders === null ? unread : 'paid → shipped',
+      );
   }
 
   function renderApprovals(res, configured) {
@@ -873,6 +885,51 @@
     body.innerHTML = html;
   }
 
+  /**
+   * Collapses every panel to the same failure state. Called only when the API
+   * is genuinely unreachable, so no panel can keep showing a stale value or a
+   * loading shimmer that implies the read is still in flight.
+   */
+  function renderUnreachable(reason) {
+    var text = 'Cannot reach the API — ' + reason + '.';
+    [
+      'approvalsBody',
+      'switchBody',
+      'budgetBody',
+      'runsBody',
+      'providerBody',
+      'orderBody',
+      'auditBody',
+    ].forEach(function (id) {
+      $(id).innerHTML = emptyState(text, 'danger', ICON_WARN);
+    });
+
+    ['approvalsCount', 'switchCount', 'runsCount', 'providerCount', 'orderCount', 'auditCount'].forEach(
+      function (id) {
+        setCount(id, null);
+      },
+    );
+
+    $('runsCost').textContent = '—';
+    $('companyName').textContent = 'Operator console';
+    $('stageValue').textContent = '—';
+    $('updatedAt').textContent = 'no current data';
+
+    renderRail(null);
+    renderKpis({
+      cycle: null,
+      cyclePhase: 'unknown',
+      approvals: null,
+      switches: null,
+      runs: null,
+      spend: null,
+      caps: null,
+      capsTone: 'muted',
+      capsFoot: 'not read',
+      orders: null,
+    });
+  }
+
   /* ------------------------------------------------------------------------
      Poll
   ------------------------------------------------------------------------ */
@@ -891,6 +948,10 @@
           // Genuine unreachability. Everything else is a real API answer.
           conn.set('down', 'unreachable');
           conn.detail(companyRes.error === 'request timed out' ? 'The API timed out.' : 'The API did not respond.');
+          // Skeletons mean "not yet known". Once we know the request failed,
+          // every panel must say so — leaving them shimmering would report a
+          // dead API as a slow one.
+          renderUnreachable(companyRes.error || 'the API did not respond');
           return null;
         }
 
@@ -1185,21 +1246,39 @@
     if (ev.key === 'r' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) poll();
   });
 
-  /* Reveal on entry — matches the landing page, at lower amplitude. */
-  var reveal = new IntersectionObserver(
-    function (entries) {
-      entries.forEach(function (entry) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('is-in');
-          reveal.unobserve(entry.target);
-        }
-      });
-    },
-    { rootMargin: '0px 0px -40px 0px', threshold: 0.05 },
-  );
-  document.querySelectorAll('[data-c-reveal]').forEach(function (el) {
-    reveal.observe(el);
-  });
+  /* Reveal on entry — matches the landing page, at lower amplitude.
+
+     The failsafe below is not decoration. On a marketing page a reveal that
+     never fires costs an animation; here it would leave real operational data
+     invisible at opacity 0. Anything still unrevealed after 2.5s is forced in,
+     and if IntersectionObserver is missing entirely everything reveals at once. */
+  var revealables = document.querySelectorAll('[data-c-reveal]');
+
+  function revealAll() {
+    revealables.forEach(function (el) {
+      el.classList.add('is-in');
+    });
+  }
+
+  if (typeof IntersectionObserver === 'function') {
+    var reveal = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-in');
+            reveal.unobserve(entry.target);
+          }
+        });
+      },
+      { rootMargin: '0px 0px -40px 0px', threshold: 0.05 },
+    );
+    revealables.forEach(function (el) {
+      reveal.observe(el);
+    });
+    setTimeout(revealAll, 2500);
+  } else {
+    revealAll();
+  }
 
   /* ------------------------------------------------------------------------
      Boot

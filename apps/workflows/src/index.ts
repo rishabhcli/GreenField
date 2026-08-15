@@ -14,7 +14,7 @@
 import { task } from '@renderinc/sdk/workflows';
 import { buildContext, wireRuntime } from '@foundry/runtime';
 
-const EXPECTED_MIGRATIONS = 5;
+const EXPECTED_MIGRATIONS = 6;
 
 async function withServices<T>(
   fn: (services: ReturnType<typeof wireRuntime>) => Promise<T>,

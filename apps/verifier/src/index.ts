@@ -25,7 +25,7 @@ import type { ProviderId } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { buildContext } from '@foundry/runtime';
 
-const EXPECTED_MIGRATIONS = 5;
+const EXPECTED_MIGRATIONS = 6;
 
 /** Per-probe ceiling. A hung provider must not stall the whole sweep. */
 const PROBE_TIMEOUT_MS = 20_000;

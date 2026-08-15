@@ -245,6 +245,13 @@ export const SCORE_DIMENSIONS = [
   'frequency',
   'source_diversity',
   'buyer_clarity',
+  /**
+   * How many people plausibly have this pain. Distinct from `buyer_clarity`,
+   * which is about how sharply we can describe the buyer, not how many exist.
+   * A pain that is severe, frequent and clearly attributable to a buyer nobody
+   * can find at scale is not a business.
+   */
+  'audience_size',
   'willingness_to_pay',
   'category_spend',
   'competitor_dissatisfaction',
@@ -378,6 +385,9 @@ export const COMMERCIAL_IMPACT_WEIGHTS: WeightProfile = {
   frequency: 6,
   source_diversity: 5,
   buyer_clarity: 7,
+  // Weighted alongside buyer_clarity rather than above it: a smaller audience we
+  // can describe and reach precisely beats a large one we cannot target.
+  audience_size: 7,
   willingness_to_pay: 9,
   category_spend: 6,
   competitor_dissatisfaction: 6,

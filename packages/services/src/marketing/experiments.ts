@@ -9,6 +9,8 @@
 import {
   CapabilityUnsupportedError,
   CredentialsMissingError,
+  ValidationError,
+  audienceSpecFor,
   type AdPlatform,
   type ArmDecision,
   type Capability,
@@ -19,6 +21,7 @@ import {
 import { companyConfig } from '@foundry/db';
 import { GoogleAdsAdapter, MetaAdsAdapter } from '@foundry/providers';
 import { optionalCapability, type ServiceDeps, type ServiceOutcome } from '../deps.js';
+import { toDomain as segmentToDomain } from './audience.js';
 
 export interface CreateExperimentInput {
   readonly companyId: string;
@@ -27,7 +30,11 @@ export interface CreateExperimentInput {
   readonly hypothesis: string;
   readonly platform: AdPlatform;
   readonly objective: ExperimentObjective;
-  readonly audienceSpec: Record<string, unknown>;
+  /**
+   * The segment this experiment targets. Resolved into `audience_spec.targeting`
+   * at creation, which is what the ad-set builder requires and refuses to invent.
+   */
+  readonly audienceSegmentId: string;
   readonly totalBudgetMinor: number;
   readonly currency: string;
   readonly stopConditions: readonly StopCondition[];
@@ -78,6 +85,18 @@ export class MarketingExperimentService {
   constructor(private readonly deps: ServiceDeps) {}
 
   async createExperiment(input: CreateExperimentInput): Promise<ServiceOutcome<{ experimentId: string }>> {
+    // Resolving the segment here is what makes the experiment launchable. The
+    // segment row is company-scoped and evidence-backed, so the targeting written
+    // into audience_spec is traceable to research rather than assumed.
+    const segment = await this.deps.repos.growth.audience.byId(input.audienceSegmentId);
+    if (segment.company_id !== input.companyId) {
+      throw new ValidationError('Audience segment belongs to a different company', {
+        segmentId: input.audienceSegmentId,
+        companyId: input.companyId,
+      });
+    }
+    const audienceSpec = audienceSpecFor(segmentToDomain(segment), input.platform);
+
     const row = await this.deps.repos.growth.experiments.create({
       companyId: input.companyId,
       brandId: input.brandId,
@@ -85,7 +104,8 @@ export class MarketingExperimentService {
       hypothesis: input.hypothesis,
       platform: input.platform,
       objective: input.objective,
-      audienceSpec: input.audienceSpec,
+      audienceSpec,
+      audienceSegmentId: input.audienceSegmentId,
       totalBudgetMinor: input.totalBudgetMinor,
       currency: input.currency,
       stopConditions: input.stopConditions,

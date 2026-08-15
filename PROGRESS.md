@@ -58,6 +58,7 @@ These are unit/integration tests against code and a real Postgres — they do no
 | Webhook deduplication | **DONE** | Integration: redelivery recognised, signature headers redacted. |
 | Double-entry ledger | **DONE** | Integration: balanced sale written, unbalanced rejected. |
 | Agent run records | **DONE** | Integration: model from org-chart tier, unknown role refused. |
+| Operator console (`apps/site/console.html`) | **PARTIAL** | 17 structural tests pass (`apps/site/test/console.test.ts`): every `$('id')` resolves, every API path it calls is registered by a route file, the phase rail matches `LOOP_PHASE_ORDER`, the token never reaches `localStorage`, and no reassurance is emitted for an unread value. Rendering was verified against a **local mock**, not a live API — see below. |
 
 ---
 
@@ -70,6 +71,7 @@ These are unit/integration tests against code and a real Postgres — they do no
 | Render Workflows `tickCompanyLoop` | **DONE** (prize method) | Tick completed. Loop still **not DONE** (Brave). |
 | Linq link/open | **DONE** (prize method) | HTTP 202 with Payment Link as `params.url`. Agent Pay still 2011. |
 | Prize-track adapters | **PARTIAL** | Succeeded methods listed above. Blocked: Agent Pay 2011, Pioneer `card_required`, Terac $0, Replay recording-lost, Lovable OAuth, Dodo 401, Brave missing, Anthropic missing. |
+| Operator console | **PARTIAL** | Renders correctly against a local mock of the nine read endpoints, and degrades honestly when the API is unreachable (every panel states the failure; no panel keeps a loading shimmer or a stale value). **Never exercised against the deployed `foundry-api`**, so the approve / deny / kill-switch-release write paths are unproven end to end — they are wired to `POST /api/approvals/:id/decide` and `POST /api/kill-switches/:scope/release` with payload shapes matched to the route Zod schemas, and nothing more than that has been shown. |
 
 ## Not complete (production)
 

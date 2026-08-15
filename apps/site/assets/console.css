@@ -457,6 +457,12 @@ body.console-page {
   grid-column: span 12;
 }
 
+/* The KPI band is a single row of tiles — the panel min-height would otherwise
+   leave a dead void under it. */
+.cnsl-panel-band {
+  min-height: 0;
+}
+
 .cnsl-panel-head {
   display: flex;
   align-items: center;
@@ -816,7 +822,10 @@ body.console-page {
   white-space: nowrap;
 }
 
+/* `display:block` is load-bearing: these are spans, and an inline element
+   ignores height, which silently collapses the bar to nothing. */
 .cnsl-bar-track {
+  display: block;
   height: 5px;
   border-radius: 99px;
   background: rgba(255, 255, 255, 0.06);
@@ -824,6 +833,7 @@ body.console-page {
 }
 
 .cnsl-bar-fill {
+  display: block;
   height: 100%;
   border-radius: 99px;
   background: linear-gradient(90deg, var(--neon-dim), var(--neon));

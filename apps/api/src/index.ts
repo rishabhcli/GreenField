@@ -25,7 +25,7 @@ import { registerCommerceRoutes } from './routes/commerce.js';
 import { registerCompanyRoutes } from './routes/company.js';
 
 /** Kept in sync with `packages/db/src/migrations`; the schema check reads it. */
-const EXPECTED_MIGRATIONS = 5;
+const EXPECTED_MIGRATIONS = 6;
 
 async function main(): Promise<void> {
   const ctx = await buildContext({
