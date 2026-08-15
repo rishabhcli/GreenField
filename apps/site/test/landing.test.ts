@@ -108,7 +108,8 @@ describe('landing site', () => {
   });
 
   it('keeps the honest-status claims intact on their pages', () => {
-    expect(index).toContain('356');
+    expect(index).toContain('test suite executed — the count lives in CI, not here');
+    expect(index).not.toContain('356');
     expect(system).toContain('probe verified');
     expect(system).toContain('surface built');
     expect(pricing).toContain('NOT COMPLETE');
@@ -153,7 +154,7 @@ describe('landing site', () => {
     });
 
     it('posts Backer/Operator checkout to the deployed API origin', () => {
-      expect(html).toContain('data-api="https://foundry-api-8ih0.onrender.com"');
+      expect(index).toContain('data-api="https://foundry-api-8ih0.onrender.com"');
       expect(js).toContain('https://foundry-api-8ih0.onrender.com');
       expect(js).toContain('/api/checkout');
       expect(js).not.toContain('customer-chooses-price');
