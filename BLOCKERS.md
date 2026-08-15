@@ -10,7 +10,7 @@ Company `co_01M03F7RQW2M6540BY2GZHCFBW`: Workflows `tickCompanyLoop` **COMPLETED
 
 | Track | Exact error | Human action |
 |---|---|---|
-| Discover / Brave | `BRAVE_SEARCH_API_KEY` missing | Issue a Brave Search key. Do not invent search results. Reddit keys are also absent. Workflow tick completed; this is loop output. |
+| Discover / Brave | ~~missing~~ — **key present, direct live probe HTTP 200** (2026-08-15, real web results). Now set on `foundry-worker` + `foundry-api`. | **Unblocked at the credential layer.** A raw API 200 is *not* a verified prize method: `apps/verifier` still has to write the `integration_verifications` row, and the loop still has to complete a discover phase. Reddit keys remain absent. |
 | Anthropic | `ANTHROPIC_API_KEY` missing | Issue an Anthropic key. |
 | Linq Agent Pay | `POST /v3/payment_requests` **2011** `no connected payment account on file for your account` | Connect Stripe in Linq dashboard. Do **not** use Stripe Payment Link as `agentpay` `checkout_url`. Linq link/open already **HTTP 202**. |
 | Pioneer inference | **403** `card_required`: `To run inference on Pioneer, subscribe to the Hobby or Pro plan at https://agent.pioneer.ai/billing.` | Confirm billing actually authorizes inference. Then probe GLiNER2-PII + GLiGuard. Catalog is not a prize-method pass. |
@@ -44,4 +44,4 @@ Company `co_01M03F7RQW2M6540BY2GZHCFBW`: Workflows `tickCompanyLoop` **COMPLETED
 
 ## Dashboard leftover
 
-Copy gitignored `.env` names into Render env for `foundry-api` / `foundry-worker` when adding new secrets. Brave/Reddit/Anthropic are not present locally. Do not commit `.env` or `hackathon-sponsor-credentials.md`.
+Copy gitignored `.env` names into Render env for `foundry-api` / `foundry-worker` when adding new secrets. `BRAVE_SEARCH_API_KEY` **is** present locally and has now been pushed to both services via the Render API. Reddit and **Anthropic** remain absent — Anthropic is the single key still gating the loop. Do not commit `.env` or `hackathon-sponsor-credentials.md`.

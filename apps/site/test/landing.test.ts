@@ -34,7 +34,16 @@ describe('landing page', () => {
   });
 
   it('has the required section structure', () => {
-    for (const id of ['main', 'nav', 'top', 'loop', 'organization', 'infrastructure', 'evidence']) {
+    for (const id of [
+      'main',
+      'nav',
+      'top',
+      'loop',
+      'organization',
+      'infrastructure',
+      'evidence',
+      'pricing',
+    ]) {
       expect(html.includes(`id="${id}"`), `missing #${id}`).toBe(true);
     }
     expect(html.includes('<h1')).toBe(true);
@@ -67,6 +76,42 @@ describe('landing page', () => {
     expect(html).toContain('surface built');
     expect(html).toContain('NOT COMPLETE');
     expect(html).toContain('Illustrative operating view');
+  });
+
+  /**
+   * The conversion path is load-bearing: a landing page that explains the
+   * product but cannot take money converts at exactly zero. These checks pin
+   * the checkout surface so it cannot be refactored away silently.
+   */
+  describe('checkout path', () => {
+    const PAYMENT_LINK = 'https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00';
+    const checkoutHrefs = [...html.matchAll(/href="(https:\/\/buy\.stripe\.com\/[^"]+)"/g)].map(
+      (m) => m[1] ?? '',
+    );
+
+    it('reaches the submitted Payment Link and never mints a second one', () => {
+      expect(checkoutHrefs.length).toBeGreaterThanOrEqual(3);
+      for (const href of checkoutHrefs) {
+        expect(href.startsWith(`${PAYMENT_LINK}?`) || href === PAYMENT_LINK).toBe(true);
+      }
+    });
+
+    it('tags every checkout link with a tier for webhook attribution', () => {
+      const tiers = checkoutHrefs.map((href) => new URL(href).searchParams.get('client_reference_id'));
+      expect(new Set(tiers)).toEqual(new Set(['tier_backer', 'tier_founding', 'tier_operator']));
+    });
+
+    it('opens checkout without leaking window.opener', () => {
+      for (const tag of html.matchAll(/<a\b[^>]*buy\.stripe\.com[^>]*>/g)) {
+        expect(tag[0]).toContain('rel="noopener"');
+      }
+    });
+
+    it('states the price and the refund promise in the copy', () => {
+      expect(html).toContain('$99');
+      expect(html).toContain('customer-chooses-price');
+      expect(html).toContain('you get');
+    });
   });
 
   it('script compiles as valid JavaScript', () => {

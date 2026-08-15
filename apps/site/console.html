@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Operator Console — Yellofield</title>
+  <meta name="description" content="Live operator console for the Yellofield autonomous company factory. Every value on this page is read from the running API — nothing here is illustrative." />
+  <meta name="theme-color" content="#050506" />
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23050506'/%3E%3Crect x='8' y='9' width='16' height='3' rx='1.5' fill='%23FFE81A'/%3E%3Crect x='8' y='14.5' width='11' height='3' rx='1.5' fill='%23A1A1A6'/%3E%3Crect x='8' y='20' width='6' height='3' rx='1.5' fill='%236E6E73'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/styles.css" />
+  <link rel="stylesheet" href="./assets/console.css" />
+</head>
+<body class="console-page">
+  <a class="skip-link" href="#console">Skip to console</a>
+  <div class="noise" aria-hidden="true"></div>
+
+  <!-- ======================================================================
+       TOP BAR
+  ======================================================================= -->
+  <header class="cnsl-top">
+    <a class="cnsl-brand" href="./index.html" aria-label="Yellofield home">
+      <svg width="21" height="21" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
+        <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#FFE81A" />
+        <rect x="8" y="14.5" width="11" height="3" rx="1.5" fill="#A1A1A6" />
+        <rect x="8" y="20" width="6" height="3" rx="1.5" fill="#6E6E73" />
+      </svg>
+      <span class="cnsl-brand-name">Yellofield</span>
+    </a>
+    <span class="cnsl-brand-sep" aria-hidden="true">/</span>
+    <span class="cnsl-brand-page">Operator Console</span>
+
+    <span class="cnsl-top-spacer"></span>
+
+    <div class="cnsl-top-meta">
+      <span class="cnsl-updated" id="updatedAt" aria-live="polite">connecting…</span>
+      <span class="cnsl-conn" id="connPill" data-state="polling" role="status">
+        <span class="cnsl-conn-dot" aria-hidden="true"></span>
+        <span id="connLabel">connecting</span>
+      </span>
+      <button class="cnsl-iconbtn" id="refreshBtn" type="button" title="Refresh now" aria-label="Refresh now">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <path d="M21 3v6h-6" />
+        </svg>
+      </button>
+      <button class="cnsl-iconbtn cnsl-token-btn" id="tokenBtn" type="button" data-state="locked" title="Operator token" aria-label="Operator token">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="10.5" width="16" height="10.5" rx="2.5" />
+          <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" id="shackle" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="cnsl-main" id="console">
+    <!-- Disconnected banner. Hidden unless the API is genuinely unreachable. -->
+    <div class="cnsl-offline" id="offlineBanner" role="alert">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="flex-shrink:0">
+        <path d="M12 9v4M12 17h.01" />
+        <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+      </svg>
+      <div>
+        <span class="cnsl-offline-title">Cannot reach the API.</span>
+        <span id="offlineDetail">No data below is current.</span>
+        Set the base URL with <code>?api=https://your-api.onrender.com</code>.
+      </div>
+    </div>
+
+    <!-- ====================================================================
+         HEADLINE
+    ===================================================================== -->
+    <div class="cnsl-headline">
+      <div>
+        <h1 id="companyName">Operator console</h1>
+        <p class="cnsl-headline-sub" id="companySub">
+          Every figure on this page is read live from the running API. Nothing here is illustrative — when a value is unknown, the console says so.
+        </p>
+      </div>
+      <span class="cnsl-stage" id="stagePill">
+        <span class="sq sq-wired" aria-hidden="true"></span>
+        stage <strong id="stageValue">—</strong>
+      </span>
+    </div>
+
+    <!-- ====================================================================
+         PHASE RAIL
+    ===================================================================== -->
+    <section class="cnsl-rail" data-c-reveal aria-label="Operating loop phase">
+      <div class="cnsl-rail-head">
+        <span class="cnsl-rail-title">Operating loop</span>
+        <span class="cnsl-rail-note" id="railNote">awaiting first read…</span>
+      </div>
+      <div class="cnsl-phases" id="phaseRail"></div>
+      <div id="railBlocked"></div>
+    </section>
+
+    <!-- ====================================================================
+         PANELS
+    ===================================================================== -->
+    <div class="cnsl-grid">
+      <!-- KPI band --------------------------------------------------------->
+      <section class="cnsl-panel cnsl-panel-12" data-c-reveal style="--rd:40ms" aria-label="Company overview">
+        <div class="cnsl-panel-body is-flush">
+          <div class="cnsl-stats" id="kpiStats"></div>
+        </div>
+      </section>
+
+      <!-- Pending approvals ------------------------------------------------>
+      <section class="cnsl-panel cnsl-panel-8" data-c-reveal style="--rd:80ms" aria-label="Pending approvals">
+        <div class="cnsl-panel-head">
+          <span class="cnsl-panel-title">Pending approvals</span>
+          <span class="cnsl-panel-count" id="approvalsCount">—</span>
+          <span class="cnsl-panel-head-spacer"></span>
+          <span class="cnsl-pill" id="approvalsAuth" data-tone="">token required to decide</span>
+        </div>
+        <div class="cnsl-panel-body is-flush is-scroll" id="approvalsBody"></div>
+      </section>
+
+      <!-- Kill switches ---------------------------------------------------->
+      <section class="cnsl-panel" data-c-reveal style="--rd:120ms" aria-label="Kill switches">
+        <div class="cnsl-panel-head">
+          <span class="cnsl-panel-title">Kill switches</span>
+          <span class="cnsl-panel-count" id="switchCount">—</span>
+        </div>
+        <div class="cnsl-panel-body is-scroll" id="switchBody"></div>
+      </section>
+
+      <!-- Budgets ---------------------------------------------------------->
+      <section class="cnsl-panel cnsl-panel-6" data-c-reveal style="--rd:160ms" aria-label="Budgets">
+        <div class="cnsl-panel-head">
+          <span class="cnsl-panel-title">Budget envelopes</span>
+          <span class="cnsl-panel-head-spacer"></span>
+          <span class="cnsl-meter-foot" aria-hidden="true">
+            <span class="cnsl-meter-key"><i style="background:var(--neon)"></i>spent</span>
+            <span class="cnsl-meter-key"><i style="background:var(--neon-dim)"></i>reserved</span>
+          </span>
+        </div>
+        <div class="cnsl-panel-body is-scroll" id="budgetBody"></div>
+      </section>
+
+      <!-- Agent runs ------------------------------------------------------->
+      <section class="cnsl-panel cnsl-panel-6" data-c-reveal style="--rd:200ms" aria-label="Agent runs">
+        <div class="cnsl-panel-head">
+          <span class="cnsl-panel-title">Agent activity</span>
+          <span class="cnsl-panel-count" id="runsCount">—</span>
+          <span class="cnsl-panel-head-spacer"></span>
+          <span class="cnsl-pill" id="runsCost">—</span>
+        </div>
+        <div class="cnsl-panel-body is-scroll" id="runsBody"></div>
+      </section>
+
+      <!-- Providers -------------------------------------------------------->
+      <section class="cnsl-panel cnsl-panel-8" data-c-reveal style="--rd:240ms" aria-label="Provider verification">
+        <div class="cnsl-panel-head">
+          <span class="cnsl-panel-title">Provider verification</span>
+          <span class="cnsl-panel-count" id="providerCount">—</span>
+          <span class="cnsl-panel-head-spacer"></span>
+          <span class="cnsl-pill" style="font-size:10px">live_verified requires secrets + a dated probe</span>
+        </div>
+        <div class="cnsl-panel-body is-scroll" id="providerBody"></div>
+      </section>
+
+      <!-- Orders ----------------------------------------------------------->
+      <section class="cnsl-panel" data-c-reveal style="--rd:280ms" aria-label="Orders needing attention">
+        <div class="cnsl-panel-head">
+          <span class="cnsl-panel-title">Orders in flight</span>
+          <span class="cnsl-panel-count" id="orderCount">—</span>
+        </div>
+        <div class="cnsl-panel-body is-flush is-scroll" id="orderBody"></div>
+      </section>
+
+      <!-- Audit ------------------------------------------------------------>
+      <section class="cnsl-panel cnsl-panel-12" data-c-reveal style="--rd:320ms" aria-label="Audit chain">
+        <div class="cnsl-panel-head">
+          <span class="cnsl-panel-title">Audit chain</span>
+          <span class="cnsl-panel-count" id="auditCount">—</span>
+          <span class="cnsl-panel-head-spacer"></span>
+          <span class="cnsl-pill" id="chainPill">chain not yet verified</span>
+          <button class="cnsl-act" id="verifyChainBtn" type="button">Verify chain</button>
+        </div>
+        <div class="cnsl-panel-body is-flush is-scroll" id="auditBody"></div>
+      </section>
+    </div>
+
+    <footer class="cnsl-foot">
+      <span>API base <code class="mono" id="apiBaseLabel">—</code></span>
+      <span>Polling every <span id="pollLabel">15</span>s</span>
+      <span>Operator token is held in <code class="mono">sessionStorage</code> only — never written to disk, cleared when the tab closes.</span>
+      <a href="./index.html">← Back to the landing page</a>
+    </footer>
+  </main>
+
+  <!-- ======================================================================
+       TOKEN MODAL
+  ======================================================================= -->
+  <div class="cnsl-modal-backdrop" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle">
+    <div class="cnsl-modal">
+      <h2 id="tokenModalTitle">Operator token</h2>
+      <p class="cnsl-modal-sub">
+        Governance routes compare a bearer token against <code>OPERATOR_API_TOKEN</code> in constant time and fail closed.
+        Reads work without it; approving, denying and kill switches do not.
+      </p>
+      <div class="cnsl-field">
+        <label for="tokenInput">Bearer token</label>
+        <input class="cnsl-input" id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="paste OPERATOR_API_TOKEN" />
+      </div>
+      <div class="cnsl-field">
+        <label for="operatorInput">Decide as</label>
+        <input class="cnsl-input" id="operatorInput" type="text" autocomplete="off" spellcheck="false" placeholder="your name — recorded in the audit chain" />
+      </div>
+      <div class="cnsl-modal-actions">
+        <button class="cnsl-act" id="tokenClearBtn" type="button">Clear</button>
+        <button class="cnsl-act" id="tokenCancelBtn" type="button">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="tokenSaveBtn" type="button">Save</button>
+      </div>
+      <p class="cnsl-modal-note">
+        Stored in <code class="mono">sessionStorage</code> for this tab only. Your name is written to the append-only
+        audit chain as the deciding actor, so use something a reviewer would recognise.
+      </p>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       DECISION MODAL
+  ======================================================================= -->
+  <div class="cnsl-modal-backdrop" id="decideModal" role="dialog" aria-modal="true" aria-labelledby="decideModalTitle">
+    <div class="cnsl-modal">
+      <h2 id="decideModalTitle">Approve request</h2>
+      <p class="cnsl-modal-sub" id="decideSubject">—</p>
+      <div class="cnsl-field">
+        <label for="rationaleInput">Rationale</label>
+        <textarea class="cnsl-input" id="rationaleInput" placeholder="Why this decision? Recorded permanently in the audit chain."></textarea>
+      </div>
+      <div class="cnsl-modal-actions">
+        <button class="cnsl-act" id="decideCancelBtn" type="button">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="decideConfirmBtn" type="button">Confirm</button>
+      </div>
+      <p class="cnsl-modal-note" id="decideNote">
+        This decision is irreversible and is appended to the hash-chained audit log.
+      </p>
+    </div>
+  </div>
+
+  <div class="cnsl-toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+  <script src="./assets/console.js"></script>
+</body>
+</html>

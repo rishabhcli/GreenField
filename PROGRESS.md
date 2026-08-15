@@ -11,7 +11,7 @@ Last updated: 2026-08-15. Production **NOT COMPLETE**. Company loop **not DONE**
 
 ## Live company loop (not DONE)
 
-Company `co_01M03F7RQW2M6540BY2GZHCFBW` exists. Render Workflows `tickCompanyLoop` **COMPLETED** (`trn-0994gda0c8fvlk1mc73fl86u0`). The tick's action output is **blocked** on `research.web_search` (`BRAVE_SEARCH_API_KEY` missing) — that is loop output, not a workflow failure. No Brave success is recorded. Loop has not completed a phase. Anthropic is missing.
+Company `co_01M03F7RQW2M6540BY2GZHCFBW` exists. Render Workflows `tickCompanyLoop` **COMPLETED** (`trn-0994gda0c8fvlk1mc73fl86u0`). The tick's action output was **blocked** on `research.web_search`; as of 2026-08-15 `BRAVE_SEARCH_API_KEY` is present, answers a direct live probe with **HTTP 200** and real results, and is set on `foundry-worker` / `foundry-api`. That is a credential fact, not a verified method — no `integration_verifications` row exists and the loop has still not completed a phase. **`ANTHROPIC_API_KEY` is absent and is now the only key gating the loop.**
 
 ---
 
@@ -33,7 +33,7 @@ Company `co_01M03F7RQW2M6540BY2GZHCFBW` exists. Render Workflows `tickCompanyLoo
 | Replay QA | **NOT COMPLETE** | Journeys **recording-lost** — not a pass |
 | Lovable site.generate | **NOT COMPLETE** | No OAuth (`LOVABLE_OAUTH_ACCESS_TOKEN` missing) |
 | Dodo | **NOT COMPLETE** | **HTTP 401** |
-| Discover / Brave | **NOT COMPLETE** | `BRAVE_SEARCH_API_KEY` missing |
+| Discover / Brave | **NOT COMPLETE** | Key present; direct live probe **HTTP 200** with real results (2026-08-15) and pushed to Render. Still NOT COMPLETE: no `integration_verifications` row, no completed discover phase. A raw 200 is not a prize method. |
 | Anthropic | **NOT COMPLETE** | `ANTHROPIC_API_KEY` missing |
 
 Adapter `probe()` rows (GET /projects, catalog, GET /v1/services, …) are **not** `live_verified`. See `VERIFICATION_EVIDENCE.md`.

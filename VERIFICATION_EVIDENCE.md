@@ -45,7 +45,7 @@ Last updated: 2026-08-15. Secrets in this file: **none**.
 | Replay QA exploration completed | **recording-lost** (infra-failed). 0 product bugs ≠ pass. No clean report. |
 | Lovable MCP site.generate | No OAuth (`LOVABLE_OAUTH_ACCESS_TOKEN` missing). |
 | Dodo products/checkout | **HTTP 401**. |
-| Discover / `research.web_search` | Brave key missing. Loop **not DONE**. |
+| Discover / `research.web_search` | 2026-08-15: `BRAVE_SEARCH_API_KEY` present, `GET /res/v1/web/search` → **HTTP 200** with real web results; key pushed to `foundry-worker` + `foundry-api` (Render API, HTTP 200 each). **Not `live_verified`** — a hand-run curl is not `apps/verifier` writing an `integration_verifications` row. Loop **not DONE**. |
 | Anthropic | `ANTHROPIC_API_KEY` missing. |
 
 ---

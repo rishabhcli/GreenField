@@ -1,0 +1,1461 @@
+/* ============================================================================
+   YELLOFIELD — OPERATOR CONSOLE
+   Layered on top of styles.css: tokens, reset, .btn, .chip and .mono all come
+   from there. This file adds only what a data surface needs.
+
+   One rule governs every visual decision below: the console may never render a
+   number the API did not return. Loading, empty, blocked and disconnected are
+   four distinct states with four distinct treatments, because collapsing them
+   would let a disconnected console look like a calm one.
+============================================================================ */
+
+:root {
+  --topbar-h: 60px;
+  --rail-h: 78px;
+
+  /* Status palette. --live (green) and --neon (yellow) are inherited; these
+     extend the same scale rather than introducing a second one. */
+  --warn: #ff9f0a;
+  --danger: #ff453a;
+  --info: #64d2ff;
+
+  --warn-soft: rgba(255, 159, 10, 0.1);
+  --danger-soft: rgba(255, 69, 58, 0.1);
+  --live-soft: rgba(52, 199, 89, 0.09);
+  --info-soft: rgba(100, 210, 255, 0.09);
+}
+
+body.console-page {
+  background:
+    radial-gradient(1100px 620px at 78% -8%, rgba(255, 232, 26, 0.045), transparent 62%),
+    var(--bg);
+  min-height: 100vh;
+}
+
+/* ---------------------------------------------------------------------------
+   Top bar
+--------------------------------------------------------------------------- */
+.cnsl-top {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-inline: var(--gutter);
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(5, 5, 6, 0.82);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+.cnsl-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.cnsl-brand-name {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-size: 15px;
+}
+
+.cnsl-brand-sep {
+  color: var(--text-3);
+  font-weight: 300;
+}
+
+.cnsl-brand-page {
+  color: var(--text-2);
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.cnsl-top-spacer {
+  flex: 1;
+}
+
+.cnsl-top-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.cnsl-updated {
+  font-size: 11.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The connection pill is the single most important element on the page: it is
+   what separates "the company is quiet" from "we cannot see the company". */
+.cnsl-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition:
+    color 0.3s var(--ease-out),
+    border-color 0.3s var(--ease-out),
+    background-color 0.3s var(--ease-out);
+}
+
+.cnsl-conn[data-state='ok'] {
+  color: var(--live);
+  border-color: rgba(52, 199, 89, 0.3);
+  background: var(--live-soft);
+}
+
+.cnsl-conn[data-state='down'] {
+  color: var(--danger);
+  border-color: rgba(255, 69, 58, 0.32);
+  background: var(--danger-soft);
+}
+
+.cnsl-conn[data-state='polling'] {
+  color: var(--neon);
+  border-color: var(--neon-dim);
+  background: rgba(255, 232, 26, 0.07);
+}
+
+.cnsl-conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.cnsl-conn[data-state='ok'] .cnsl-conn-dot {
+  animation: cnsl-pulse 2.6s var(--ease-out) infinite;
+}
+
+@keyframes cnsl-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.86);
+  }
+}
+
+.cnsl-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-2);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    color 0.25s var(--ease-out),
+    border-color 0.25s var(--ease-out),
+    background-color 0.25s var(--ease-out),
+    transform 0.45s var(--ease-spring);
+}
+
+.cnsl-iconbtn:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.cnsl-iconbtn:active {
+  transform: scale(0.92);
+}
+
+.cnsl-iconbtn.is-spinning svg {
+  animation: cnsl-spin 0.85s linear infinite;
+}
+
+@keyframes cnsl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Token state doubles as the button: locked reads muted, unlocked reads brand. */
+.cnsl-token-btn[data-state='unlocked'] {
+  color: var(--neon);
+  border-color: var(--neon-dim);
+  background: rgba(255, 232, 26, 0.07);
+}
+
+/* ---------------------------------------------------------------------------
+   Shell
+--------------------------------------------------------------------------- */
+.cnsl-main {
+  padding-inline: var(--gutter);
+  padding-bottom: 96px;
+  max-width: 1560px;
+  margin-inline: auto;
+}
+
+.cnsl-headline {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 34px 0 22px;
+}
+
+.cnsl-headline h1 {
+  font-size: clamp(26px, 3.4vw, 38px);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+}
+
+.cnsl-headline-sub {
+  color: var(--text-2);
+  font-size: 14.5px;
+  margin-top: 7px;
+  max-width: 62ch;
+}
+
+.cnsl-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.cnsl-stage strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+   Phase rail — the 15 loop phases as a single horizontal state machine
+--------------------------------------------------------------------------- */
+.cnsl-rail {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+  padding: 18px 20px 16px;
+  margin-bottom: 26px;
+  overflow: hidden;
+}
+
+.cnsl-rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 15px;
+}
+
+.cnsl-rail-title {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.cnsl-rail-note {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.cnsl-rail-note strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cnsl-phases {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.cnsl-phases::-webkit-scrollbar {
+  display: none;
+}
+
+.cnsl-phase {
+  flex: 1 1 0;
+  min-width: 74px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.018);
+  padding: 9px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition:
+    border-color 0.4s var(--ease-out),
+    background-color 0.4s var(--ease-out),
+    transform 0.5s var(--ease-spring);
+}
+
+.cnsl-phase-num {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-3);
+  letter-spacing: 0.06em;
+}
+
+.cnsl-phase-name {
+  font-size: 11.5px;
+  color: var(--text-2);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.cnsl-phase-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  margin-top: auto;
+}
+
+/* Done: quiet green. Passed phases should recede, not compete. */
+.cnsl-phase[data-state='done'] .cnsl-phase-bar {
+  background: rgba(52, 199, 89, 0.55);
+}
+
+.cnsl-phase[data-state='done'] .cnsl-phase-name {
+  color: var(--text-2);
+}
+
+/* Active: the one phase the loop is in right now. */
+.cnsl-phase[data-state='active'] {
+  border-color: var(--neon-dim);
+  background: rgba(255, 232, 26, 0.06);
+  transform: translateY(-2px);
+}
+
+.cnsl-phase[data-state='active'] .cnsl-phase-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cnsl-phase[data-state='active'] .cnsl-phase-num {
+  color: var(--neon);
+}
+
+.cnsl-phase[data-state='active'] .cnsl-phase-bar {
+  background: var(--neon);
+  box-shadow: 0 0 14px var(--neon-glow);
+  animation: cnsl-breathe 2.4s var(--ease-out) infinite;
+}
+
+@keyframes cnsl-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Blocked: the loop stopped here and is waiting on something real. */
+.cnsl-phase[data-state='blocked'] {
+  border-color: rgba(255, 159, 10, 0.34);
+  background: var(--warn-soft);
+}
+
+.cnsl-phase[data-state='blocked'] .cnsl-phase-bar {
+  background: var(--warn);
+}
+
+.cnsl-phase[data-state='blocked'] .cnsl-phase-name {
+  color: var(--warn);
+}
+
+.cnsl-phase[data-state='blocked'] .cnsl-phase-num {
+  color: var(--warn);
+}
+
+.cnsl-rail-blocked {
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(255, 159, 10, 0.26);
+  background: var(--warn-soft);
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.cnsl-rail-blocked .mono {
+  color: var(--warn);
+  flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Panel grid
+--------------------------------------------------------------------------- */
+.cnsl-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 16px;
+}
+
+.cnsl-panel {
+  grid-column: span 4;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.01));
+  display: flex;
+  flex-direction: column;
+  min-height: 190px;
+  overflow: hidden;
+  transition: border-color 0.4s var(--ease-out);
+}
+
+.cnsl-panel:hover {
+  border-color: var(--border);
+}
+
+.cnsl-panel-6 {
+  grid-column: span 6;
+}
+
+.cnsl-panel-8 {
+  grid-column: span 8;
+}
+
+.cnsl-panel-12 {
+  grid-column: span 12;
+}
+
+.cnsl-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.cnsl-panel-title {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--text);
+}
+
+.cnsl-panel-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  font-variant-numeric: tabular-nums;
+}
+
+.cnsl-panel-count[data-tone='warn'] {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.cnsl-panel-count[data-tone='danger'] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.cnsl-panel-head-spacer {
+  flex: 1;
+}
+
+.cnsl-panel-body {
+  padding: 14px 16px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.cnsl-panel-body.is-scroll {
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.cnsl-panel-body.is-flush {
+  padding: 0;
+  gap: 0;
+}
+
+/* Thin, unobtrusive scrollbars — the data should be the only thing with weight. */
+.cnsl-panel-body.is-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.cnsl-panel-body.is-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
+}
+
+.cnsl-panel-body.is-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------------------
+   Stat tiles
+--------------------------------------------------------------------------- */
+.cnsl-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1px;
+  background: var(--border-soft);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.cnsl-stat {
+  background: var(--bg-raised);
+  padding: 13px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cnsl-stat-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.cnsl-stat-value {
+  font-size: 25px;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.cnsl-stat-value[data-tone='live'] {
+  color: var(--live);
+}
+
+.cnsl-stat-value[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.cnsl-stat-value[data-tone='danger'] {
+  color: var(--danger);
+}
+
+.cnsl-stat-value[data-tone='neon'] {
+  color: var(--neon);
+}
+
+.cnsl-stat-value[data-tone='muted'] {
+  color: var(--text-3);
+}
+
+.cnsl-stat-foot {
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------------------------------------
+   Rows — the workhorse list item
+--------------------------------------------------------------------------- */
+.cnsl-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  transition: background-color 0.25s var(--ease-out);
+}
+
+.cnsl-row:last-child {
+  border-bottom: none;
+}
+
+.cnsl-row:hover {
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.cnsl-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cnsl-row-title {
+  font-size: 13.5px;
+  color: var(--text);
+  letter-spacing: -0.008em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.cnsl-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.cnsl-row-meta span {
+  white-space: nowrap;
+}
+
+.cnsl-row-side {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.cnsl-row-amount {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Status pills
+--------------------------------------------------------------------------- */
+.cnsl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cnsl-pill[data-tone='live'] {
+  color: var(--live);
+  border-color: rgba(52, 199, 89, 0.3);
+  background: var(--live-soft);
+}
+
+.cnsl-pill[data-tone='warn'] {
+  color: var(--warn);
+  border-color: rgba(255, 159, 10, 0.3);
+  background: var(--warn-soft);
+}
+
+.cnsl-pill[data-tone='danger'] {
+  color: var(--danger);
+  border-color: rgba(255, 69, 58, 0.32);
+  background: var(--danger-soft);
+}
+
+.cnsl-pill[data-tone='info'] {
+  color: var(--info);
+  border-color: rgba(100, 210, 255, 0.3);
+  background: var(--info-soft);
+}
+
+.cnsl-pill[data-tone='neon'] {
+  color: var(--neon);
+  border-color: var(--neon-dim);
+  background: rgba(255, 232, 26, 0.07);
+}
+
+/* ---------------------------------------------------------------------------
+   Meters — budgets. Reserved and spent are stacked because the difference
+   between "committed" and "gone" is the whole point of a reservation ledger.
+--------------------------------------------------------------------------- */
+.cnsl-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cnsl-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cnsl-meter-name {
+  font-size: 12.5px;
+  color: var(--text);
+  letter-spacing: -0.005em;
+}
+
+.cnsl-meter-name span {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  margin-left: 6px;
+}
+
+.cnsl-meter-figure {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cnsl-meter-track {
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+  display: flex;
+}
+
+.cnsl-meter-spent {
+  height: 100%;
+  background: var(--neon);
+  transition: width 0.7s var(--ease-out);
+}
+
+.cnsl-meter-reserved {
+  height: 100%;
+  background: var(--neon-dim);
+  transition: width 0.7s var(--ease-out);
+}
+
+.cnsl-meter[data-tone='danger'] .cnsl-meter-spent {
+  background: var(--danger);
+}
+
+.cnsl-meter[data-tone='danger'] .cnsl-meter-reserved {
+  background: rgba(255, 69, 58, 0.35);
+}
+
+.cnsl-meter-foot {
+  display: flex;
+  gap: 14px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.cnsl-meter-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cnsl-meter-key i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* ---------------------------------------------------------------------------
+   Cost breakdown bars (agent spend by role)
+--------------------------------------------------------------------------- */
+.cnsl-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.cnsl-bar-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 150px) 1fr auto;
+  align-items: center;
+  gap: 11px;
+}
+
+.cnsl-bar-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cnsl-bar-track {
+  height: 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.cnsl-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--neon-dim), var(--neon));
+  transition: width 0.7s var(--ease-out);
+}
+
+.cnsl-bar-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Audit chain
+--------------------------------------------------------------------------- */
+.cnsl-audit-row {
+  display: grid;
+  grid-template-columns: 54px 74px minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  transition: background-color 0.25s var(--ease-out);
+}
+
+.cnsl-audit-row:last-child {
+  border-bottom: none;
+}
+
+.cnsl-audit-row:hover {
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.cnsl-audit-pos {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.cnsl-audit-hash {
+  color: var(--neon);
+  opacity: 0.8;
+}
+
+.cnsl-audit-action {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cnsl-audit-time {
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+   Provider matrix
+--------------------------------------------------------------------------- */
+.cnsl-providers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 8px;
+}
+
+.cnsl-provider {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  padding: 10px 11px;
+  background: rgba(255, 255, 255, 0.018);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  transition:
+    border-color 0.3s var(--ease-out),
+    transform 0.45s var(--ease-spring);
+}
+
+.cnsl-provider:hover {
+  border-color: var(--border);
+  transform: translateY(-1px);
+}
+
+.cnsl-provider-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cnsl-provider-name {
+  font-size: 12.5px;
+  color: var(--text);
+  letter-spacing: -0.008em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cnsl-provider-state {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--text-3);
+}
+
+.cnsl-provider[data-state='live_verified'] {
+  border-color: rgba(52, 199, 89, 0.26);
+  background: var(--live-soft);
+}
+
+.cnsl-provider[data-state='live_verified'] .cnsl-provider-state {
+  color: var(--live);
+}
+
+.cnsl-provider[data-state='blocked_missing_credentials'] .cnsl-provider-state,
+.cnsl-provider[data-state='credentials_present_unverified'] .cnsl-provider-state {
+  color: var(--warn);
+}
+
+.cnsl-provider[data-state='verification_failed'] {
+  border-color: rgba(255, 69, 58, 0.26);
+}
+
+.cnsl-provider[data-state='verification_failed'] .cnsl-provider-state {
+  color: var(--danger);
+}
+
+.cnsl-provider-note {
+  font-size: 10.5px;
+  color: var(--text-3);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------------------
+   States: empty / blocked / error / loading
+--------------------------------------------------------------------------- */
+.cnsl-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 26px 16px;
+  text-align: center;
+  min-height: 110px;
+}
+
+.cnsl-empty-icon {
+  color: var(--text-3);
+  opacity: 0.5;
+}
+
+.cnsl-empty-text {
+  font-size: 12.5px;
+  color: var(--text-3);
+  max-width: 34ch;
+  line-height: 1.5;
+}
+
+.cnsl-empty[data-tone='danger'] .cnsl-empty-text {
+  color: var(--danger);
+}
+
+.cnsl-empty[data-tone='warn'] .cnsl-empty-text {
+  color: var(--warn);
+}
+
+/* Loading is a skeleton, never a spinner in a data slot — a spinner in a value
+   position reads as "computing", a skeleton reads as "not yet known". */
+.cnsl-skel {
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 75%
+  );
+  background-size: 200% 100%;
+  animation: cnsl-shimmer 1.4s linear infinite;
+}
+
+@keyframes cnsl-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.cnsl-skel-line {
+  height: 11px;
+  margin-bottom: 9px;
+}
+
+.cnsl-skel-line:nth-child(2) {
+  width: 76%;
+}
+
+.cnsl-skel-line:nth-child(3) {
+  width: 54%;
+}
+
+/* The disconnected banner. Deliberately loud and full-width: a console that
+   cannot reach the API must never be mistaken for a healthy one. */
+.cnsl-offline {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  margin-bottom: 20px;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(255, 69, 58, 0.3);
+  background: var(--danger-soft);
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.cnsl-offline.is-visible {
+  display: flex;
+}
+
+.cnsl-offline-title {
+  font-weight: 500;
+  color: var(--danger);
+}
+
+.cnsl-offline code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ---------------------------------------------------------------------------
+   Actions
+--------------------------------------------------------------------------- */
+.cnsl-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.25s var(--ease-out),
+    border-color 0.25s var(--ease-out),
+    background-color 0.25s var(--ease-out),
+    transform 0.4s var(--ease-spring);
+}
+
+.cnsl-act:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.cnsl-act:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.cnsl-act:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.cnsl-act-approve:hover:not(:disabled) {
+  color: var(--live);
+  border-color: rgba(52, 199, 89, 0.42);
+  background: var(--live-soft);
+}
+
+.cnsl-act-deny:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: rgba(255, 69, 58, 0.42);
+  background: var(--danger-soft);
+}
+
+.cnsl-act-danger {
+  color: var(--danger);
+  border-color: rgba(255, 69, 58, 0.28);
+  background: var(--danger-soft);
+}
+
+.cnsl-act-danger:hover:not(:disabled) {
+  border-color: rgba(255, 69, 58, 0.5);
+  background: rgba(255, 69, 58, 0.16);
+}
+
+/* ---------------------------------------------------------------------------
+   Kill switches
+--------------------------------------------------------------------------- */
+.cnsl-switch {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.cnsl-switch[data-engaged='true'] {
+  border-color: rgba(255, 69, 58, 0.3);
+  background: var(--danger-soft);
+}
+
+.cnsl-switch-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cnsl-switch-scope {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.cnsl-switch-note {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------------------
+   Modal
+--------------------------------------------------------------------------- */
+.cnsl-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 2, 3, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: cnsl-fade 0.25s var(--ease-out);
+}
+
+.cnsl-modal-backdrop.is-open {
+  display: flex;
+}
+
+@keyframes cnsl-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.cnsl-modal {
+  width: min(480px, 100%);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  padding: 24px;
+  animation: cnsl-rise 0.4s var(--ease-out);
+}
+
+@keyframes cnsl-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+}
+
+.cnsl-modal h2 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 7px;
+}
+
+.cnsl-modal-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.55;
+  margin-bottom: 17px;
+}
+
+.cnsl-modal-sub code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon);
+}
+
+.cnsl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 15px;
+}
+
+.cnsl-field label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.cnsl-input {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition:
+    border-color 0.25s var(--ease-out),
+    background-color 0.25s var(--ease-out);
+}
+
+.cnsl-input::placeholder {
+  color: var(--text-3);
+}
+
+.cnsl-input:focus {
+  outline: none;
+  border-color: var(--neon-dim);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+textarea.cnsl-input {
+  font-family: var(--font-sans);
+  resize: vertical;
+  min-height: 74px;
+  line-height: 1.5;
+}
+
+.cnsl-modal-actions {
+  display: flex;
+  gap: 9px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.cnsl-modal-note {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.5;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* ---------------------------------------------------------------------------
+   Toast
+--------------------------------------------------------------------------- */
+.cnsl-toasts {
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-width: min(400px, calc(100vw - 44px));
+}
+
+.cnsl-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 15px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: rgba(14, 14, 16, 0.95);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+  color: var(--text);
+  animation: cnsl-toast-in 0.45s var(--ease-out);
+}
+
+.cnsl-toast.is-leaving {
+  animation: cnsl-toast-out 0.3s var(--ease-out) forwards;
+}
+
+.cnsl-toast[data-tone='ok'] {
+  border-color: rgba(52, 199, 89, 0.34);
+}
+
+.cnsl-toast[data-tone='error'] {
+  border-color: rgba(255, 69, 58, 0.36);
+}
+
+.cnsl-toast-mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  margin-top: 6px;
+  flex-shrink: 0;
+  background: var(--text-3);
+}
+
+.cnsl-toast[data-tone='ok'] .cnsl-toast-mark {
+  background: var(--live);
+}
+
+.cnsl-toast[data-tone='error'] .cnsl-toast-mark {
+  background: var(--danger);
+}
+
+@keyframes cnsl-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px) scale(0.97);
+  }
+}
+
+@keyframes cnsl-toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(18px) scale(0.97);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Footer note
+--------------------------------------------------------------------------- */
+.cnsl-foot {
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.cnsl-foot a {
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.cnsl-foot a:hover {
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------------------
+   Reveal — matches the landing page's entrance, at lower amplitude because a
+   dashboard is read repeatedly and big motion gets tiring fast.
+--------------------------------------------------------------------------- */
+[data-c-reveal] {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+[data-c-reveal].is-in {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.6s var(--ease-out) var(--rd, 0ms),
+    transform 0.6s var(--ease-out) var(--rd, 0ms);
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive
+--------------------------------------------------------------------------- */
+@media (max-width: 1180px) {
+  .cnsl-panel {
+    grid-column: span 6;
+  }
+
+  .cnsl-panel-8 {
+    grid-column: span 12;
+  }
+}
+
+@media (max-width: 760px) {
+  .cnsl-panel,
+  .cnsl-panel-6,
+  .cnsl-panel-8 {
+    grid-column: span 12;
+  }
+
+  .cnsl-brand-page,
+  .cnsl-updated {
+    display: none;
+  }
+
+  .cnsl-phase {
+    min-width: 88px;
+  }
+
+  .cnsl-audit-row {
+    grid-template-columns: 46px 1fr auto;
+  }
+
+  .cnsl-audit-hash {
+    display: none;
+  }
+
+  .cnsl-toasts {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  [data-c-reveal] {
+    opacity: 1;
+    transform: none;
+  }
+}

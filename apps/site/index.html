@@ -38,8 +38,9 @@
         <a href="#organization">Organization</a>
         <a href="#infrastructure">Infrastructure</a>
         <a href="#evidence">Evidence</a>
+        <a href="./console.html">Console</a>
       </nav>
-      <a class="btn btn-primary btn-sm" href="#loop">Explore the system</a>
+      <a class="btn btn-primary btn-sm" href="#pricing">Founding access — $99</a>
     </div>
   </header>
 
@@ -49,6 +50,7 @@
     ===================================================================== -->
     <section class="hero" id="top">
       <div class="hero-bg" aria-hidden="true"></div>
+      <canvas class="hero-leds" id="heroLeds" aria-hidden="true"></canvas>
       <div class="container hero-grid">
         <div class="hero-copy">
           <p class="eyebrow" data-reveal>Yellofield · The Autonomous Company Factory</p>
@@ -63,8 +65,8 @@
             without evidence.
           </p>
           <div class="hero-cta" data-reveal style="--rd:180ms">
-            <a class="btn btn-primary" href="#loop">Explore the loop</a>
-            <a class="btn btn-ghost" href="#evidence">Read the evidence</a>
+            <a class="btn btn-primary" href="#pricing">Get founding access — $99</a>
+            <a class="btn btn-ghost" href="#loop">Explore the loop</a>
           </div>
           <ul class="hero-status" data-reveal style="--rd:240ms" aria-label="Verified status">
             <li><span class="mono">356</span> tests passing</li>
@@ -138,6 +140,7 @@
           </div>
           <figcaption class="hero-caption mono">
             Illustrative operating view — the state machine, ledger, and audit chain are implemented and tested.
+            <a href="./console.html" style="color:var(--neon);border-bottom:1px solid var(--neon-dim)">Open the live console →</a>
           </figcaption>
         </figure>
       </div>
@@ -490,6 +493,108 @@
     </section>
 
     <!-- ====================================================================
+         PRICING — FOUNDING ACCESS
+
+         One Stripe Payment Link, customer-chooses-price. Tiers are suggested
+         amounts against that single link; a second link is never minted (see
+         packages/providers/test/stripe-payment-link.test.ts). Tier attribution
+         rides on client_reference_id, which arrives in the signed
+         checkout.session.completed webhook — so attribution is derived from
+         payment state, not from a click.
+    ===================================================================== -->
+    <section class="section" id="pricing">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow" data-reveal>Founding access</p>
+          <h2 data-reveal style="--rd:60ms">Buy the build, not the promise.</h2>
+          <p class="section-sub" data-reveal style="--rd:120ms">
+            The loop is <strong>NOT COMPLETE</strong> — it is blocked on one missing
+            model key, and the status board above says so because a probe says so. That
+            is exactly what you are buying: a system whose own charter forbids it from
+            claiming a win it cannot prove. You get the build, the blueprint, and the
+            receipts as they land.
+          </p>
+        </div>
+
+        <div class="tiers">
+          <article class="tier" data-reveal>
+            <header class="tier-head">
+              <h3 class="tier-name">Backer</h3>
+              <p class="tier-price"><span class="tier-amt mono">$25</span></p>
+              <p class="tier-line">Fund the run.</p>
+            </header>
+            <ul class="tier-list">
+              <li>Full build log — every probe, pass and block, as it happens</li>
+              <li>Credited in <span class="mono">BACKERS.md</span> in the public repo</li>
+              <li>The verification evidence file, unedited</li>
+            </ul>
+            <a
+              class="btn btn-ghost tier-btn"
+              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_backer"
+              target="_blank"
+              rel="noopener"
+              data-tier="backer"
+              data-amount="25"
+            >Back it — $25</a>
+          </article>
+
+          <article class="tier tier-featured" data-reveal style="--rd:80ms">
+            <span class="tier-flag mono">Most chosen</span>
+            <header class="tier-head">
+              <h3 class="tier-name">Founding access</h3>
+              <p class="tier-price"><span class="tier-amt mono">$99</span></p>
+              <p class="tier-line">The whole system, at founder price.</p>
+            </header>
+            <ul class="tier-list">
+              <li>Complete source — 78-role org chart, policy gate, audit chain</li>
+              <li><span class="mono">render.yaml</span> blueprint: seven services, deploy as-is</li>
+              <li>Founder pricing locked — it never goes up for you</li>
+              <li>Everything in Backer</li>
+            </ul>
+            <a
+              class="btn btn-primary tier-btn"
+              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_founding"
+              target="_blank"
+              rel="noopener"
+              data-tier="founding"
+              data-amount="99"
+            >Get founding access — $99</a>
+          </article>
+
+          <article class="tier" data-reveal style="--rd:160ms">
+            <header class="tier-head">
+              <h3 class="tier-name">Operator</h3>
+              <p class="tier-price"><span class="tier-amt mono">$299</span></p>
+              <p class="tier-line">Deployed on your infrastructure, with you.</p>
+            </header>
+            <ul class="tier-list">
+              <li>A working session — we stand it up on your Render account</li>
+              <li>Your keys, your company row, your loop — not a demo tenant</li>
+              <li>Direct line while you run it</li>
+              <li>Everything in Founding access</li>
+            </ul>
+            <a
+              class="btn btn-ghost tier-btn"
+              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_operator"
+              target="_blank"
+              rel="noopener"
+              data-tier="operator"
+              data-amount="299"
+            >Become an operator — $299</a>
+          </article>
+        </div>
+
+        <p class="pricing-note" data-reveal>
+          <span class="mono">One</span> Stripe Payment Link, customer-chooses-price —
+          enter your tier's amount at checkout. Payment state is confirmed by a signed
+          webhook, never by a browser redirect. If the loop never closes, ask and you get
+          your money back; that promise is cheap to make because the status board makes
+          it impossible to hide.
+        </p>
+      </div>
+    </section>
+
+    <!-- ====================================================================
          FINAL CTA
     ===================================================================== -->
     <section class="cta-section">
@@ -500,8 +605,15 @@
           datastores declared as code. Insert credentials, and the company goes to work.
         </p>
         <div class="hero-cta cta-buttons" data-reveal style="--rd:160ms">
-          <a class="btn btn-primary" href="#loop">Walk the loop again</a>
-          <a class="btn btn-ghost" href="#infrastructure">Inspect the integrations</a>
+          <a
+            class="btn btn-primary"
+            href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_founding"
+            target="_blank"
+            rel="noopener"
+            data-tier="founding"
+            data-amount="99"
+          >Get founding access — $99</a>
+          <a class="btn btn-ghost" href="#pricing">Compare the tiers</a>
         </div>
       </div>
     </section>
@@ -530,6 +642,7 @@
         <a href="#organization">Organization</a>
         <a href="#infrastructure">Infrastructure</a>
         <a href="#evidence">Evidence</a>
+        <a href="#pricing">Pricing</a>
       </nav>
       <div class="footer-col">
         <p class="footer-head mono">Records</p>
