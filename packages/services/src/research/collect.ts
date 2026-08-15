@@ -21,7 +21,11 @@ import {
 } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { optionalCapability, requireCapability, type ServiceDeps } from '../deps.js';
-import { openLoadedPagesViaCdp, type LoadedBrowserPage } from './browser-pages.js';
+import {
+  loadQueryPagesFromEndpoints,
+  type LoadedBrowserPage,
+  type SessionPageLoad,
+} from './browser-pages.js';
 
 export interface CollectInput {
   readonly companyId: string;
@@ -35,6 +39,8 @@ export interface CollectionResult {
   readonly inserted: number;
   readonly duplicates: number;
   readonly blockedOn?: { capability: Capability; reason: string };
+  readonly sessionId?: string;
+  readonly loadedUrls?: readonly string[];
 }
 
 export interface RefetchResult {
@@ -72,7 +78,10 @@ interface RedditSearchAdapter {
 }
 
 interface BrowserSessionAdapter {
-  createBrowserSession?(input?: { readonly recording?: boolean }): Promise<{
+  createBrowserSession?(input?: {
+    readonly recording?: boolean;
+    readonly stealth?: boolean;
+  }): Promise<{
     readonly sessionId?: string;
     readonly cdpEndpoint?: string | null;
     readonly wsEndpoint?: string | null;
@@ -86,6 +95,13 @@ interface BrowserSessionAdapter {
     readonly cdpEndpoint?: string | null;
     readonly wsEndpoint?: string | null;
   }): Promise<readonly LoadedBrowserPage[]>;
+  loadQueryPagesDetailed?(input: {
+    readonly query: string;
+    readonly maxItems: number;
+    readonly sessionId: string;
+    readonly cdpEndpoint?: string | null;
+    readonly wsEndpoint?: string | null;
+  }): Promise<SessionPageLoad>;
 }
 
 const NEWS_DOMAINS = [
@@ -140,12 +156,23 @@ export class ResearchCollectService {
     if (blockedOn?.capability === 'research.web_search') {
       const browser = await this.#collectViaBrowser(input.companyId, input.query, maxItems);
       if (browser.inserted + browser.duplicates > 0) {
-        return { inserted: browser.inserted, duplicates: browser.duplicates };
+        return {
+          inserted: browser.inserted,
+          duplicates: browser.duplicates,
+          sessionId: browser.sessionId,
+          loadedUrls: browser.loadedUrls,
+        };
       }
       if (browser.blockedOn) {
-        return { inserted: 0, duplicates: 0, blockedOn: browser.blockedOn };
+        return {
+          inserted: 0,
+          duplicates: 0,
+          sessionId: browser.sessionId,
+          loadedUrls: browser.loadedUrls ?? [],
+          blockedOn: browser.blockedOn,
+        };
       }
-      return { inserted: 0, duplicates: 0 };
+      return { inserted: 0, duplicates: 0, sessionId: browser.sessionId, loadedUrls: browser.loadedUrls ?? [] };
     }
 
     return blockedOn ? { inserted, duplicates, blockedOn } : { inserted, duplicates };
@@ -348,7 +375,7 @@ export class ResearchCollectService {
 
     let sessionId: string | undefined;
     try {
-      const session = await adapter.createBrowserSession({ recording: false });
+      const session = await this.#openBrowserSession(adapter);
       sessionId = session.sessionId?.trim();
       if (!sessionId) {
         return {
@@ -371,22 +398,58 @@ export class ResearchCollectService {
         cdpEndpoint: session.cdpEndpoint ?? null,
         wsEndpoint: session.wsEndpoint ?? null,
       });
-      const drafts = pages
+      const loadedUrls = pages.loaded.map((page) => page.url);
+      const drafts = pages.evidence
         .map((page) => browserPageToDraft(page, provider, resolvedSessionId))
         .filter((d): d is EvidenceDraftType => d !== undefined);
       getLogger().info(
-        { companyId, sessionId, query, loaded: drafts.length, provider },
+        { companyId, sessionId, query, loaded: loadedUrls, evidence: drafts.length, provider },
         'research collect via browser session',
       );
-      return this.#insertAll(companyId, drafts);
+      if (drafts.length === 0) {
+        return {
+          inserted: 0,
+          duplicates: 0,
+          sessionId: resolvedSessionId,
+          loadedUrls,
+          blockedOn: {
+            capability: 'research.browser_session',
+            reason:
+              loadedUrls.length === 0
+                ? 'Solari session loaded 0 pages; no evidence URLs were recorded.'
+                : 'Solari session opened pages but none were persistable evidence (search hosts only, or invalid URLs).',
+          },
+        };
+      }
+      const inserted = await this.#insertAll(companyId, drafts);
+      return { ...inserted, sessionId: resolvedSessionId, loadedUrls };
     } catch (error) {
       const blocked = blockedFrom(error, 'research.browser_session');
-      if (blocked) return { inserted: 0, duplicates: 0, blockedOn: blocked };
+      if (blocked) {
+        return { inserted: 0, duplicates: 0, sessionId, loadedUrls: [], blockedOn: blocked };
+      }
       throw error;
     } finally {
       if (sessionId && typeof adapter.deleteSession === 'function') {
         await adapter.deleteSession(sessionId).catch(() => undefined);
       }
+    }
+  }
+
+  async #openBrowserSession(
+    adapter: BrowserSessionAdapter,
+  ): Promise<NonNullable<Awaited<ReturnType<NonNullable<BrowserSessionAdapter['createBrowserSession']>>>>> {
+    if (typeof adapter.createBrowserSession !== 'function') {
+      throw new CapabilityUnsupportedError(
+        'solari',
+        'research.browser_session',
+        'Resolved browser-session adapter does not implement createBrowserSession.',
+      );
+    }
+    try {
+      return await adapter.createBrowserSession({ recording: false, stealth: true });
+    } catch {
+      return adapter.createBrowserSession({ recording: false });
     }
   }
 
@@ -399,24 +462,17 @@ export class ResearchCollectService {
       readonly cdpEndpoint: string | null;
       readonly wsEndpoint: string | null;
     },
-  ): Promise<readonly LoadedBrowserPage[]> {
+  ): Promise<SessionPageLoad> {
+    if (typeof adapter.loadQueryPagesDetailed === 'function') {
+      const pages = await adapter.loadQueryPagesDetailed(input);
+      return pages ?? { evidence: [], loaded: [] };
+    }
     if (typeof adapter.loadQueryPages === 'function') {
       const pages = await adapter.loadQueryPages(input);
-      return Array.isArray(pages) ? pages : [];
+      const list = Array.isArray(pages) ? pages : [];
+      return { evidence: list, loaded: list };
     }
-    const cdpEndpoint = input.cdpEndpoint?.trim();
-    if (!cdpEndpoint) {
-      throw new CapabilityUnsupportedError(
-        'solari',
-        'research.browser_session',
-        'Session has no cdpEndpoint and the adapter cannot report loaded pages.',
-      );
-    }
-    return openLoadedPagesViaCdp({
-      cdpEndpoint,
-      query: input.query,
-      maxItems: input.maxItems,
-    });
+    return loadQueryPagesFromEndpoints(input);
   }
 
   async #insertAll(companyId: string, drafts: readonly EvidenceDraftType[]): Promise<CollectionResult> {

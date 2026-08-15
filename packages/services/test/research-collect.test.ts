@@ -139,6 +139,11 @@ describe('ResearchCollectService Solari fallback', () => {
     expect(created).toBe(true);
     expect(result.inserted).toBe(2);
     expect(result.blockedOn).toBeUndefined();
+    expect(result.sessionId).toBe(sessionId);
+    expect(result.loadedUrls).toEqual([
+      'https://news.example.test/cap-leaks',
+      'https://forum.example.test/thread/1',
+    ]);
     expect(inserted).toHaveLength(2);
 
     for (const draft of inserted) {
@@ -189,7 +194,10 @@ describe('ResearchCollectService Solari fallback', () => {
 
     expect(result.inserted).toBe(0);
     expect(result.duplicates).toBe(0);
-    expect(result.blockedOn).toBeUndefined();
+    expect(result.sessionId).toBe('sess_empty');
+    expect(result.loadedUrls).toEqual([]);
+    expect(result.blockedOn?.capability).toBe('research.browser_session');
+    expect(result.blockedOn?.reason).toMatch(/loaded 0 pages/i);
     expect(inserted).toEqual([]);
   });
 

@@ -28,6 +28,11 @@ import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/
 import { bearerAuth, newIdempotencyToken, type ProviderHttpClient } from '../http/client.js';
 import { SECRETS, SOLARI_MANIFEST } from '../manifests.js';
 import {
+  loadQueryPagesFromEndpoints,
+  type LoadedBrowserPage,
+  type SessionPageLoad,
+} from './navigate.js';
+import {
   SolariBrowserSession,
   SolariDesktop,
   SolariExecResult,
@@ -39,6 +44,17 @@ import {
   SolariSessionStatus,
   SolariSnapshot,
 } from './schemas.js';
+
+export {
+  loadQueryPagesFromEndpoints,
+  openLoadedPagesViaCdp,
+  searchPageUrls,
+  isSearchHost,
+  isSearchResultsPage,
+  resolveResultUrl,
+  type LoadedBrowserPage,
+  type SessionPageLoad,
+} from './navigate.js';
 
 /* -------------------------------------------------------------------------- */
 /* UNVERIFIED path — reassignable like Terac's `feasibilityRequestPath`         */
@@ -257,6 +273,38 @@ export class SolariAdapter extends ProviderAdapter {
     }
     getLogger().info({ sessionId: response.body.sessionId }, 'solari browser session created');
     return response.body;
+  }
+
+  /**
+   * Navigate the live session over cdpEndpoint (raw CDP) or wsEndpoint.
+   * Returns only pages the session actually opened. Does not invent URLs.
+   */
+  async loadQueryPages(input: {
+    readonly query: string;
+    readonly maxItems: number;
+    readonly sessionId: string;
+    readonly cdpEndpoint?: string | null;
+    readonly wsEndpoint?: string | null;
+  }): Promise<readonly LoadedBrowserPage[]> {
+    this.assertActivated();
+    const loaded = await loadQueryPagesFromEndpoints(input);
+    getLogger().info(
+      { sessionId: input.sessionId, evidence: loaded.evidence.length, opened: loaded.loaded.length },
+      'solari session navigated',
+    );
+    return loaded.evidence;
+  }
+
+  /** Same as loadQueryPages, including search pages that opened. */
+  async loadQueryPagesDetailed(input: {
+    readonly query: string;
+    readonly maxItems: number;
+    readonly sessionId: string;
+    readonly cdpEndpoint?: string | null;
+    readonly wsEndpoint?: string | null;
+  }): Promise<SessionPageLoad> {
+    this.assertActivated();
+    return loadQueryPagesFromEndpoints(input);
   }
 
   /** `DELETE /sessions/:id` → 204, live 2026-08-15. */

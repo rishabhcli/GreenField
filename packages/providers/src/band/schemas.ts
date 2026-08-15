@@ -139,6 +139,47 @@ export function bandCreateChatBody(input: {
   return { chat };
 }
 
+export interface BandSendMessageMention {
+  readonly handle: string;
+}
+
+/**
+ * POST /agent/chats/{id}/messages/{id}/failed body. Live 2026-08-15: top-level
+ * `reason` 422s Unexpected field: reason (`details["/reason"]`). The documented
+ * required field is `error` (not nested).
+ */
+export function bandMarkFailedBody(reason: string): { readonly error: string } {
+  return { error: reason.trim() };
+}
+
+/**
+ * POST /agent/chats/{id}/messages body. Live 2026-08-15: top-level `content`
+ * 422s Unexpected field: content; `message` is required; `message.mentions`
+ * is required with minItems 1 (handle-only entries resolve in-room);
+ * `message.task_id` 422s Unexpected field: task_id.
+ */
+export function bandSendMessageBody(input: {
+  readonly recipients: readonly string[];
+  readonly body: string;
+}): {
+  readonly message: {
+    readonly content: string;
+    readonly mentions: readonly BandSendMessageMention[];
+  };
+} {
+  const seen = new Set<string>();
+  const mentions: BandSendMessageMention[] = [];
+  for (const raw of input.recipients) {
+    const handle = raw.replace(/^@/, '').trim();
+    if (!handle || seen.has(handle)) continue;
+    seen.add(handle);
+    mentions.push({ handle });
+  }
+  const mentionPrefix = mentions.map((m) => `@${m.handle}`).join(' ');
+  const content = `${mentionPrefix} ${input.body}`.trim();
+  return { message: { content, mentions } };
+}
+
 export const BandParticipant = z
   .object({
     id: z.string(),

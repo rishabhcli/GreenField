@@ -196,23 +196,34 @@ export class LoopOrchestrator {
   }
 
   async #assessDiscover(companyId: string): Promise<PhaseAssessment> {
-    const evidence = await this.deps.repos.research.evidence.search(companyId, { limit: 1 });
+    const evidence = await this.deps.repos.research.evidence.search(companyId, {
+      limit: 1,
+      minConfidence: 0,
+    });
     const evidenceCount = evidence.length;
     const opportunities = await this.deps.repos.research.opportunities.list(companyId, ['discovered']);
 
     if (evidenceCount === 0) {
-      const status = this.#capabilityStatus('research.web_search');
-      if (!status.usable) {
-        return {
-          complete: false,
-          detail: 'no research capability is usable, so no evidence can be collected',
-          blockedOn: {
-            capability: 'research.web_search',
-            remediation: status.remediation ?? `research capability is ${status.state}`,
-          },
-        };
+      const web = this.#capabilityStatus('research.web_search');
+      const browser = this.#capabilityStatus('research.browser_session');
+      if (web.usable) {
+        return { complete: false, detail: 'waiting for the first evidence to be collected' };
       }
-      return { complete: false, detail: 'waiting for the first evidence to be collected' };
+      // Brave is unusable. Solari evidence (if any) is handled above. Zero
+      // pages is a browser_session failure, not a web_search one.
+      return {
+        complete: false,
+        detail: browser.usable
+          ? 'Solari browser session produced no evidence rows'
+          : 'no research capability is usable, so no evidence can be collected',
+        blockedOn: {
+          capability: 'research.browser_session',
+          remediation:
+            browser.usable
+              ? 'research.browser_session loaded 0 pages'
+              : (browser.remediation ?? web.remediation ?? `research.browser_session is ${browser.state}`),
+        },
+      };
     }
 
     if (opportunities.length === 0) {

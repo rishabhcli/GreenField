@@ -1,5 +1,5 @@
 /* ============================================================================
-   FOUNDRY — MOTION ENGINE
+   YELLOFIELD — MOTION ENGINE
    Physics-based springs (damped harmonic oscillator), scroll reveals,
    pointer tilt, and scroll-driven progress. Compositor-only properties.
 ============================================================================ */

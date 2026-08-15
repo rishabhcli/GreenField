@@ -1,4 +1,4 @@
-/* Zero-dependency static server for the Foundry landing page.
+/* Zero-dependency static server for the Yellofield landing page.
    Usage: node apps/site/serve.js [port]  (default 3000) */
 const http = require("http");
 const fs = require("fs");
@@ -31,5 +31,5 @@ http
     res.end(fs.readFileSync(file));
   })
   .listen(port, () => {
-    console.log(`Foundry landing page: http://localhost:${port}`);
+    console.log(`Yellofield landing page: http://localhost:${port}`);
   });

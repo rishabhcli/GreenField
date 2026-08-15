@@ -553,6 +553,7 @@ describe('org dispatch chain of command', () => {
     const band = {
       getMe: async () => ({ id: 'agt_test', handle: 'foundry-dispatch' }),
       createChat: async () => ({ id: 'chat_test' }),
+      listParticipants: async () => [{ id: 'user_test', handle: 'room-owner' }],
       sendMessage: async () => {
         throw new Error('BAND room gone');
       },
@@ -569,6 +570,30 @@ describe('org dispatch chain of command', () => {
     expect(leftover, 'failed handoff must not leave a queued run').toHaveLength(0);
   });
 
+  maybe('dispatch refuses when the room has only the sending agent and does not enqueue', async () => {
+    const tracked = trackingQueues();
+    const objective = `band-self-only-${Date.now()}`;
+    let sent = 0;
+    const band = {
+      getMe: async () => ({ id: 'agt_test', handle: 'foundry-dispatch' }),
+      createChat: async () => ({ id: 'chat_test' }),
+      listParticipants: async () => [{ id: 'agt_test', handle: 'foundry-dispatch' }],
+      sendMessage: async () => {
+        sent += 1;
+        return { id: 'msg_test' };
+      },
+    } as unknown as BandAdapter;
+    const dispatcher = new OrgDispatcher(repos, tracked.queues, { band });
+    await expect(
+      dispatcher.dispatch({
+        companyId, fromRoleKey: 'research_manager', toRoleKey: 'community_researcher',
+        objective, traceId: 't',
+      }),
+    ).rejects.toThrow(/cannot mention themselves/i);
+    expect(sent, 'self-mention must not be posted').toBe(0);
+    expect(tracked.calls).toHaveLength(0);
+  });
+
   maybe('@mention is posted before enqueue and the run stores the BAND assignment', async () => {
     const events: string[] = [];
     const tracked = trackingQueues(events);
@@ -579,6 +604,7 @@ describe('org dispatch chain of command', () => {
         events.push('createChat');
         return { id: 'chat_test' };
       },
+      listParticipants: async () => [{ id: 'user_test', handle: 'room-owner' }],
       sendMessage: async (_chatId: string, input: { recipients: readonly string[]; body: string }) => {
         events.push('sendMessage');
         sent = input;
@@ -590,7 +616,7 @@ describe('org dispatch chain of command', () => {
       companyId, fromRoleKey: 'research_manager', toRoleKey: 'community_researcher',
       objective: 'handoff-before-enqueue', traceId: 't',
     });
-    expect(sent?.recipients).toEqual(['foundry-dispatch']);
+    expect(sent?.recipients).toEqual(['room-owner']);
     expect(sent?.body).toContain('DISPATCH');
     expect(events.indexOf('sendMessage')).toBeGreaterThanOrEqual(0);
     expect(events.indexOf('sendMessage')).toBeLessThan(events.indexOf('enqueue'));
@@ -644,6 +670,7 @@ describe('BAND handoff drives start', () => {
     const band = {
       getMe: async () => ({ id: 'agt_test', handle: 'foundry-dispatch' }),
       createChat: async () => ({ id: 'chat_test' }),
+      listParticipants: async () => [{ id: 'user_test', handle: 'room-owner' }],
       sendMessage: async () => {
         events.push('sendMessage');
         return { id: 'msg_test' };
@@ -730,6 +757,7 @@ function stubBand(): { band: BandAdapter } {
     band: {
       getMe: async () => ({ id: 'agt_test', handle: 'foundry-dispatch' }),
       createChat: async () => ({ id: 'chat_test' }),
+      listParticipants: async () => [{ id: 'user_test', handle: 'room-owner' }],
       sendMessage: async () => ({ id: 'msg_test' }),
       markMessageProcessing: async () => ({ id: 'msg_test' }),
       markMessageProcessed: async () => ({ id: 'msg_test' }),

@@ -241,29 +241,30 @@ export class OrgDispatcher {
   async #postBandAssignment(request: DispatchRequest, runId: string, toRoleKey: string): Promise<void> {
     const band = this.coordination!.band;
     const me = await band.getMe();
-    const handle = (me.handle ?? me.id)?.replace(/^@/, '');
-    if (!handle || handle.trim().length === 0) {
+    const selfHandle = (me.handle ?? me.id)?.replace(/^@/, '') ?? '';
+    const chatId = await this.#ensureCompanyChat(request.companyId, band);
+    // Band 422s cannot_mention_self. The routing primitive is @mention of
+    // another room participant; enqueue happens only after this send returns.
+    const mentionHandle = mentionableParticipantHandle(selfHandle, me.id, await band.listParticipants(chatId));
+    if (!mentionHandle) {
       throw new ValidationError(
-        'BAND GET /agent/me returned no handle to @mention; dispatch cannot route a handoff.',
-        { runId },
+        'BAND requires @mention of another participant; agents cannot mention themselves. ' +
+          'The coordination room has no one else to mention, so dispatch cannot post a handoff.',
+        { runId, chatId, selfHandle: selfHandle || null },
       );
     }
-    const chatId = await this.#ensureCompanyChat(request.companyId, band);
-    // @mention is the routing primitive. Enqueue happens only after this send
-    // returns — taking the room away (or a send that cannot mention) breaks dispatch.
     const message = await band.sendMessage(chatId, {
-      recipients: [handle],
+      recipients: [mentionHandle],
       body:
         `DISPATCH role=${toRoleKey} run=${runId}\n` +
         `${request.objective}\n` +
         `A specialist must not start this work except by claiming this message.`,
-      taskId: runId,
     });
     await this.repos.agents.runs.attachRoom(runId, chatId);
     await this.repos.agents.runs.mergeInputRefs(runId, {
       bandChatId: chatId,
       bandMessageId: message.id,
-      bandHandle: handle,
+      bandHandle: mentionHandle,
     });
   }
 
@@ -282,6 +283,22 @@ export class OrgDispatcher {
     });
     return chat.id;
   }
+}
+
+/** Band 422s cannot_mention_self; dispatch must @mention someone else in the room. */
+function mentionableParticipantHandle(
+  selfHandle: string,
+  selfId: string | undefined,
+  participants: readonly { readonly id?: string | null; readonly handle?: string | null }[],
+): string | undefined {
+  for (const participant of participants) {
+    const handle = participant.handle?.replace(/^@/, '').trim() ?? '';
+    if (!handle) continue;
+    if (selfHandle && handle === selfHandle) continue;
+    if (selfId && (participant.id === selfId || handle === selfId)) continue;
+    return handle;
+  }
+  return undefined;
 }
 
 function directReportKeys(role: RoleDefinition): readonly string[] {

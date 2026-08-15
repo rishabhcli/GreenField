@@ -73,6 +73,8 @@ import {
   registrationApiKey,
   BandAgentRegistration,
   bandCreateChatBody,
+  bandSendMessageBody,
+  bandMarkFailedBody,
 } from './schemas.js';
 import { BandWebSocketClient } from './websocket.js';
 
@@ -103,9 +105,13 @@ export interface CreateChatInput {
 }
 
 export interface SendMessageInput {
-  /** Agent handles to @mention, with or without a leading `@`. Must be non-empty. */
+  /** Agent/user handles to @mention, with or without a leading `@`. Must be non-empty. */
   readonly recipients: readonly string[];
   readonly body: string;
+  /**
+   * Ignored on the wire. Live Band `POST /messages` 422s `message.task_id`
+   * as an unexpected field; Foundry run ids are not Band task UUIDs.
+   */
   readonly taskId?: string;
 }
 
@@ -396,9 +402,8 @@ export class BandAdapter extends ProviderAdapter {
    * routed to anyone ("Agents only see messages that mention them"), so an
    * empty `recipients` list is refused outright rather than silently sent —
    * that would be an unroutable, un-received message masquerading as a real
-   * send. The @handle prefixes are built into the message content itself,
-   * since BAND's mention mechanism is textual (like Slack/Discord @mentions),
-   * not a separate structured "to" field.
+   * send. The live Agent API requires `{ message: { content, mentions } }`;
+   * each recipient becomes a `mentions[].handle` and an `@handle` in content.
    */
   async sendMessage(chatId: string, input: SendMessageInput): Promise<BandMessage> {
     this.assertActivated();
@@ -413,15 +418,22 @@ export class BandAdapter extends ProviderAdapter {
     if (input.body.trim().length === 0) {
       throw new ValidationError('sendMessage requires a non-empty body', { chatId });
     }
-    const mentionPrefix = input.recipients.map((handle) => `@${handle.replace(/^@/, '')}`).join(' ');
-    const content = `${mentionPrefix} ${input.body}`.trim();
+    const body = bandSendMessageBody({ recipients: input.recipients, body: input.body });
+    if (body.message.mentions.length === 0) {
+      throw new ValidationError(
+        'BAND routes a message only to the agents it @mentions; messages without one route to nobody per the ' +
+          'docs. Sending with an empty recipient list would silently produce an unroutable message — that is a ' +
+          'fake send, not a real one, so this adapter refuses it.',
+        { chatId },
+      );
+    }
 
     const response = await this.#client().request(
       {
         method: 'POST',
         path: `/agent/chats/${encodeURIComponent(chatId)}/messages`,
         operation: 'agent.chats.messages.send',
-        body: { content, ...(input.taskId ? { task_id: input.taskId } : {}) },
+        body,
       },
       bandResource(BandMessage),
     );
@@ -470,12 +482,19 @@ export class BandAdapter extends ProviderAdapter {
 
   async markMessageFailed(chatId: string, messageId: string, reason?: string): Promise<BandMessage> {
     this.assertActivated();
+    const error = reason?.trim() ?? '';
+    if (!error) {
+      throw new ValidationError(
+        'markMessageFailed requires a non-empty error. Live BAND 422s Unexpected field: reason and requires `error`.',
+        { chatId, messageId },
+      );
+    }
     const response = await this.#client().request(
       {
         method: 'POST',
         path: `/agent/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/failed`,
         operation: 'agent.chats.messages.mark_failed',
-        body: reason ? { reason } : {},
+        body: bandMarkFailedBody(error),
       },
       bandResource(BandMessage),
     );
