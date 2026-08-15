@@ -110,14 +110,34 @@ export const BandChat = z
   .object({
     id: z.string(),
     name: z.string().nullish(),
+    title: z.string().nullish(),
     task_id: z.string().nullish(),
     is_external: z.boolean().nullish(),
     is_global: z.boolean().nullish(),
     created_at: z.string().nullish(),
+    inserted_at: z.string().nullish(),
     updated_at: z.string().nullish(),
   })
   .passthrough();
 export type BandChat = z.infer<typeof BandChat>;
+
+/** Band OpenAPI: task_id is optional uuid. Company ids like `co_…` 422. */
+const BAND_TASK_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * POST /agent/chats body. Live 2026-08-15: `chat` is required; title lives
+ * under `chat.title` (not top-level `name`); empty `{}` 422s Missing field: chat.
+ */
+export function bandCreateChatBody(input: {
+  readonly name?: string;
+  readonly taskId?: string;
+}): { readonly chat: { readonly title?: string; readonly task_id?: string } } {
+  const chat: { title?: string; task_id?: string } = {};
+  const title = input.name?.trim();
+  if (title) chat.title = title;
+  if (input.taskId && BAND_TASK_UUID.test(input.taskId)) chat.task_id = input.taskId;
+  return { chat };
+}
 
 export const BandParticipant = z
   .object({

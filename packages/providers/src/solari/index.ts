@@ -3,29 +3,23 @@
  * GUI computers, used for compliant public-web research and supplier
  * discovery where no API exists.
  *
- * Written against the raw HTTP surface documented at docs.getsolari.com
- * (verified 2026-08-14; see `docs/research/SPONSOR_API_RESEARCH.md` §12 —
- * that document is the authority this file is written against). There is no
- * webhook surface for Solari ("No webhooks found" per the research pass), so
+ * Written against docs.getsolari.com and live-probed 2026-08-15 with a
+ * `slr_live_` key. There is no webhook surface ("No webhooks found"), so
  * unlike Stripe/Terac/Whop there is no `events.ts`/`verifyWebhook` here.
  *
- * Two things this adapter refuses to fake, both called out explicitly in the
- * build brief:
+ * Live 2xx on 2026-08-15 (see probe + mutating calls in this file's comments):
+ *   GET /health 200, GET /sandboxes?limit=1 200, GET /profiles 200,
+ *   GET /templates 200, POST /sessions 201, GET /sessions/:id 200,
+ *   DELETE /sessions/:id 204, POST /sandboxes 201, GET /sandboxes/:id 200,
+ *   POST /sandboxes/:id/exec 200 `{cmd,args}` → `{exitCode,stdout,stderr}`,
+ *   DELETE /sandboxes/:id 200.
+ * Blocked / not claimed:
+ *   GET /healthz 401 (not unauthenticated), POST /desktops timed out at 90s
+ *   with 0 bytes — GUI create is unverified, not a success.
  *
- *  1. `GET /sessions/:id` is documented as "always returns 404 in practice;
- *     route is non-functional." `getSessionStatus` below throws instead of
- *     polling a route the vendor has told us is dead. Solari has no webhook
- *     mechanism either, so there is no async completion signal to wait for —
- *     browser/desktop sessions are driven synchronously over the returned
- *     `wsEndpoint`/`cdpEndpoint`/`streamUrl`, and the only genuine
- *     post-creation read is `getReplayUrl` once a *recorded* session has
- *     ended.
- *  2. Human takeover (two-way control over `ws/observe` or the VNC `stream`)
- *     is UNVERIFIED — the docs describe both only as observation/embedding
- *     mechanisms and never state whether either accepts input.
- *     `requestHumanTakeover` throws rather than implying this works; the
- *     sourcing workflow's human-escalation path goes through Terac's expert
- *     marketplace instead (see `../terac`).
+ * Human takeover (two-way control over `ws/observe` or the VNC `stream`) is
+ * still UNVERIFIED. `requestHumanTakeover` throws; sourcing human-escalation
+ * goes through Terac (see `../terac`).
  */
 
 import { CapabilityUnsupportedError, LONG_RUNNING_RETRY, ProviderContractError, ValidationError, toFoundryError } from '@foundry/core';
@@ -40,7 +34,9 @@ import {
   SolariProfile,
   SolariReplayUrlResponse,
   SolariSandbox,
+  SolariSandboxList,
   SolariSandboxMetrics,
+  SolariSessionStatus,
   SolariSnapshot,
 } from './schemas.js';
 
@@ -95,16 +91,49 @@ export interface CreateDesktopInput {
 }
 
 /**
- * `POST /sandboxes/:id/exec` has no documented request shape at all. `command`
- * is required here because every comparable sandbox-exec API surveyed in this
- * research pass (Sandbox0's `POST /contexts/{id}/exec`, Superserve's
- * `POST /exec`) names exactly that field — treated as the single safe minimum
- * inference, not a confirmed Solari contract. Extra caller-supplied fields
- * pass through verbatim since we do not know what else the real API accepts.
+ * `POST /sandboxes/:id/exec` live body (2026-08-15): `cmd` is the binary,
+ * `args` its argv tail. A convenience `command` string is mapped to
+ * `{cmd:"sh", args:["-c", command]}` — the wire never sees a `command` field.
  */
 export interface ExecInSandboxInput {
-  readonly command: string;
-  readonly [extra: string]: unknown;
+  readonly cmd?: string;
+  readonly args?: readonly string[];
+  /** Shell line. Sent as `{cmd:"sh", args:["-c", command]}` when `cmd` is omitted. */
+  readonly command?: string;
+  readonly cwd?: string;
+  readonly timeoutMs?: number;
+}
+
+export interface SolariExecBody {
+  readonly cmd: string;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+  readonly timeoutMs?: number;
+}
+
+/** Maps caller input onto the live exec body. Never includes `command`. */
+export function solariExecBody(input: ExecInSandboxInput): SolariExecBody {
+  const extras: { cwd?: string; timeoutMs?: number } = {
+    ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+  };
+  const cmd = input.cmd?.trim();
+  if (cmd) {
+    return { cmd, ...(input.args ? { args: [...input.args] } : {}), ...extras };
+  }
+  const command = input.command?.trim();
+  if (!command) {
+    throw new ValidationError('execInSandbox requires cmd or a non-empty command');
+  }
+  return { cmd: 'sh', args: ['-c', command], ...extras };
+}
+
+export function solariSandboxId(sandbox: SolariSandbox): string {
+  const id = sandbox.sandboxId ?? sandbox.id;
+  if (!id) {
+    throw new ProviderContractError('solari', 'sandbox response had neither sandboxId nor id', { sandbox });
+  }
+  return id;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -113,9 +142,11 @@ export interface ExecInSandboxInput {
 
 export class SolariAdapter extends ProviderAdapter {
   override readonly manifest = SOLARI_MANIFEST;
+  readonly #fetchImpl: typeof fetch | undefined;
 
-  constructor(ctx: AdapterContext) {
+  constructor(ctx: AdapterContext, overrides?: { readonly fetchImpl?: typeof fetch }) {
     super(ctx);
+    this.#fetchImpl = overrides?.fetchImpl;
   }
 
   /**
@@ -130,6 +161,7 @@ export class SolariAdapter extends ProviderAdapter {
     return this.http(bearerAuth(secret), {
       idempotencyHeader: 'Idempotency-Key',
       retryPolicy: LONG_RUNNING_RETRY,
+      fetchImpl: this.#fetchImpl,
     });
   }
 
@@ -138,20 +170,9 @@ export class SolariAdapter extends ProviderAdapter {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * `GET /health`/`GET /healthz` are documented as unauthenticated, so success
-   * there proves only that the API is up, not that the credential works. No
-   * authenticated non-destructive read is directly confirmed for Solari:
-   * session status is dead (404), and every other documented GET requires an
-   * id we would have to pay to create first — which a probe must never do.
-   *
-   * This attempts `GET /sandboxes?limit=1` as the credential-exercising step,
-   * matching this provider's own manifest `liveProbe.description`. That is a
-   * deliberate, flagged inference: the research pass confirmed `POST
-   * /sandboxes` (create) for Solari but never showed a `GET /sandboxes` list
-   * route the way it did for Superserve and Sandbox0 (`POST/GET /sandboxes`
-   * explicitly). If the route does not really exist, this call fails with a
-   * non-2xx status or a thrown error below, and that failure is reported
-   * honestly as `succeeded: false` — it never fabricates a success.
+   * `GET /health` is unauthenticated (live 200 on 2026-08-15). `GET /healthz`
+   * returned 401 with this key and is not used. Credential check is
+   * `GET /sandboxes?limit=1` (live 200 `{sandboxes:[…]}`). Never creates.
    */
   override async probe(): Promise<ProbeResult> {
     const client = this.#client();
@@ -166,37 +187,31 @@ export class SolariAdapter extends ProviderAdapter {
     }
 
     try {
-      const response = await client.raw({
-        method: 'GET',
-        path: '/sandboxes',
-        query: { limit: 1 },
-        operation: 'sandboxes.list.probe',
-        retryable: false,
-      });
-      if (response.status >= 200 && response.status < 300) {
-        return {
-          succeeded: true,
-          detail: 'GET /health succeeded and GET /sandboxes?limit=1 was accepted by the API with the configured credential',
-          evidence: { endpoint: 'GET /sandboxes?limit=1', status: response.status, healthStatus: health.status },
-        };
-      }
+      const response = await client.request(
+        {
+          method: 'GET',
+          path: '/sandboxes',
+          query: { limit: 1 },
+          operation: 'sandboxes.list.probe',
+          retryable: false,
+        },
+        SolariSandboxList,
+      );
       return {
-        succeeded: false,
-        detail:
-          `GET /health succeeded but GET /sandboxes?limit=1 returned HTTP ${response.status}. This could mean the ` +
-          'credential is invalid, or that this list endpoint does not exist for Solari (only POST /sandboxes is ' +
-          "directly documented) — the probe cannot tell those apart, so this reports unverifiable rather than " +
-          'asserting either one.',
-        evidence: { endpoint: 'GET /sandboxes?limit=1', status: response.status, healthStatus: health.status },
+        succeeded: true,
+        detail: 'GET /health succeeded and GET /sandboxes?limit=1 was accepted by the API with the configured credential',
+        evidence: {
+          endpoint: 'GET /sandboxes?limit=1',
+          status: response.status,
+          healthStatus: health.status,
+          count: response.body.sandboxes.length,
+        },
       };
     } catch (error) {
       const foundry = toFoundryError(error);
       return {
         succeeded: false,
-        detail:
-          `GET /health succeeded but GET /sandboxes?limit=1 failed: ${foundry.message}. See the code comment on ` +
-          'SolariAdapter.probe() — this list endpoint is a documented-by-inference guess for Solari, not a ' +
-          'directly confirmed route.',
+        detail: `GET /health succeeded but GET /sandboxes?limit=1 failed: ${foundry.message}`,
         evidence: {
           endpoint: 'GET /sandboxes?limit=1',
           code: foundry.code,
@@ -244,7 +259,7 @@ export class SolariAdapter extends ProviderAdapter {
     return response.body;
   }
 
-  /** `DELETE /sessions/:id` → 204, documented. */
+  /** `DELETE /sessions/:id` → 204, live 2026-08-15. */
   async deleteSession(sessionId: string): Promise<void> {
     this.assertActivated();
     await this.#client().raw({
@@ -255,30 +270,21 @@ export class SolariAdapter extends ProviderAdapter {
   }
 
   /**
-   * There is no working status-poll for a Solari browser session.
-   *
-   * Docs state `GET /sessions/:id` "always returns 404 in practice; route is
-   * non-functional." This throws immediately — no HTTP call is made — so a
-   * caller reaching for the obvious method name gets a clear, typed refusal
-   * instead of a confusing live 404, and so nothing in this codebase is
-   * tempted to build a polling loop against a route the vendor has told us is
-   * dead. Session state must be tracked locally by whichever service created
-   * the session; the only genuine read available after creation is
-   * `getReplayUrl`, once the session has ended and recording was enabled.
+   * `GET /sessions/:id`. Older docs said this always 404s; live 200 on
+   * 2026-08-15 returned `id`, `status`, `kind`, `org`, `createdAt`, `expiresAt`,
+   * `wsEndpoint`, `cdpEndpoint`.
    */
-  getSessionStatus(_sessionId: string): never {
-    throw new CapabilityUnsupportedError(
-      'solari',
-      'research.browser_session.status_poll',
-      'GET /sessions/:id is documented as always returning 404 in practice (route is non-functional; verified ' +
-        'against docs.getsolari.com/api-reference/browser on 2026-08-14). Solari has no webhook mechanism either, ' +
-        'so there is no async completion event to subscribe to instead. Track session state locally from the ' +
-        'POST /sessions response, and use getReplayUrl() once a recorded session has ended.',
+  async getSessionStatus(sessionId: string): Promise<SolariSessionStatus> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      { method: 'GET', path: `/sessions/${encodeURIComponent(sessionId)}`, operation: 'sessions.get' },
+      SolariSessionStatus,
     );
+    return response.body;
   }
 
   /**
-   * The only genuine post-creation read: the recording replay, once the
+   * The only genuine post-creation recording read: the replay URL, once the
    * session has ended and `recording: true` was set at creation.
    *
    * Response shape is UNVERIFIED (docs name the endpoint, never a payload);
@@ -373,32 +379,48 @@ export class SolariAdapter extends ProviderAdapter {
       },
       SolariSandbox,
     );
-    getLogger().info({ sandboxId: response.body.sandboxId }, 'solari sandbox created');
+    getLogger().info({ sandboxId: solariSandboxId(response.body) }, 'solari sandbox created');
+    return response.body;
+  }
+
+  /** `GET /sandboxes/:id` — live 200 on 2026-08-15 (`state: running`). */
+  async getSandbox(sandboxId: string): Promise<SolariSandbox> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      { method: 'GET', path: `/sandboxes/${encodeURIComponent(sandboxId)}`, operation: 'sandboxes.get' },
+      SolariSandbox,
+    );
     return response.body;
   }
 
   /**
-   * `POST /sandboxes/:id/exec` — request/response shapes are both UNVERIFIED
-   * for Solari (see `ExecInSandboxInput` and `SolariExecResult`). The response
-   * is returned to the caller unshaped rather than destructured into invented
-   * fields like `stdout`/`exitCode`, which would misrepresent confidence we
-   * do not have.
+   * `POST /sandboxes/:id/exec` — live body is `{cmd, args?, cwd?, timeoutMs?}`.
+   * Response (live 200): `{exitCode, stdout, stderr}`. A non-zero exit is still 200.
    */
   async execInSandbox(sandboxId: string, input: ExecInSandboxInput): Promise<SolariExecResult> {
     this.assertActivated();
-    if (input.command.trim().length === 0) {
-      throw new ValidationError('execInSandbox requires a non-empty command', { sandboxId });
-    }
+    const body = solariExecBody(input);
     const response = await this.#client().request(
       {
         method: 'POST',
         path: `/sandboxes/${encodeURIComponent(sandboxId)}/exec`,
         operation: 'sandboxes.exec',
-        body: input,
+        body,
       },
       SolariExecResult,
     );
     return response.body;
+  }
+
+  /** `DELETE /sandboxes/:id` — live 200 `{ok:true}` (docs also allow 204). */
+  async deleteSandbox(sandboxId: string): Promise<void> {
+    this.assertActivated();
+    await this.#client().raw({
+      method: 'DELETE',
+      path: `/sandboxes/${encodeURIComponent(sandboxId)}`,
+      operation: 'sandboxes.delete',
+    });
+    getLogger().info({ sandboxId }, 'solari sandbox deleted');
   }
 
   async pauseSandbox(sandboxId: string): Promise<void> {
@@ -480,25 +502,22 @@ export class SolariAdapter extends ProviderAdapter {
   /* Desktops (GUI computers)                                                */
   /* ---------------------------------------------------------------------- */
 
-  async createDesktop(input: CreateDesktopInput = {}): Promise<SolariDesktop> {
-    this.assertActivated();
-    const response = await this.#client().request(
-      {
-        method: 'POST',
-        path: '/desktops',
-        operation: 'desktops.create',
-        idempotencyKey: input.idempotencyKey ?? newIdempotencyToken(),
-        body: { ...(input.metadata ? { metadata: input.metadata } : {}) },
-      },
-      SolariDesktop,
+  /**
+   * `POST /desktops` is blocked. Live probe on 2026-08-15 timed out at 90s
+   * with 0 bytes. This does not invent a desktop id or call the route.
+   */
+  createDesktop(_input: CreateDesktopInput = {}): never {
+    throw new CapabilityUnsupportedError(
+      'solari',
+      'research.gui_computer',
+      'POST /desktops timed out at 90s with 0 bytes on 2026-08-15. GUI create is unverified and is not called. ' +
+        'Use createSandbox({kind:"sandbox"}) for headless exec. Do not treat this as a working desktop plane.',
     );
-    getLogger().info({ desktopId: response.body.sessionId }, 'solari desktop created');
-    return response.body;
   }
 
   /**
-   * Unlike browser sessions, `GET /desktops/:id` is documented as a real,
-   * working route (no "always 404" caveat is stated for desktops).
+   * `GET /desktops/:id` is documented as a real route (no "always 404" caveat).
+   * Create remains blocked; this is only useful for an already-known id.
    */
   async getDesktop(desktopId: string): Promise<SolariDesktop> {
     this.assertActivated();

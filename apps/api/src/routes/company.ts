@@ -9,7 +9,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CompanyConfig, ValidationError } from '@foundry/core';
-import { defaultHackathonCompanyConfig, seedOrgActors } from '@foundry/services';
+import { defaultHackathonCompanyConfig, ensureOperatingCompany, prizeTrackSnapshot } from '@foundry/services';
 import type { AppContext, Services } from '@foundry/runtime';
 
 const CreateCompany = z.object({
@@ -29,22 +29,6 @@ const CollectResearch = z.object({
   sourceKinds: z.array(z.string()).min(1).default(['blog_post', 'reddit_post', 'product_review']),
   maxItems: z.number().int().positive().max(100).default(40),
 });
-
-const PRIZE_CAPABILITIES = [
-  { track: 'Terac (required)', capability: 'expert.structured_review' as const },
-  { track: 'Best Overall Agent-Run Company / Stripe', capability: 'payments.checkout.physical' as const },
-  { track: 'Stripe Payment Link (hackathon revenue)', capability: 'payments.payment_link' as const },
-  { track: 'Linq Agent Pay / iMessage', capability: 'payments.imessage_checkout' as const },
-  { track: 'Best use of Replay', capability: 'qa.autonomous_exploration' as const },
-  { track: 'Best use of Superserve', capability: 'compute.persistent_sandbox' as const },
-  { track: 'Best use of Pioneer (PII)', capability: 'compliance.pii_scan' as const },
-  { track: 'Best use of Pioneer (GLiGuard)', capability: 'compliance.prompt_guard' as const },
-  { track: 'Best use of Band', capability: 'coordination.agent_mesh' as const },
-  { track: 'Best use of Render (Workflows)', capability: 'platform.workflows' as const },
-  { track: 'Render deploys', capability: 'platform.deploy_control' as const },
-  { track: 'Lovable storefront generate', capability: 'site.generate' as const },
-  { track: 'Solari browser', capability: 'research.browser_session' as const },
-] as const;
 
 export async function registerCompanyRoutes(
   app: FastifyInstance,
@@ -66,27 +50,23 @@ export async function registerCompanyRoutes(
       ownerEmail: body.ownerEmail,
     });
 
-    const company = await ctx.repos.companies.create({
+    const seeded = await ensureOperatingCompany({
+      repos: ctx.repos,
+      queues: ctx.queues,
       name: body.name,
       mission: body.mission,
+      ownerName: body.ownerName,
+      ownerEmail: body.ownerEmail,
       config,
-    });
-    const actorsSeeded = await seedOrgActors(ctx.repos, company.id, config.commerce.baseCurrency);
-    const cycle = await ctx.repos.loop.currentOrStart(company.id);
-    const jobId = await ctx.queues.enqueue('loop.tick', {
-      companyId: company.id,
-      traceId: company.id,
-      originRunId: null,
-      idempotencyKey: `loop:start:${company.id}`,
-      cycleId: cycle.id,
-      forcePhase: null,
     });
 
     return reply.code(201).send({
-      companyId: company.id,
-      cycleId: cycle.id,
-      actorsSeeded,
-      loopJobId: jobId,
+      companyId: seeded.companyId,
+      cycleId: seeded.cycleId,
+      actorsSeeded: seeded.actorsSeeded,
+      loopJobId: seeded.loopJobId,
+      enqueueError: seeded.enqueueError,
+      prizeTracks: prizeTrackSnapshot(ctx.capabilities),
       note: 'Legal documents will not generate until legalEntity.registeredName and related fields are set. Missing sponsor keys block phases; they do not fake completion.',
     });
   });
@@ -184,23 +164,13 @@ export async function registerCompanyRoutes(
   });
 
   /**
-   * Prize-track capability snapshot. `usable` means the adapter will attempt a
-   * real call. `live_verified` is only true after the verifier wrote a probe row.
+   * Prize-track snapshot. `probeLive` is adapter.probe() (GET /projects,
+   * catalog, …). `liveVerified` is true only when the prize-relevant method
+   * succeeded — catalog/list probes are not a prize-method pass.
    */
   app.get('/api/prize-tracks', async () => {
     return {
-      tracks: PRIZE_CAPABILITIES.map((item) => {
-        const status = ctx.capabilities.resolveCapability(item.capability);
-        return {
-          track: item.track,
-          capability: item.capability,
-          state: status.state,
-          usable: status.usable,
-          liveVerified: status.state === 'live_verified',
-          missingSecrets: status.missingSecrets,
-          remediation: status.remediation,
-        };
-      }),
+      tracks: prizeTrackSnapshot(ctx.capabilities),
     };
   });
 }

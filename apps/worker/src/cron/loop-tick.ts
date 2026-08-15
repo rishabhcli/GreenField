@@ -11,7 +11,7 @@
 import { describeError } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { RenderAdapter } from '@foundry/providers';
-import { buildContext, wireRuntime } from '@foundry/runtime';
+import { buildContext, bootstrapOperatingCompany, wireRuntime } from '@foundry/runtime';
 
 const EXPECTED_MIGRATIONS = 5;
 
@@ -23,9 +23,10 @@ async function main(): Promise<void> {
   const log = getLogger();
   try {
     const services = wireRuntime(ctx);
+    const boot = await bootstrapOperatingCompany(ctx);
     const companies = await ctx.repos.companies.list();
     if (companies.length === 0) {
-      log.info('loop tick cron: no companies yet');
+      log.info({ boot }, 'loop tick cron: company bootstrap produced no row');
       return;
     }
 
@@ -36,15 +37,16 @@ async function main(): Promise<void> {
       if (workflowsUsable && render instanceof RenderAdapter) {
         try {
           const run = await render.startTaskRun('tickCompanyLoop', [{ companyId: company.id }]);
-          log.info({ companyId: company.id, taskRunId: run.id }, 'loop tick dispatched to Render Workflows');
-          continue;
+          log.info({ companyId: company.id, taskRunId: run.id }, 'loop tick also dispatched to Render Workflows');
         } catch (error) {
           log.warn(
             { companyId: company.id, err: describeError(error) },
-            'Render Workflows trigger failed; ticking in-process',
+            'Render Workflows trigger failed; continuing with in-process tick',
           );
         }
       }
+      // A 202 from Workflows is not a completed tick. Always run in-process so
+      // the cycle on Render Postgres actually moves.
       const tick = await services.loop.tick(company.id);
       log.info({ companyId: company.id, ...tick }, 'loop tick (in-process)');
     }

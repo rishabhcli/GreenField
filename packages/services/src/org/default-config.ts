@@ -8,6 +8,15 @@
 
 import { CompanyConfig } from '@foundry/core';
 
+/** Identity used when the control plane creates the first company on boot. */
+export const HACKATHON_COMPANY = {
+  name: 'Zero Human Co',
+  mission:
+    'Operate an autonomous physical-goods company that earns real revenue. Missing sponsor capabilities block the loop; they are never treated as success.',
+  ownerName: 'Rishabh Bansal',
+  ownerEmail: 'rishabh.rb@icloud.com',
+} as const;
+
 export function defaultHackathonCompanyConfig(input: {
   readonly ownerName: string;
   readonly ownerEmail: string;

@@ -43,6 +43,42 @@ export function isProjectIdle(timing: Pick<ReplayProjectTiming, 'finished_at'>):
   return typeof timing.finished_at === 'string' && timing.finished_at.trim().length > 0;
 }
 
+/** Live explorations use `completed_at` and `in-progress`; either timestamp or a terminal status means done. */
+export function isExplorationFinished(
+  exploration: Pick<ReplayExploration, 'status' | 'finished_at'> & { readonly completed_at?: string | null },
+): boolean {
+  if (isTerminalExplorationStatus(exploration.status)) return true;
+  if (typeof exploration.finished_at === 'string' && exploration.finished_at.trim().length > 0) return true;
+  if (typeof exploration.completed_at === 'string' && exploration.completed_at.trim().length > 0) return true;
+  return false;
+}
+
+function countField(raw: unknown, keys: readonly string[]): number {
+  if (!raw || typeof raw !== 'object') return 0;
+  const rec = raw as Record<string, unknown>;
+  let total = 0;
+  for (const key of keys) {
+    const n = rec[key];
+    if (typeof n === 'number' && n > 0) total += n;
+  }
+  return total;
+}
+
+/**
+ * Live `GET /projects/{id}/status` nests counts under `explorations` / `test_runs`.
+ * Zero in-flight after work has started is idle even when `finished_at` lags.
+ */
+export function isProjectWorkIdle(
+  status: { readonly explorations?: unknown; readonly test_runs?: unknown },
+  timing: Pick<ReplayProjectTiming, 'started_at' | 'first_event_at' | 'finished_at'>,
+): boolean {
+  if (isProjectIdle(timing)) return true;
+  const started = Boolean(timing.started_at) || Boolean(timing.first_event_at);
+  if (!started) return false;
+  const inflightKeys = ['in-progress', 'in_progress', 'inProgress', 'queued'] as const;
+  return countField(status.explorations, inflightKeys) === 0 && countField(status.test_runs, inflightKeys) === 0;
+}
+
 function normalizeReproductionSteps(raw: ReplayBug['reproduction_steps']): readonly string[] {
   if (Array.isArray(raw)) return raw.filter((step) => step.trim().length > 0);
   if (typeof raw === 'string' && raw.trim().length > 0) return [raw.trim()];
@@ -310,7 +346,7 @@ export function toQaRunAndDefects(
     targetUrl: project.target_url,
     defectCounts,
     startedAt: exploration.started_at ?? null,
-    finishedAt: exploration.finished_at ?? null,
+    finishedAt: exploration.finished_at ?? exploration.completed_at ?? null,
     evidenceUrl: project.url ?? null,
   };
 
@@ -335,8 +371,9 @@ export function toQaRunFromProject(
     bugs.length > 0 ||
     Boolean(exploration && (exploration.started_at || (exploration.journeys?.length ?? 0) > 0));
 
+  const explorationDone = Boolean(exploration && isExplorationFinished(exploration));
   let status: string;
-  if (!isProjectIdle(timing)) {
+  if (!isProjectIdle(timing) && !explorationDone) {
     status = exploration?.status ?? 'running';
   } else if (!executed) {
     status = 'failed';
@@ -356,7 +393,8 @@ export function toQaRunFromProject(
     bugs: exploration?.bugs,
     bug_ids: exploration?.bug_ids,
     started_at: exploration?.started_at ?? timing.started_at ?? null,
-    finished_at: exploration?.finished_at ?? timing.finished_at ?? null,
+    finished_at: exploration?.finished_at ?? exploration?.completed_at ?? timing.finished_at ?? null,
+    completed_at: exploration?.completed_at ?? null,
     created_at: exploration?.created_at,
   };
 

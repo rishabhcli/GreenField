@@ -72,6 +72,7 @@ import {
   normaliseBandList,
   registrationApiKey,
   BandAgentRegistration,
+  bandCreateChatBody,
 } from './schemas.js';
 import { BandWebSocketClient } from './websocket.js';
 
@@ -94,7 +95,9 @@ function classifyBandError(status: number, body: unknown): FoundryError | undefi
 /* -------------------------------------------------------------------------- */
 
 export interface CreateChatInput {
+  /** Mapped to `chat.title` (Band rejects top-level `name`). */
   readonly name?: string;
+  /** Included only when it is a UUID; company ids are not Band task ids. */
   readonly taskId?: string;
   readonly participantHandles?: readonly string[];
 }
@@ -325,15 +328,17 @@ export class BandAdapter extends ProviderAdapter {
         method: 'POST',
         path: '/agent/chats',
         operation: 'agent.chats.create',
-        body: {
-          ...(input.name ? { name: input.name } : {}),
-          ...(input.taskId ? { task_id: input.taskId } : {}),
-          ...(input.participantHandles ? { participants: input.participantHandles } : {}),
-        },
+        body: bandCreateChatBody(input),
       },
       bandResource(BandChat),
     );
-    return response.body;
+    const chat = response.body;
+    if (input.participantHandles) {
+      for (const handle of input.participantHandles) {
+        await this.addParticipant(chat.id, handle);
+      }
+    }
+    return chat;
   }
 
   async getChat(chatId: string): Promise<BandChat> {

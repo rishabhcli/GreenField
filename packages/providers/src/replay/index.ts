@@ -36,7 +36,7 @@ import {
   replayListEnvelope,
   type ReplayListPage,
 } from './schemas.js';
-import { isProjectIdle, isTerminalExplorationStatus } from './gate.js';
+import { isExplorationFinished, isProjectIdle, isProjectWorkIdle } from './gate.js';
 
 /**
  * Fixed host the OpenAPI discovery document is fetched from. This is
@@ -369,6 +369,23 @@ export class ReplayAdapter extends ProviderAdapter {
     for (;;) {
       const timing = await this.getProjectTiming(projectId);
       if (isProjectIdle(timing)) return timing;
+      try {
+        const explorations = await this.listExplorations(projectId);
+        if (explorations.items.length > 0 && explorations.items.every(isExplorationFinished)) {
+          const status = await this.getProjectStatus(projectId);
+          // Journey authoring can complete while test runs are still executing.
+          if (isProjectWorkIdle(status, timing)) {
+            const lastDone = explorations.items
+              .map((item) => item.completed_at ?? item.finished_at)
+              .filter((stamp): stamp is string => typeof stamp === 'string' && stamp.trim().length > 0)
+              .sort()
+              .at(-1);
+            return { ...timing, finished_at: timing.finished_at ?? lastDone ?? new Date().toISOString() };
+          }
+        }
+      } catch {
+        // Explorations/status are secondary idle signals; timing.finished_at remains canonical.
+      }
 
       const now = clock.nowMs();
       if (now >= deadline) {
@@ -450,7 +467,7 @@ export class ReplayAdapter extends ProviderAdapter {
 
     for (;;) {
       const exploration = await this.getExploration(explorationId);
-      if (isTerminalExplorationStatus(exploration.status)) return exploration;
+      if (isExplorationFinished(exploration)) return exploration;
 
       const now = clock.nowMs();
       if (now >= deadline) {

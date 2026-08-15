@@ -161,6 +161,25 @@ describe('LovableMcpClient with fake fetch', () => {
     await expect(client.initialize()).rejects.toBeInstanceOf(ProviderAuthError);
     expect(client.initialized).toBe(false);
   });
+
+  it('POSTs tools/list after a successful initialize', async () => {
+    const methods: string[] = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { method?: string; id?: number };
+      if (body.method) methods.push(body.method);
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id ?? 0, result: { tools: [] } }), {
+        status: 200,
+      });
+    };
+    const client = new LovableMcpClient({
+      accessToken: new Secret('LOVABLE_OAUTH_ACCESS_TOKEN', 'not-a-live-token', 'unknown'),
+      fetchImpl,
+    });
+    const listed = await client.listTools();
+    expect(methods).toContain('initialize');
+    expect(methods).toContain('tools/list');
+    expect(listed).toEqual({ tools: [] });
+  });
 });
 
 describe('SSE JSON-RPC parser', () => {
