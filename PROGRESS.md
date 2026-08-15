@@ -217,6 +217,7 @@ hosting is Render; a Lovable deploy URL is a generator preview only.
 | `spec_drafted` ≠ build complete | **DONE** (unit) | `siteBuildComplete` + same file. Loop `#assess('build')` already refuses `spec_drafted`. |
 | MCP `create_project` / `list_files` / `read_file` / `deploy_project` request shape | **DONE** (unit) | `packages/providers/test/lovable-adapter.test.ts` (fake fetch; Bearer only, no `Lovable-API-Key`) |
 | Lovable MCP `site.generate` live | **NOT COMPLETE** | No OAuth (`LOVABLE_OAUTH_ACCESS_TOKEN` missing); promo code globally dead |
+| `foundry_sitegen` fallback (`site.generate` priority 2, Anthropic-backed) | **DONE** (unit) | `packages/providers/test/sitegen-adapter.test.ts` — strict `emit_files` tool use on `claude-sonnet-5`; zero files rejected; path traversal rejected; unknown project id throws; `deployProject` returns `{ url: null }` (no preview hosting; production hosting stays Render). Registry resolves `site.generate` to it only when `ANTHROPIC_API_KEY` is present, honestly `configured_unverified` until `apps/verifier` records a probe. |
 
 Do not claim `live_verified` without OAuth **and** a real `tools/call`. Catalog/runtime splices: `PATCH.md` Lovable section (none required; do not regress).
 
