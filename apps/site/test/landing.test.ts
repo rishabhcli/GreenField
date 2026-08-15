@@ -5,12 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { Script, runInNewContext } from 'node:vm';
 
 /**
- * Landing page smoke verification.
+ * Landing site smoke verification.
  *
- * The page is intentionally dependency-free static assets, so the checks here
- * are structural: the document exists, references resolve, the script
- * compiles, and the honest-copy invariants the project is built on are
- * present. This is a smoke gate, not a rendering test.
+ * The site is a dependency-free static bundle: a short home page plus one
+ * page each for the system, the evidence, and pricing (the long-scroll
+ * single page was split on purpose). The checks here are structural: every
+ * page exists, references resolve, the script compiles, and the honest-copy,
+ * checkout, and sponsor-logo invariants the project is built on are present
+ * on the page that now owns them. This is a smoke gate, not a rendering test.
  */
 const siteDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -20,37 +22,51 @@ function read(rel: string): string {
   return readFileSync(p, 'utf8');
 }
 
-describe('landing page', () => {
-  const html = read('index.html');
+describe('landing site', () => {
+  const pageNames = ['index.html', 'system.html', 'evidence.html', 'pricing.html'] as const;
+  const pages: Record<(typeof pageNames)[number], string> = {
+    'index.html': read('index.html'),
+    'system.html': read('system.html'),
+    'evidence.html': read('evidence.html'),
+    'pricing.html': read('pricing.html'),
+  };
+  const index = pages['index.html'];
+  const system = pages['system.html'];
+  const evidence = pages['evidence.html'];
+  const pricing = pages['pricing.html'];
   const css = read('assets/styles.css');
   const js = read('assets/main.js');
 
-  it('references resolve to real files', () => {
-    const refs = [...html.matchAll(/(?:href|src)="\.\/([^"]+)"/g)].map((m) => m[1] ?? '');
-    expect(refs.length).toBeGreaterThanOrEqual(2);
-    for (const ref of refs) {
-      expect(existsSync(join(siteDir, ref)), `broken reference: ${ref}`).toBe(true);
+  it('references resolve to real files on every page', () => {
+    for (const name of pageNames) {
+      const refs = [...pages[name].matchAll(/(?:href|src)="\.\/([^"]+)"/g)].map((m) => m[1] ?? '');
+      expect(refs.length, `${name} has no local references`).toBeGreaterThanOrEqual(2);
+      for (const ref of refs) {
+        const file = ref.split('#')[0] ?? ref;
+        expect(existsSync(join(siteDir, file)), `broken reference in ${name}: ${ref}`).toBe(true);
+      }
     }
   });
 
-  it('has the required section structure', () => {
-    for (const id of [
-      'main',
-      'nav',
-      'top',
-      'loop',
-      'organization',
-      'infrastructure',
-      'evidence',
-      'pricing',
-    ]) {
-      expect(html.includes(`id="${id}"`), `missing #${id}`).toBe(true);
+  it('splits the site into pages with the required section structure', () => {
+    for (const id of ['main', 'nav', 'top']) {
+      expect(index.includes(`id="${id}"`), `missing #${id} on home`).toBe(true);
     }
-    expect(html.includes('<h1')).toBe(true);
-    expect(html.includes('<footer')).toBe(true);
+    for (const id of ['loop', 'organization', 'infrastructure']) {
+      expect(system.includes(`id="${id}"`), `missing #${id} on system page`).toBe(true);
+    }
+    for (const id of ['evidence', 'faq']) {
+      expect(evidence.includes(`id="${id}"`), `missing #${id} on evidence page`).toBe(true);
+    }
+    expect(pricing.includes('id="pricing"'), 'missing #pricing on pricing page').toBe(true);
+    for (const name of pageNames) {
+      expect(pages[name].includes('<footer'), `missing footer on ${name}`).toBe(true);
+      expect(pages[name].includes('id="nav"'), `missing nav on ${name}`).toBe(true);
+    }
+    expect(index.includes('<h1')).toBe(true);
   });
 
-  it('exposes exactly the twelve sponsors', () => {
+  it('exposes exactly the twelve sponsors on the home page', () => {
     const sponsors = [
       'Terac',
       'Stripe',
@@ -66,26 +82,48 @@ describe('landing page', () => {
       'Solari',
     ];
     for (const s of sponsors) {
-      expect(html.includes(s), `missing sponsor: ${s}`).toBe(true);
+      expect(index.includes(s), `missing sponsor: ${s}`).toBe(true);
     }
   });
 
-  it('keeps the honest-status claims intact', () => {
-    expect(html).toContain('356');
-    expect(html).toContain('probe verified');
-    expect(html).toContain('surface built');
-    expect(html).toContain('NOT COMPLETE');
-    expect(html).toContain('Illustrative operating view');
+  it('ships a real logo asset for every sponsor and references each one', () => {
+    const assets = [
+      'terac.svg',
+      'stripe.svg',
+      'lovable.png',
+      'whop.png',
+      'render.svg',
+      'linq.png',
+      'superserve.svg',
+      'replay.ico',
+      'band.png',
+      'dodo.svg',
+      'sandbox0.ico',
+      'solari.png',
+    ];
+    for (const a of assets) {
+      expect(existsSync(join(siteDir, 'assets', 'sponsors', a)), `missing sponsor logo: ${a}`).toBe(true);
+      expect(index.includes(`./assets/sponsors/${a}`), `sponsor logo not referenced: ${a}`).toBe(true);
+    }
+  });
+
+  it('keeps the honest-status claims intact on their pages', () => {
+    expect(index).toContain('356');
+    expect(system).toContain('probe verified');
+    expect(system).toContain('surface built');
+    expect(pricing).toContain('NOT COMPLETE');
+    expect(index).toContain('Illustrative operating view');
   });
 
   /**
    * The conversion path is load-bearing: a landing page that explains the
    * product but cannot take money converts at exactly zero. These checks pin
-   * the checkout surface so it cannot be refactored away silently.
+   * the checkout surface on the pricing page so it cannot be refactored
+   * away silently.
    */
   describe('checkout path', () => {
     const PAYMENT_LINK = 'https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00';
-    const checkoutHrefs = [...html.matchAll(/href="(https:\/\/buy\.stripe\.com\/[^"]+)"/g)].map(
+    const checkoutHrefs = [...pricing.matchAll(/href="(https:\/\/buy\.stripe\.com\/[^"]+)"/g)].map(
       (m) => m[1] ?? '',
     );
 
@@ -102,15 +140,15 @@ describe('landing page', () => {
     });
 
     it('opens checkout without leaking window.opener', () => {
-      for (const tag of html.matchAll(/<a\b[^>]*buy\.stripe\.com[^>]*>/g)) {
+      for (const tag of pricing.matchAll(/<a\b[^>]*buy\.stripe\.com[^>]*>/g)) {
         expect(tag[0]).toContain('rel="noopener"');
       }
     });
 
     it('states the price and the refund promise in the copy', () => {
-      expect(html).toContain('$99');
-      expect(html).toContain('customer-chooses-price');
-      expect(html).toContain('you get');
+      expect(pricing).toContain('$99');
+      expect(pricing).toContain('customer-chooses-price');
+      expect(pricing).toContain('you get');
     });
   });
 
@@ -121,7 +159,7 @@ describe('landing page', () => {
   /**
    * The hero LED field is a rAF loop. A ReferenceError on the first paint
    * (an identifier the draw path reads but never declares) leaves a frozen
-   * first frame — which is what shipped. This harness is the regression
+   * first frame, which is what shipped. This harness is the regression
    * gate: two frames must complete without throwing.
    */
   it('keeps the LED field looping after the first paint', () => {
@@ -246,18 +284,64 @@ describe('landing page', () => {
     expect(css).toContain('backdrop-filter');
   });
 
-  it('meets baseline accessibility markup', () => {
-    expect(html).toContain('lang="en"');
-    expect(html).toContain('skip-link');
-    expect(html).toContain('name="viewport"');
-    expect(html).toContain('aria-hidden="true"');
+  it('meets baseline accessibility markup on every page', () => {
+    for (const name of pageNames) {
+      expect(pages[name], `${name} missing lang`).toContain('lang="en"');
+      expect(pages[name], `${name} missing skip-link`).toContain('skip-link');
+      expect(pages[name], `${name} missing viewport`).toContain('name="viewport"');
+      expect(pages[name], `${name} missing aria-hidden`).toContain('aria-hidden="true"');
+    }
     expect(css).toContain(':focus-visible');
   });
 
   it('loads no third-party scripts besides fonts', () => {
-    const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1] ?? '');
-    for (const src of scripts) {
-      expect(src.startsWith('./'), `unexpected external script: ${src}`).toBe(true);
+    for (const name of pageNames) {
+      const scripts = [...pages[name].matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1] ?? '');
+      for (const src of scripts) {
+        expect(src.startsWith('./'), `unexpected external script on ${name}: ${src}`).toBe(true);
+      }
     }
+  });
+
+  describe('polish surfaces', () => {
+    it('exposes the FAQ accordion with accessible toggles on the evidence page', () => {
+      expect(evidence.includes('id="faq"')).toBe(true);
+      const questions = evidence.match(/class="faq-q"/g) ?? [];
+      expect(questions.length).toBe(6);
+      const collapsed = evidence.match(/faq-q" type="button" aria-expanded="false"/g) ?? [];
+      expect(collapsed.length).toBe(questions.length);
+      expect(css).toContain('.faq-item.is-open');
+    });
+
+    it('wires the scroll progress hairline and mobile menu on every page', () => {
+      for (const name of pageNames) {
+        expect(pages[name].includes('id="scrollProgressFill"'), `${name} missing progress fill`).toBe(true);
+        expect(pages[name].includes('id="navMenuBtn"'), `${name} missing menu button`).toBe(true);
+        expect(pages[name].includes('id="navPanel"'), `${name} missing nav panel`).toBe(true);
+        expect(pages[name], `${name} missing aria-controls`).toContain('aria-controls="navPanel"');
+      }
+      expect(css).toContain('.scroll-progress-fill');
+      expect(js).toContain('scrollProgressFill');
+    });
+
+    it('floats the nav into a pill once the page scrolls', () => {
+      expect(css).toContain('.nav.is-floating');
+      expect(js).toContain('is-floating');
+    });
+
+    it('keeps the spotlight and float layers compositor-friendly', () => {
+      expect(css).toContain('.card-spot');
+      expect(css).toContain('.float-card');
+      expect(css).toContain('prefers-reduced-motion');
+      expect(index.includes('float-card-a')).toBe(true);
+      expect(index.includes('float-card-b')).toBe(true);
+    });
+
+    it('serves a branded og image', () => {
+      const og = read('assets/og.svg');
+      expect(index).toContain('content="./assets/og.svg"');
+      expect(og).toContain('YELLOFIELD');
+      expect(og).toContain('run by agents');
+    });
   });
 });

@@ -75,13 +75,15 @@
   }
 
   /* -------------------------------------------------------------------------
-     Nav glass state
+     Nav float state — docked flush at the very top, a floating glass pill
+     the moment the page scrolls. Transform/geometry only, CSS transitions
+     carry the animation.
   ------------------------------------------------------------------------- */
   var nav = document.getElementById("nav");
 
   function updateNav() {
     if (!nav) return;
-    nav.classList.toggle("is-scrolled", window.scrollY > 24);
+    nav.classList.toggle("is-floating", window.scrollY > 24);
   }
 
   updateNav();
@@ -707,5 +709,203 @@
   var year = document.getElementById("year");
   if (year) {
     year.textContent = String(new Date().getFullYear());
+  }
+})();
+
+/* ============================================================================
+   LAYER 2 — additive polish.
+   Scroll progress hairline, pointer-tracked card spotlight, active-section
+   nav state, current loop step, FAQ accordion, mobile menu. Every block is
+   null-guarded so a reduced DOM (or the test harness) simply skips it.
+============================================================================ */
+(function () {
+  "use strict";
+
+  var reduceMotion2 =
+    window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* -------------------------------------------------------------------------
+     Scroll progress — scaleX only, rAF-throttled.
+  ------------------------------------------------------------------------- */
+  var progressFill = document.getElementById("scrollProgressFill");
+
+  if (progressFill) {
+    var progressQueued = false;
+
+    function updateProgress() {
+      progressQueued = false;
+      var doc = document.documentElement;
+      var max = doc ? doc.scrollHeight - window.innerHeight : 0;
+      var p = max > 0 ? window.scrollY / max : 0;
+      progressFill.style.transform = "scaleX(" + Math.max(0, Math.min(1, p)).toFixed(4) + ")";
+    }
+
+    function queueProgress() {
+      if (!progressQueued) {
+        progressQueued = true;
+        requestAnimationFrame(updateProgress);
+      }
+    }
+
+    window.addEventListener("scroll", queueProgress, { passive: true });
+    window.addEventListener("resize", queueProgress, { passive: true });
+    updateProgress();
+  }
+
+  /* -------------------------------------------------------------------------
+     Card spotlight — a faint warm radial that trails the pointer.
+     The element is created lazily; hosts come from querySelectorAll, so an
+     empty DOM yields zero work.
+  ------------------------------------------------------------------------- */
+  var spotHosts = Array.prototype.slice.call(
+    document.querySelectorAll(".bento-card, .gov-card, .stat")
+  );
+
+  if (spotHosts.length && !reduceMotion2 && window.matchMedia("(pointer: fine)").matches) {
+    spotHosts.forEach(function (card) {
+      var spot = document.createElement("span");
+      spot.className = "card-spot";
+      spot.setAttribute("aria-hidden", "true");
+      card.appendChild(spot);
+
+      card.addEventListener("pointerenter", function () {
+        spot.style.opacity = "1";
+      });
+
+      card.addEventListener("pointermove", function (e) {
+        var rect = card.getBoundingClientRect();
+        var x = e.clientX - rect.left - 170;
+        var y = e.clientY - rect.top - 170;
+        spot.style.transform = "translate3d(" + x + "px," + y + "px,0)";
+      });
+
+      card.addEventListener("pointerleave", function () {
+        spot.style.opacity = "0";
+      });
+    });
+  }
+
+  /* -------------------------------------------------------------------------
+     Active section in the nav — IntersectionObserver band across the middle.
+  ------------------------------------------------------------------------- */
+  var navAnchors = Array.prototype.slice.call(
+    document.querySelectorAll(".nav-links a[href^='#']")
+  );
+  var watched = [];
+
+  navAnchors.forEach(function (a) {
+    var id = (a.getAttribute("href") || "").slice(1);
+    var sec = id ? document.getElementById(id) : null;
+    if (sec) watched.push({ id: id, el: sec, link: a });
+  });
+
+  if (watched.length && "IntersectionObserver" in window) {
+    var navObserver2 = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          watched.forEach(function (s) {
+            s.link.classList.toggle("is-active", s.id === entry.target.id);
+          });
+        });
+      },
+      { rootMargin: "-38% 0px -55% 0px", threshold: 0 }
+    );
+    watched.forEach(function (s) {
+      navObserver2.observe(s.el);
+    });
+  }
+
+  /* -------------------------------------------------------------------------
+     Current loop step — the step nearest viewport center gets the marker.
+  ------------------------------------------------------------------------- */
+  var loopStepsHost = document.getElementById("loopSteps");
+
+  if (loopStepsHost) {
+    var stepEls = Array.prototype.slice.call(loopStepsHost.querySelectorAll(".loop-step"));
+    var stepQueued = false;
+
+    function updateCurrentStep() {
+      stepQueued = false;
+      if (!stepEls.length) return;
+      var center = window.innerHeight * 0.5;
+      var best = -1;
+      var bestDist = Infinity;
+      for (var i = 0; i < stepEls.length; i++) {
+        var r = stepEls[i].getBoundingClientRect();
+        var mid = r.top + r.height / 2;
+        var d = Math.abs(mid - center);
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      }
+      for (var j = 0; j < stepEls.length; j++) {
+        stepEls[j].classList.toggle("is-current", j === best && bestDist < window.innerHeight * 0.45);
+      }
+    }
+
+    function queueStep() {
+      if (!stepQueued) {
+        stepQueued = true;
+        requestAnimationFrame(updateCurrentStep);
+      }
+    }
+
+    if (stepEls.length) {
+      window.addEventListener("scroll", queueStep, { passive: true });
+      window.addEventListener("resize", queueStep, { passive: true });
+      updateCurrentStep();
+    }
+  }
+
+  /* -------------------------------------------------------------------------
+     FAQ accordion — class + aria-expanded; CSS grid-rows does the motion.
+  ------------------------------------------------------------------------- */
+  var faqItems = Array.prototype.slice.call(document.querySelectorAll(".faq-item"));
+
+  faqItems.forEach(function (item) {
+    var btn = item.querySelector(".faq-q");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var open = item.classList.toggle("is-open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  });
+
+  /* -------------------------------------------------------------------------
+     Mobile menu — hidden-attribute toggle, closes on navigate or Escape.
+  ------------------------------------------------------------------------- */
+  var menuBtn = document.getElementById("navMenuBtn");
+  var navPanel = document.getElementById("navPanel");
+
+  if (menuBtn && navPanel) {
+    function setMenu(open) {
+      if (open) {
+        navPanel.removeAttribute("hidden");
+      } else {
+        navPanel.setAttribute("hidden", "");
+      }
+      menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      menuBtn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+      menuBtn.classList.toggle("is-open", open);
+    }
+
+    menuBtn.addEventListener("click", function () {
+      setMenu(menuBtn.getAttribute("aria-expanded") !== "true");
+    });
+
+    Array.prototype.slice.call(navPanel.querySelectorAll("a")).forEach(function (a) {
+      a.addEventListener("click", function () {
+        setMenu(false);
+      });
+    });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && menuBtn.getAttribute("aria-expanded") === "true") {
+        setMenu(false);
+      }
+    });
   }
 })();

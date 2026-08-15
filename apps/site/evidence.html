@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Yellofield · The Evidence</title>
+  <meta name="description" content="Executed test counts, database totals, verification rows, and the operating charter behind Yellofield. Every number on the record, plus the FAQ." />
+  <meta name="theme-color" content="#050506" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23050506'/%3E%3Crect x='8' y='9' width='16' height='3' rx='1.5' fill='%23F5F5F7'/%3E%3Crect x='8' y='14.5' width='11' height='3' rx='1.5' fill='%23A1A1A6'/%3E%3Crect x='8' y='20' width='6' height='3' rx='1.5' fill='%236E6E73'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="scroll-progress" aria-hidden="true"><span class="scroll-progress-fill" id="scrollProgressFill"></span></div>
+
+  <header class="nav" id="nav">
+    <div class="nav-inner container">
+      <a class="brand" href="./index.html" aria-label="Yellofield home">
+        <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
+          <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#F5F5F7" />
+          <rect x="8" y="14.5" width="11" height="3" rx="1.5" fill="#A1A1A6" />
+          <rect x="8" y="20" width="6" height="3" rx="1.5" fill="#6E6E73" />
+        </svg>
+        <span class="brand-name">Yellofield</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="./system.html">The System</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./pricing.html">Pricing</a>
+        <a href="./console.html">Console</a>
+        <a href="./evidence.html#faq">FAQ</a>
+      </nav>
+      <a class="btn btn-primary btn-sm" href="./pricing.html">Founding access · $99</a>
+      <button class="nav-menu-btn" id="navMenuBtn" type="button" aria-expanded="false" aria-controls="navPanel" aria-label="Open menu">
+        <span class="nav-menu-bar" aria-hidden="true"></span>
+        <span class="nav-menu-bar" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="nav-panel" id="navPanel" hidden>
+      <nav class="nav-panel-links" aria-label="Mobile">
+        <a href="./system.html">The System</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./pricing.html">Founding access</a>
+        <a href="./console.html">Console</a>
+        <a href="./evidence.html#faq">FAQ</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="hero-bg" aria-hidden="true"></div>
+      <div class="container">
+        <p class="eyebrow" data-reveal>The evidence</p>
+        <h1 data-reveal style="--rd:60ms">Claims ship<br /><span class="h1-silver">with receipts.</span></h1>
+        <p class="page-sub" data-reveal style="--rd:120ms">
+          Nothing in Yellofield is marked complete on the strength of code existing.
+          Every number below comes from an executed test suite or an executed probe.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="evidence">
+      <div class="container">
+        <div class="stats">
+          <div class="stat" data-reveal>
+            <span class="stat-num mono" data-count="356">0</span>
+            <span class="stat-label">tests passing. 1 skipped, an opt-in live probe</span>
+          </div>
+          <div class="stat" data-reveal style="--rd:60ms">
+            <span class="stat-num mono" data-count="52">0</span>
+            <span class="stat-label">tables · 169 indexes · 104 foreign keys, applied to real Postgres 17</span>
+          </div>
+          <div class="stat" data-reveal style="--rd:120ms">
+            <span class="stat-num mono" data-count="24">0</span>
+            <span class="stat-label">integration verification rows written by the executed verifier</span>
+          </div>
+          <div class="stat" data-reveal style="--rd:180ms">
+            <span class="stat-num mono" data-count="28">0</span>
+            <span class="stat-label">order state-machine tests: legal transitions, refund ceilings, redelivery</span>
+          </div>
+          <div class="stat" data-reveal style="--rd:240ms">
+            <span class="stat-num mono" data-count="22">0</span>
+            <span class="stat-label">policy-engine tests over authority, budgets, and kill switches</span>
+          </div>
+          <div class="stat stat-zero" data-reveal style="--rd:300ms">
+            <span class="stat-num mono">0</span>
+            <span class="stat-label">fake success states. If a requirement is unmet, status stays NOT COMPLETE</span>
+          </div>
+        </div>
+
+        <figure class="manifesto" data-reveal>
+          <blockquote>
+            “No demo. No fake code. No simulation. No fake supplier quotes. No fake
+            customers. No fake orders represented as production orders. No fake analytics
+            represented as live performance. No fake integration-complete flags. If a
+            requirement is not actually satisfied, status must remain NOT COMPLETE.”
+          </blockquote>
+          <figcaption class="mono">GOAL_MODE_PROMPT.md, the operating charter</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         FAQ
+    ===================================================================== -->
+    <section class="section section-alt" id="faq">
+      <div class="container faq-container">
+        <div class="section-head">
+          <p class="eyebrow" data-reveal>Questions</p>
+          <h2 data-reveal style="--rd:60ms">Asked, answered, on the record.</h2>
+          <p class="section-sub" data-reveal style="--rd:120ms">
+            Every answer below is a claim the build has to survive. If the evidence
+            changes, this page changes with it.
+          </p>
+        </div>
+
+        <div class="faq-list" data-reveal>
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span>Is this a demo or a simulation?</span>
+              <span class="faq-chevron" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a"><div class="faq-a-inner">
+              <p>No. The operating charter forbids fake states: no simulated orders, no fabricated supplier quotes, no analytics presented as live performance. Anything that cannot run against a real service is explicitly marked unavailable until its prerequisites exist, and the status board above shows exactly that.</p>
+            </div></div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span>What happens when an API key is missing?</span>
+              <span class="faq-chevron" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a"><div class="faq-a-inner">
+              <p>The system reports <span class="mono">blocked_missing_credentials</span> with exact remediation steps, and the rest of the company stays testable. A capability only becomes <span class="mono">live_verified</span> when an executed, dated probe succeeds. Nothing can assert an integration works any other way.</p>
+            </div></div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span>Who is accountable for decisions?</span>
+              <span class="faq-chevron" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a"><div class="faq-a-inner">
+              <p>The CEO agent is accountable inside the organization: it delegates, reviews evidence, and decides. Legal authority never moves to software: signing agreements, moving funds, and governance overrides are human-only authorities, enforced in code rather than by convention.</p>
+            </div></div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span>Can agents spend without limits?</span>
+              <span class="faq-chevron" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a"><div class="faq-a-inner">
+              <p>No. Every mutating action passes a policy gate: budget grants, atomic reservations, approval thresholds, spend caps, and kill switches. Budget reservation under concurrency is proven safe by executed integration tests, not by review.</p>
+            </div></div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span>How is quality enforced?</span>
+              <span class="faq-chevron" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a"><div class="faq-a-inner">
+              <p>QA holds veto power over release. Autonomous Replay walks homepage → product → cart → checkout on the live site, and critical commerce failures block the deploy. Underneath that: an executed test suite, a tamper-evident audit hash chain, and webhook-authoritative money state.</p>
+            </div></div>
+          </div>
+
+          <div class="faq-item">
+            <button class="faq-q" type="button" aria-expanded="false">
+              <span>Where does it run?</span>
+              <span class="faq-chevron" aria-hidden="true">+</span>
+            </button>
+            <div class="faq-a"><div class="faq-a-inner">
+              <p>Production, on Render: web services, workers, cron, Postgres 17, and Valkey with <span class="mono">noeviction</span>, all declared in <span class="mono">render.yaml</span>. There is no localhost architecture: a laptop is a place to write code, never the product.</p>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta-section">
+      <div class="container cta-inner">
+        <h2 data-reveal>Buy the build, not the promise.</h2>
+        <p class="cta-sub" data-reveal style="--rd:80ms">
+          If the loop never closes, ask and you get your money back. That promise is
+          cheap to make because the status board makes it impossible to hide.
+        </p>
+        <div class="hero-cta cta-buttons" data-reveal style="--rd:160ms">
+          <a class="btn btn-primary" href="./pricing.html">Get founding access · $99</a>
+          <a class="btn btn-ghost" href="./system.html">Back to the system</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <a class="brand" href="./index.html" aria-label="Yellofield home">
+          <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
+            <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#F5F5F7" />
+            <rect x="8" y="14.5" width="11" height="3" rx="1.5" fill="#A1A1A6" />
+            <rect x="8" y="20" width="6" height="3" rx="1.5" fill="#6E6E73" />
+          </svg>
+          <span class="brand-name">Yellofield</span>
+        </a>
+        <p class="footer-tag">The autonomous company factory. Engineered, not imagined.</p>
+      </div>
+      <nav class="footer-col" aria-label="Sections">
+        <p class="footer-head mono">System</p>
+        <a href="./system.html#loop">The Loop</a>
+        <a href="./system.html#organization">Organization</a>
+        <a href="./system.html#infrastructure">Infrastructure</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./pricing.html">Pricing</a>
+        <a href="./evidence.html#faq">FAQ</a>
+        <a href="./console.html">Console</a>
+      </nav>
+      <div class="footer-col">
+        <p class="footer-head mono">Records</p>
+        <span>PLAN.md, the binding specification</span>
+        <span>PROGRESS.md, honest status</span>
+        <span>VERIFICATION_EVIDENCE.md, the receipts</span>
+      </div>
+      <div class="footer-col">
+        <p class="footer-head mono">Production</p>
+        <span>Render · Postgres 17 · Valkey</span>
+        <span>24 queues · 5 migrations applied</span>
+        <span>Health checks · audit chain · kill switch</span>
+      </div>
+    </div>
+    <div class="container footer-base">
+      <span class="mono">© <span id="year">2026</span> Yellofield</span>
+      <span class="mono">Built in the open. Verified by execution.</span>
+    </div>
+  </footer>
+
+  <script src="./assets/main.js" defer></script>
+</body>
+</html>

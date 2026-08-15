@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Yellofield · Founding Access</title>
+  <meta name="description" content="Founding access to Yellofield, the autonomous company factory. Three tiers against one Stripe Payment Link, founder pricing locked, refunds honest by construction." />
+  <meta name="theme-color" content="#050506" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23050506'/%3E%3Crect x='8' y='9' width='16' height='3' rx='1.5' fill='%23F5F5F7'/%3E%3Crect x='8' y='14.5' width='11' height='3' rx='1.5' fill='%23A1A1A6'/%3E%3Crect x='8' y='20' width='6' height='3' rx='1.5' fill='%236E6E73'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="scroll-progress" aria-hidden="true"><span class="scroll-progress-fill" id="scrollProgressFill"></span></div>
+
+  <header class="nav" id="nav">
+    <div class="nav-inner container">
+      <a class="brand" href="./index.html" aria-label="Yellofield home">
+        <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
+          <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#F5F5F7" />
+          <rect x="8" y="14.5" width="11" height="3" rx="1.5" fill="#A1A1A6" />
+          <rect x="8" y="20" width="6" height="3" rx="1.5" fill="#6E6E73" />
+        </svg>
+        <span class="brand-name">Yellofield</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="./system.html">The System</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./pricing.html">Pricing</a>
+        <a href="./console.html">Console</a>
+        <a href="./evidence.html#faq">FAQ</a>
+      </nav>
+      <a class="btn btn-primary btn-sm" href="#pricing">Founding access · $99</a>
+      <button class="nav-menu-btn" id="navMenuBtn" type="button" aria-expanded="false" aria-controls="navPanel" aria-label="Open menu">
+        <span class="nav-menu-bar" aria-hidden="true"></span>
+        <span class="nav-menu-bar" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="nav-panel" id="navPanel" hidden>
+      <nav class="nav-panel-links" aria-label="Mobile">
+        <a href="./system.html">The System</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./pricing.html">Founding access</a>
+        <a href="./console.html">Console</a>
+        <a href="./evidence.html#faq">FAQ</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="hero-bg" aria-hidden="true"></div>
+      <div class="container">
+        <p class="eyebrow" data-reveal>Founding access</p>
+        <h1 data-reveal style="--rd:60ms">Buy the build,<br /><span class="h1-silver">not the promise.</span></h1>
+        <p class="page-sub" data-reveal style="--rd:120ms">
+          The loop is <strong>NOT COMPLETE</strong>. It is blocked on one missing
+          model key, and the status board says so because a probe says so. That
+          is exactly what you are buying: a system whose own charter forbids it from
+          claiming a win it cannot prove. You get the build, the blueprint, and the
+          receipts as they land.
+        </p>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         PRICING TIERS
+
+         One Stripe Payment Link, customer-chooses-price. Tiers are suggested
+         amounts against that single link; a second link is never minted (see
+         packages/providers/test/stripe-payment-link.test.ts). Tier attribution
+         rides on client_reference_id, which arrives in the signed
+         checkout.session.completed webhook, so attribution is derived from
+         payment state, not from a click.
+    ===================================================================== -->
+    <section class="section" id="pricing">
+      <div class="container">
+        <div class="tiers">
+          <article class="tier" data-reveal>
+            <header class="tier-head">
+              <h3 class="tier-name">Backer</h3>
+              <p class="tier-price"><span class="tier-amt mono">$25</span></p>
+              <p class="tier-line">Fund the run.</p>
+            </header>
+            <ul class="tier-list">
+              <li>Full build log of every probe, pass and block, as it happens</li>
+              <li>Credited in <span class="mono">BACKERS.md</span> in the public repo</li>
+              <li>The verification evidence file, unedited</li>
+            </ul>
+            <a
+              class="btn btn-ghost tier-btn"
+              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_backer"
+              target="_blank"
+              rel="noopener"
+              data-tier="backer"
+              data-amount="25"
+            >Back it · $25</a>
+          </article>
+
+          <article class="tier tier-featured" data-reveal style="--rd:80ms">
+            <span class="tier-flag mono">Most chosen</span>
+            <header class="tier-head">
+              <h3 class="tier-name">Founding access</h3>
+              <p class="tier-price"><span class="tier-amt mono">$99</span></p>
+              <p class="tier-line">The whole system, at founder price.</p>
+            </header>
+            <ul class="tier-list">
+              <li>Complete source: 78-role org chart, policy gate, audit chain</li>
+              <li><span class="mono">render.yaml</span> blueprint: seven services, deploy as-is</li>
+              <li>Founder pricing locked. It never goes up for you</li>
+              <li>Everything in Backer</li>
+            </ul>
+            <a
+              class="btn btn-primary tier-btn"
+              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_founding"
+              target="_blank"
+              rel="noopener"
+              data-tier="founding"
+              data-amount="99"
+            >Get founding access · $99</a>
+          </article>
+
+          <article class="tier" data-reveal style="--rd:160ms">
+            <header class="tier-head">
+              <h3 class="tier-name">Operator</h3>
+              <p class="tier-price"><span class="tier-amt mono">$299</span></p>
+              <p class="tier-line">Deployed on your infrastructure, with you.</p>
+            </header>
+            <ul class="tier-list">
+              <li>A working session: we stand it up on your Render account</li>
+              <li>Your keys, your company row, your loop. Not a demo tenant</li>
+              <li>Direct line while you run it</li>
+              <li>Everything in Founding access</li>
+            </ul>
+            <a
+              class="btn btn-ghost tier-btn"
+              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_operator"
+              target="_blank"
+              rel="noopener"
+              data-tier="operator"
+              data-amount="299"
+            >Become an operator · $299</a>
+          </article>
+        </div>
+
+        <p class="pricing-note" data-reveal>
+          <span class="mono">One</span> Stripe Payment Link, customer-chooses-price:
+          enter your tier's amount at checkout. Payment state is confirmed by a signed
+          webhook, never by a browser redirect. If the loop never closes, ask and you get
+          your money back; that promise is cheap to make because the status board makes
+          it impossible to hide.
+        </p>
+      </div>
+    </section>
+
+    <section class="cta-section">
+      <div class="container cta-inner">
+        <h2 data-reveal>The loop is the product.</h2>
+        <p class="cta-sub" data-reveal style="--rd:80ms">
+          Seven services, 24 queues, a policy gate, and an audit chain, declared as
+          code and verified by execution. Insert credentials, and the company goes to work.
+        </p>
+        <div class="hero-cta cta-buttons" data-reveal style="--rd:160ms">
+          <a
+            class="btn btn-primary"
+            href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_founding"
+            target="_blank"
+            rel="noopener"
+            data-tier="founding"
+            data-amount="99"
+          >Get founding access · $99</a>
+          <a class="btn btn-ghost" href="./evidence.html">Read the evidence first</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <a class="brand" href="./index.html" aria-label="Yellofield home">
+          <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
+            <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#F5F5F7" />
+            <rect x="8" y="14.5" width="11" height="3" rx="1.5" fill="#A1A1A6" />
+            <rect x="8" y="20" width="6" height="3" rx="1.5" fill="#6E6E73" />
+          </svg>
+          <span class="brand-name">Yellofield</span>
+        </a>
+        <p class="footer-tag">The autonomous company factory. Engineered, not imagined.</p>
+      </div>
+      <nav class="footer-col" aria-label="Sections">
+        <p class="footer-head mono">System</p>
+        <a href="./system.html#loop">The Loop</a>
+        <a href="./system.html#organization">Organization</a>
+        <a href="./system.html#infrastructure">Infrastructure</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./pricing.html">Pricing</a>
+        <a href="./evidence.html#faq">FAQ</a>
+        <a href="./console.html">Console</a>
+      </nav>
+      <div class="footer-col">
+        <p class="footer-head mono">Records</p>
+        <span>PLAN.md, the binding specification</span>
+        <span>PROGRESS.md, honest status</span>
+        <span>VERIFICATION_EVIDENCE.md, the receipts</span>
+      </div>
+      <div class="footer-col">
+        <p class="footer-head mono">Production</p>
+        <span>Render · Postgres 17 · Valkey</span>
+        <span>24 queues · 5 migrations applied</span>
+        <span>Health checks · audit chain · kill switch</span>
+      </div>
+    </div>
+    <div class="container footer-base">
+      <span class="mono">© <span id="year">2026</span> Yellofield</span>
+      <span class="mono">Built in the open. Verified by execution.</span>
+    </div>
+  </footer>
+
+  <script src="./assets/main.js" defer></script>
+</body>
+</html>

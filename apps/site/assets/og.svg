@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#050506"/>
+  <g opacity="0.05" stroke="#F5F5F7" stroke-width="1">
+    <path d="M0 105h1200M0 210h1200M0 315h1200M0 420h1200M0 525h1200"/>
+    <path d="M150 0v630M300 0v630M450 0v630M600 0v630M750 0v630M900 0v630M1050 0v630"/>
+  </g>
+  <g transform="translate(84,84)">
+    <rect width="64" height="64" rx="14" fill="rgba(255,255,255,0.06)"/>
+    <rect x="16" y="18" width="32" height="6" rx="3" fill="#ffe81a"/>
+    <rect x="16" y="29" width="22" height="6" rx="3" fill="#A1A1A6"/>
+    <rect x="16" y="40" width="12" height="6" rx="3" fill="#6E6E73"/>
+  </g>
+  <text x="84" y="292" font-family="Geist, Inter, -apple-system, system-ui, sans-serif" font-size="72" font-weight="600" letter-spacing="-2.5" fill="#F5F5F7">A real company,</text>
+  <text x="84" y="374" font-family="Geist, Inter, -apple-system, system-ui, sans-serif" font-size="72" font-weight="600" letter-spacing="-2.5" fill="#A1A1A6">run by agents.</text>
+  <text x="84" y="448" font-family="Geist Mono, ui-monospace, monospace" font-size="22" letter-spacing="3" fill="#ffe81a">YELLOFIELD · THE AUTONOMOUS COMPANY FACTORY</text>
+  <text x="84" y="540" font-family="Geist Mono, ui-monospace, monospace" font-size="18" fill="#6E6E73">356 tests passing · 11 integrations probe-verified · 0 fake success states</text>
+</svg>

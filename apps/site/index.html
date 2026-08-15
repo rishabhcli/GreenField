@@ -9,22 +9,24 @@
   <meta property="og:title" content="Yellofield — The Autonomous Company Factory" />
   <meta property="og:description" content="A real company, run by agents. Engineered, not imagined. Every claim ships with receipts." />
   <meta property="og:type" content="website" />
+  <meta property="og:image" content="./assets/og.svg" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23050506'/%3E%3Crect x='8' y='9' width='16' height='3' rx='1.5' fill='%23F5F5F7'/%3E%3Crect x='8' y='14.5' width='11' height='3' rx='1.5' fill='%23A1A1A6'/%3E%3Crect x='8' y='20' width='6' height='3' rx='1.5' fill='%236E6E73'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./assets/styles.css" />
 </head>
-<body>
+<body class="lp">
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="noise" aria-hidden="true"></div>
+  <div class="scroll-progress" aria-hidden="true"><span class="scroll-progress-fill" id="scrollProgressFill"></span></div>
 
   <!-- ======================================================================
        NAV
   ======================================================================= -->
   <header class="nav" id="nav">
     <div class="nav-inner container">
-      <a class="brand" href="#top" aria-label="Yellofield home">
+      <a class="brand" href="./index.html" aria-label="Yellofield home">
         <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
           <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
           <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#F5F5F7" />
@@ -34,13 +36,30 @@
         <span class="brand-name">Yellofield</span>
       </a>
       <nav class="nav-links" aria-label="Primary">
-        <a href="#loop">The Loop</a>
-        <a href="#organization">Organization</a>
-        <a href="#infrastructure">Infrastructure</a>
-        <a href="#evidence">Evidence</a>
+        <a href="./loop.html">The Loop</a>
+        <a href="./organization.html">Organization</a>
+        <a href="./infrastructure.html">Infrastructure</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./faq.html">FAQ</a>
         <a href="./console.html">Console</a>
       </nav>
-      <a class="btn btn-primary btn-sm" href="#pricing">Founding access — $99</a>
+      <a class="btn btn-primary btn-sm" href="./pricing.html">Founding access — $99</a>
+      <button class="nav-menu-btn" id="navMenuBtn" type="button" aria-expanded="false" aria-controls="navPanel" aria-label="Open menu">
+        <span class="nav-menu-bar" aria-hidden="true"></span>
+        <span class="nav-menu-bar" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="nav-panel" id="navPanel" hidden>
+      <nav class="nav-panel-links" aria-label="Mobile">
+        <a href="./index.html">Home</a>
+        <a href="./loop.html">The Loop</a>
+        <a href="./organization.html">Organization</a>
+        <a href="./infrastructure.html">Infrastructure</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./pricing.html">Founding access</a>
+        <a href="./faq.html">FAQ</a>
+        <a href="./console.html">Console</a>
+      </nav>
     </div>
   </header>
 
@@ -50,12 +69,13 @@
     ===================================================================== -->
     <section class="hero" id="top">
       <div class="hero-bg" aria-hidden="true"></div>
+      <div class="hero-ambient" aria-hidden="true"></div>
       <canvas class="hero-leds" id="heroLeds" aria-hidden="true"></canvas>
       <div class="container hero-grid">
         <div class="hero-copy">
           <p class="eyebrow" data-reveal>Yellofield · The Autonomous Company Factory</p>
           <h1 data-reveal style="--rd:60ms">
-            A real company,<br />run by agents.
+            A real company,<br /><span class="h1-silver">run by agents.</span>
           </h1>
           <p class="hero-sub" data-reveal style="--rd:120ms">
             Yellofield is the operating layer for an actual business. A CEO agent sets
@@ -65,8 +85,8 @@
             without evidence.
           </p>
           <div class="hero-cta" data-reveal style="--rd:180ms">
-            <a class="btn btn-primary" href="#pricing">Get founding access — $99</a>
-            <a class="btn btn-ghost" href="#loop">Explore the loop</a>
+            <a class="btn btn-primary" href="./pricing.html">Get founding access — $99</a>
+            <a class="btn btn-ghost" href="./loop.html">Explore the loop</a>
           </div>
           <ul class="hero-status" data-reveal style="--rd:240ms" aria-label="Verified status">
             <li><span class="mono">356</span> tests passing</li>
@@ -138,9 +158,17 @@
               </div>
             </div>
           </div>
+          <div class="float-card float-card-a" aria-hidden="true">
+            <span class="float-card-k mono">replay qa</span>
+            <span class="float-card-v">gate passed · 0 critical</span>
+          </div>
+          <div class="float-card float-card-b" aria-hidden="true">
+            <span class="float-card-k mono">unit contribution</span>
+            <span class="float-card-v"><span class="float-card-neon">$21.40</span> · grounded</span>
+          </div>
           <figcaption class="hero-caption mono">
             Illustrative operating view — the state machine, ledger, and audit chain are implemented and tested.
-            <a href="./console.html" style="color:var(--neon);border-bottom:1px solid var(--neon-dim)">Open the live console →</a>
+            <a href="./console.html">Open the live console →</a>
           </figcaption>
         </figure>
       </div>
@@ -186,300 +214,77 @@
     </section>
 
     <!-- ====================================================================
-         THE LOOP
+         THE HUB — the system, page by page
     ===================================================================== -->
-    <section class="section loop-section" id="loop">
-      <div class="container loop-grid">
-        <div class="loop-sticky">
-          <p class="eyebrow" data-reveal>The operating loop</p>
-          <h2 data-reveal style="--rd:60ms">A company behaves like a loop, not a launch.</h2>
+    <section class="section" id="hub">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow" data-reveal>The system, up close</p>
+          <h2 data-reveal style="--rd:60ms">One product. Six rooms. Walk any of them.</h2>
           <p class="section-sub" data-reveal style="--rd:120ms">
-            Yellofield runs the full business cycle continuously — observe, score, source,
-            build, launch, measure, re-plan. Results feed back to the CEO agent, and the
-            next iteration starts smarter than the last.
+            Everything on this site describes built, tested machinery. Each room below
+            is a deep dive into one part of it — with the receipts that come with it.
           </p>
-          <div class="loop-stat" data-reveal style="--rd:180ms">
-            <span class="loop-stat-num mono">20</span>
-            <span class="loop-stat-label">steps, one closed circuit,<br />executed by the organization</span>
-          </div>
         </div>
 
-        <div class="loop-steps" id="loopSteps">
-          <div class="loop-rail" aria-hidden="true"><span class="loop-rail-fill" id="loopRailFill"></span></div>
-          <ol class="loop-list">
-            <li class="loop-step" data-reveal><span class="loop-num mono">01</span><div><h3>Observe</h3><p>Mine real public conversations — reviews, forums, communities — for demand signals.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">02</span><div><h3>Extract</h3><p>Pull complaints, workarounds, failure modes, and willingness-to-pay language into evidence packets.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">03</span><div><h3>Cluster</h3><p>Deduplicate and group signals into candidate pain points with source traceability.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">04</span><div><h3>Score</h3><p>Severity, frequency, margin, sourcing feasibility, legal risk — weighted, never hidden.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">05</span><div><h3>Ask experts</h3><p>Terac human reviewers judge what machine research can't. Overrides are recorded with rationale.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">06</span><div><h3>Select</h3><p>The CEO commits to an opportunity inside capital-allocation policy.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">07</span><div><h3>Source</h3><p>Find suppliers able to produce or private-label. Verify capability, MOQ, customization.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">08</span><div><h3>Cost it</h3><p>Full landed cost — freight, duties, QC, fulfillment — down to contribution margin.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">09</span><div><h3>Negotiate</h3><p>RFQs, samples, and terms compared side by side. Assumptions stay separate from quoted values.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">10</span><div><h3>Brand</h3><p>Name, identity, packaging, positioning — checked against trademark and domain signals.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">11</span><div><h3>Build</h3><p>Storefront generated through Lovable, checkout wired to Stripe, deployed on Render.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">12</span><div><h3>Create</h3><p>Ad concepts and page copy generated as testable variants, not single shots.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">13</span><div><h3>Review</h3><p>High-impact creative passes human expert review before a dollar is spent.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">14</span><div><h3>Launch</h3><p>Controlled experiments with hypotheses, budgets, stop conditions, and KPI targets.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">15</span><div><h3>Measure</h3><p>CTR, CAC, conversion, contribution margin, refund rate — profit, not vanity metrics.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">16</span><div><h3>Reallocate</h3><p>Kill weak variants, scale winners within spend caps, generate the next hypotheses.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">17</span><div><h3>QA</h3><p>Replay autonomously walks the live site. Critical failures veto the release.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">18</span><div><h3>Report</h3><p>Operational results return to the CEO as structured reports, not chat transcripts.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">19</span><div><h3>Re-plan</h3><p>Strategy updates from evidence. Kill, continue, or pivot — decided, not drifted.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">20</span><div><h3>Repeat</h3><p>The company improves recursively. The loop is the organization's heartbeat.</p></div></li>
-          </ol>
+        <div class="hub">
+          <a class="hub-card hub-wide" href="./loop.html" data-reveal>
+            <span class="hub-tag">01 · THE OPERATING LOOP</span>
+            <h3>A company behaves like a loop, not a launch.</h3>
+            <p>Twenty steps, one closed circuit: observe, score, source, build, launch, measure, re-plan. Results feed back to the CEO agent, and the next iteration starts smarter.</p>
+            <span class="hub-arrow">Open the loop →</span>
+          </a>
+
+          <a class="hub-card" href="./organization.html" data-reveal style="--rd:60ms">
+            <span class="hub-tag">02 · ORGANIZATION</span>
+            <h3>An org chart, not a prompt chain.</h3>
+            <p>A CEO agent, ten managers, specialists beneath them — and the policy engine that decides what any of them may do.</p>
+            <span class="hub-arrow">Meet the org →</span>
+          </a>
+
+          <a class="hub-card" href="./infrastructure.html" data-reveal style="--rd:90ms">
+            <span class="hub-tag">03 · INFRASTRUCTURE</span>
+            <h3>Real services. Real contracts. Real status.</h3>
+            <p>Twelve sponsor integrations with adapters, webhook contracts, and dated verification rows. Blocked means blocked.</p>
+            <span class="hub-arrow">Inspect the layer →</span>
+          </a>
+
+          <a class="hub-card" href="./evidence.html" data-reveal style="--rd:120ms">
+            <span class="hub-tag">04 · EVIDENCE</span>
+            <h3>Claims ship with receipts.</h3>
+            <p>Every number on this site comes from an executed test suite or an executed probe — nothing is marked complete on the strength of code existing.</p>
+            <span class="hub-arrow">Read the receipts →</span>
+          </a>
+
+          <a class="hub-card" href="./pricing.html" data-reveal style="--rd:150ms">
+            <span class="hub-tag">05 · FOUNDING ACCESS</span>
+            <h3>Buy the build, not the promise.</h3>
+            <p>Three tiers against one payment link. Founder pricing locked, refund promise on the record.</p>
+            <span class="hub-arrow">See the tiers →</span>
+          </a>
+
+          <a class="hub-card" href="./faq.html" data-reveal style="--rd:180ms">
+            <span class="hub-tag">06 · FAQ</span>
+            <h3>Asked, answered, on the record.</h3>
+            <p>Demos, missing keys, accountability, spend limits, quality, and where the whole thing runs.</p>
+            <span class="hub-arrow">Open the answers →</span>
+          </a>
+
+          <a class="hub-card hub-wide" href="./console.html" data-reveal style="--rd:210ms">
+            <span class="hub-tag">LIVE · OPERATING CONSOLE</span>
+            <h3>Watch the company operate.</h3>
+            <p>The operating console reads the same records the agents write — phases, audit events, and integration state, exactly as the system reports them. If something is blocked, the console says so.</p>
+            <span class="hub-arrow">Open the console →</span>
+          </a>
         </div>
       </div>
     </section>
 
     <!-- ====================================================================
-         ORGANIZATION — BENTO
+         MANIFESTO STRIP
     ===================================================================== -->
-    <section class="section" id="organization">
+    <section class="section section-alt">
       <div class="container">
-        <div class="section-head">
-          <p class="eyebrow" data-reveal>The organization</p>
-          <h2 data-reveal style="--rd:60ms">An org chart, not a prompt chain.</h2>
-          <p class="section-sub" data-reveal style="--rd:120ms">
-            A persistent, auditable organization — with accountability at every level —
-            not a one-shot chain of prompts.
-          </p>
-        </div>
-
-        <div class="bento">
-          <article class="bento-card bento-ceo" data-reveal>
-            <div class="bento-copy">
-              <p class="bento-tag mono">CEO AGENT</p>
-              <h3>One accountable executive.</h3>
-              <p>
-                Owns the mission, opportunity selection, capital allocation, and every
-                launch-or-kill decision. The CEO doesn't do everything — it delegates,
-                reviews evidence, and decides from structured reports.
-              </p>
-            </div>
-            <div class="memo" aria-hidden="true">
-              <div class="memo-row">
-                <span class="memo-k mono">decision</span>
-                <span class="memo-v">Scale variant B — margin holds at $21.40 unit contribution</span>
-              </div>
-              <div class="memo-row">
-                <span class="memo-k mono">authority</span>
-                <span class="memo-v">within budget grant · policy engine approved</span>
-              </div>
-              <div class="memo-row">
-                <span class="memo-k mono">verdict</span>
-                <span class="chip chip-approve">approved</span>
-              </div>
-            </div>
-          </article>
-
-          <article class="bento-card bento-managers" data-reveal style="--rd:60ms">
-            <p class="bento-tag mono">MANAGERS</p>
-            <h3>Ten function owners.</h3>
-            <ul class="manager-list">
-              <li>Research &amp; Market Intelligence</li>
-              <li>Product &amp; Sourcing</li>
-              <li>Brand &amp; Creative</li>
-              <li>Commerce &amp; Web</li>
-              <li>Growth &amp; Marketing</li>
-              <li>Customer Operations</li>
-              <li>Finance &amp; Unit Economics</li>
-              <li>Engineering &amp; Reliability</li>
-              <li>QA</li>
-              <li>Legal &amp; Compliance</li>
-            </ul>
-          </article>
-
-          <article class="bento-card" data-reveal style="--rd:90ms">
-            <p class="bento-tag mono">SPECIALISTS</p>
-            <h3>Subagents execute.</h3>
-            <p>Each manager spawns specialists for concrete work — an RFQ drafter, a checkout engineer, a refund-triage agent, a landed-cost analyst.</p>
-            <div class="chip-row" aria-hidden="true">
-              <span class="chip">rfq-drafter</span>
-              <span class="chip">checkout-eng</span>
-              <span class="chip">refund-triage</span>
-            </div>
-          </article>
-
-          <article class="bento-card" data-reveal style="--rd:120ms">
-            <p class="bento-tag mono">BAND GOVERNANCE</p>
-            <h3>Coordinated, never silent.</h3>
-            <p>Task-scoped rooms, permission-controlled messaging, auditable handoffs. No agent quietly assumes authority it wasn't granted.</p>
-            <div class="room mono" aria-hidden="true">#sourcing · 4 agents · permission: rfq.send</div>
-          </article>
-
-          <article class="bento-card" data-reveal style="--rd:150ms">
-            <p class="bento-tag mono">TERAC · HUMAN JUDGMENT</p>
-            <h3>Experts on demand.</h3>
-            <p>Humans review what machines are weak at. Their overrides flow back as structured data with rationale — not discarded transcripts.</p>
-            <div class="room mono" aria-hidden="true">expert override: 8.1 → 6.4 · rationale recorded</div>
-          </article>
-
-          <article class="bento-card bento-wide" data-reveal style="--rd:90ms">
-            <p class="bento-tag mono">EXECUTION PLANES</p>
-            <h3>Isolated by design.</h3>
-            <p>Work runs where it belongs: persistent sandboxes for long-horizon agents, isolated execution for untrusted code, real browsers for the live web.</p>
-            <div class="planes">
-              <div class="plane"><span class="plane-name mono">Superserve</span><span class="plane-job">long-running manager workspaces</span></div>
-              <div class="plane"><span class="plane-name mono">Sandbox0</span><span class="plane-job">isolated runs · credential-controlled egress</span></div>
-              <div class="plane"><span class="plane-name mono">Solari</span><span class="plane-job">cloud browsers · human takeover when required</span></div>
-            </div>
-          </article>
-
-          <article class="bento-card bento-wide" data-reveal style="--rd:120ms">
-            <p class="bento-tag mono">POLICY ENGINE</p>
-            <h3>Authority is evaluated, not vibes.</h3>
-            <p>Every mutating action passes a unit-tested policy gate: who may act, how much they may spend, and what requires a human.</p>
-            <div class="planes">
-              <div class="plane"><span class="plane-name mono">rule</span><span class="plane-job">spend &gt; $500 → human approval required</span></div>
-              <div class="plane"><span class="plane-name mono">rule</span><span class="plane-job">kill switch armed on every mutating surface</span></div>
-              <div class="plane"><span class="plane-name mono">rule</span><span class="plane-job">no autonomous legal signature — ever</span></div>
-            </div>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <!-- ====================================================================
-         INFRASTRUCTURE / INTEGRATIONS
-    ===================================================================== -->
-    <section class="section section-alt" id="infrastructure">
-      <div class="container">
-        <div class="section-head">
-          <p class="eyebrow" data-reveal>The integration layer</p>
-          <h2 data-reveal style="--rd:60ms">Real services. Real contracts. Real status.</h2>
-          <p class="section-sub" data-reveal style="--rd:120ms">
-            No mocked clients, no decorative logos. Every provider has an adapter, a
-            webhook contract, signature verification, retries, idempotency, and a dated
-            verification row. If credentials are missing, Yellofield reports blocked — it
-            doesn't pretend.
-          </p>
-        </div>
-
-        <div class="integ" data-reveal>
-          <div class="integ-row integ-head mono" aria-hidden="true">
-            <span>provider</span><span>role in the company</span><span>status</span>
-          </div>
-          <div class="integ-row"><span class="integ-name">Terac</span><span class="integ-role">Human expert review and consumer studies on demand</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Stripe</span><span class="integ-role">Payments, checkout, webhooks, refunds, reconciliation</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Render</span><span class="integ-role">Control plane, workers, cron, managed datastores</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Whop</span><span class="integ-role">Commerce and business-operation primitives</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Linq</span><span class="integ-role">Customer support over iMessage, RCS, SMS, and voice</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Superserve</span><span class="integ-role">Persistent, secure sandboxes for long-running agents</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Replay</span><span class="integ-role">Autonomous QA as a release gate, with root-cause reports</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">BAND</span><span class="integ-role">Agent-to-agent and human coordination with governance</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Sandbox0</span><span class="integ-role">Isolated execution, workspaces, and credential control</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Solari</span><span class="integ-role">Cloud browsers, sandboxes, and GUI computers for agents</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Lovable</span><span class="integ-role">Programmatic storefront generation and iteration</span><span class="chip chip-wired">surface built</span></div>
-          <div class="integ-row"><span class="integ-name">Dodo Payments</span><span class="integ-role">Merchant of record for eligible digital products</span><span class="chip chip-wired">surface built</span></div>
-        </div>
-
-        <p class="integ-foot mono" data-reveal>
-          Status from executed verifier probes, 2026-08-15 · 24 verification rows · see VERIFICATION_EVIDENCE.md
-        </p>
-      </div>
-    </section>
-
-    <!-- ====================================================================
-         GOVERNANCE
-    ===================================================================== -->
-    <section class="section">
-      <div class="container">
-        <div class="section-head">
-          <p class="eyebrow" data-reveal>Governance</p>
-          <h2 data-reveal style="--rd:60ms">Autonomy with a paper trail.</h2>
-          <p class="section-sub" data-reveal style="--rd:120ms">
-            Even with minimal human input, the system knows who owns what, who may spend
-            what, and when a person must step in.
-          </p>
-        </div>
-
-        <div class="gov-grid">
-          <div class="gov-card" data-reveal>
-            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-            <h3>Least privilege</h3>
-            <p>Per-integration secrets, isolated from prompts, code, and logs. Separate credentials for dev, staging, and production.</p>
-          </div>
-          <div class="gov-card" data-reveal style="--rd:50ms">
-            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 1 16 0 8 8 0 0 1-16 0z M12 7v5l3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            <h3>Budget caps</h3>
-            <p>Spend limits, purchase thresholds, and approval gates. Reservations proven safe under concurrency by executed tests.</p>
-          </div>
-          <div class="gov-card" data-reveal style="--rd:100ms">
-            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 7l1 12h8l1-12M10 7V5h4v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-            <h3>Kill switch</h3>
-            <p>Rollback and halt paths on every mutating surface. Decisions stay inside permissions granted by the business owner.</p>
-          </div>
-          <div class="gov-card" data-reveal style="--rd:150ms">
-            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h9l4 4v12H6V4z M9 12h7M9 16h7M9 8h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-            <h3>Audit hash chain</h3>
-            <p>Append-only, tamper-evident event history. A row altered with triggers disabled is detected and located — proven by test.</p>
-          </div>
-          <div class="gov-card" data-reveal style="--rd:200ms">
-            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h12M4 12h16M4 16h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            <h3>Idempotent money</h3>
-            <p>Webhook deduplication and exactly-once order effects. Payment state comes from signed webhooks, never browser redirects.</p>
-          </div>
-          <div class="gov-card" data-reveal style="--rd:250ms">
-            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 13l4 4L19 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <h3>QA veto</h3>
-            <p>Replay walks homepage → product → checkout on every release. Critical commerce failures block the deploy.</p>
-          </div>
-          <div class="gov-card" data-reveal style="--rd:300ms">
-            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11a4 4 0 1 1 8 0c0 2.5-2 3-2 5h-4c0-2-2-2.5-2-5z M10 19h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-            <h3>Human escalation</h3>
-            <p>Legal threats, safety incidents, fraud, refunds beyond limits — routed to people, with context preserved.</p>
-          </div>
-          <div class="gov-card" data-reveal style="--rd:350ms">
-            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4V6z M4 10h16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-            <h3>Legal surface</h3>
-            <p>Terms, privacy, shipping, returns, and disclosures generated from real business configuration — never pasted boilerplate.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ====================================================================
-         EVIDENCE
-    ===================================================================== -->
-    <section class="section section-alt" id="evidence">
-      <div class="container">
-        <div class="section-head">
-          <p class="eyebrow" data-reveal>The evidence</p>
-          <h2 data-reveal style="--rd:60ms">Claims ship with receipts.</h2>
-          <p class="section-sub" data-reveal style="--rd:120ms">
-            Nothing in Yellofield is marked complete on the strength of code existing.
-            Every number below comes from an executed test suite or an executed probe.
-          </p>
-        </div>
-
-        <div class="stats">
-          <div class="stat" data-reveal>
-            <span class="stat-num mono" data-count="356">0</span>
-            <span class="stat-label">tests passing — 1 skipped, an opt-in live probe</span>
-          </div>
-          <div class="stat" data-reveal style="--rd:60ms">
-            <span class="stat-num mono" data-count="52">0</span>
-            <span class="stat-label">tables · 169 indexes · 104 foreign keys, applied to real Postgres 17</span>
-          </div>
-          <div class="stat" data-reveal style="--rd:120ms">
-            <span class="stat-num mono" data-count="24">0</span>
-            <span class="stat-label">integration verification rows written by the executed verifier</span>
-          </div>
-          <div class="stat" data-reveal style="--rd:180ms">
-            <span class="stat-num mono" data-count="28">0</span>
-            <span class="stat-label">order state-machine tests — legal transitions, refund ceilings, redelivery</span>
-          </div>
-          <div class="stat" data-reveal style="--rd:240ms">
-            <span class="stat-num mono" data-count="22">0</span>
-            <span class="stat-label">policy-engine tests over authority, budgets, and kill switches</span>
-          </div>
-          <div class="stat stat-zero" data-reveal style="--rd:300ms">
-            <span class="stat-num mono">0</span>
-            <span class="stat-label">fake success states — if a requirement is unmet, status stays NOT COMPLETE</span>
-          </div>
-        </div>
-
         <figure class="manifesto" data-reveal>
           <blockquote>
             “No demo. No fake code. No simulation. No fake supplier quotes. No fake
@@ -487,110 +292,8 @@
             represented as live performance. No fake integration-complete flags. If a
             requirement is not actually satisfied, status must remain NOT COMPLETE.”
           </blockquote>
-          <figcaption class="mono">— GOAL_MODE_PROMPT.md, the operating charter</figcaption>
+          <figcaption class="mono">— GOAL_MODE_PROMPT.md, the operating charter · <a class="hero-caption-link" href="./evidence.html">see the evidence</a></figcaption>
         </figure>
-      </div>
-    </section>
-
-    <!-- ====================================================================
-         PRICING — FOUNDING ACCESS
-
-         One Stripe Payment Link, customer-chooses-price. Tiers are suggested
-         amounts against that single link; a second link is never minted (see
-         packages/providers/test/stripe-payment-link.test.ts). Tier attribution
-         rides on client_reference_id, which arrives in the signed
-         checkout.session.completed webhook — so attribution is derived from
-         payment state, not from a click.
-    ===================================================================== -->
-    <section class="section" id="pricing">
-      <div class="container">
-        <div class="section-head">
-          <p class="eyebrow" data-reveal>Founding access</p>
-          <h2 data-reveal style="--rd:60ms">Buy the build, not the promise.</h2>
-          <p class="section-sub" data-reveal style="--rd:120ms">
-            The loop is <strong>NOT COMPLETE</strong> — it is blocked on one missing
-            model key, and the status board above says so because a probe says so. That
-            is exactly what you are buying: a system whose own charter forbids it from
-            claiming a win it cannot prove. You get the build, the blueprint, and the
-            receipts as they land.
-          </p>
-        </div>
-
-        <div class="tiers">
-          <article class="tier" data-reveal>
-            <header class="tier-head">
-              <h3 class="tier-name">Backer</h3>
-              <p class="tier-price"><span class="tier-amt mono">$25</span></p>
-              <p class="tier-line">Fund the run.</p>
-            </header>
-            <ul class="tier-list">
-              <li>Full build log — every probe, pass and block, as it happens</li>
-              <li>Credited in <span class="mono">BACKERS.md</span> in the public repo</li>
-              <li>The verification evidence file, unedited</li>
-            </ul>
-            <a
-              class="btn btn-ghost tier-btn"
-              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_backer"
-              target="_blank"
-              rel="noopener"
-              data-tier="backer"
-              data-amount="25"
-            >Back it — $25</a>
-          </article>
-
-          <article class="tier tier-featured" data-reveal style="--rd:80ms">
-            <span class="tier-flag mono">Most chosen</span>
-            <header class="tier-head">
-              <h3 class="tier-name">Founding access</h3>
-              <p class="tier-price"><span class="tier-amt mono">$99</span></p>
-              <p class="tier-line">The whole system, at founder price.</p>
-            </header>
-            <ul class="tier-list">
-              <li>Complete source — 78-role org chart, policy gate, audit chain</li>
-              <li><span class="mono">render.yaml</span> blueprint: seven services, deploy as-is</li>
-              <li>Founder pricing locked — it never goes up for you</li>
-              <li>Everything in Backer</li>
-            </ul>
-            <a
-              class="btn btn-primary tier-btn"
-              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_founding"
-              target="_blank"
-              rel="noopener"
-              data-tier="founding"
-              data-amount="99"
-            >Get founding access — $99</a>
-          </article>
-
-          <article class="tier" data-reveal style="--rd:160ms">
-            <header class="tier-head">
-              <h3 class="tier-name">Operator</h3>
-              <p class="tier-price"><span class="tier-amt mono">$299</span></p>
-              <p class="tier-line">Deployed on your infrastructure, with you.</p>
-            </header>
-            <ul class="tier-list">
-              <li>A working session — we stand it up on your Render account</li>
-              <li>Your keys, your company row, your loop — not a demo tenant</li>
-              <li>Direct line while you run it</li>
-              <li>Everything in Founding access</li>
-            </ul>
-            <a
-              class="btn btn-ghost tier-btn"
-              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_operator"
-              target="_blank"
-              rel="noopener"
-              data-tier="operator"
-              data-amount="299"
-            >Become an operator — $299</a>
-          </article>
-        </div>
-
-        <p class="pricing-note" data-reveal>
-          <span class="mono">One</span> Stripe Payment Link, customer-chooses-price —
-          enter your tier's amount at checkout. Payment state is confirmed by a signed
-          webhook, never by a browser redirect. If the loop never closes, ask and you get
-          your money back; that promise is cheap to make because the status board makes
-          it impossible to hide.
-        </p>
       </div>
     </section>
 
@@ -605,15 +308,8 @@
           datastores declared as code. Insert credentials, and the company goes to work.
         </p>
         <div class="hero-cta cta-buttons" data-reveal style="--rd:160ms">
-          <a
-            class="btn btn-primary"
-            href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_founding"
-            target="_blank"
-            rel="noopener"
-            data-tier="founding"
-            data-amount="99"
-          >Get founding access — $99</a>
-          <a class="btn btn-ghost" href="#pricing">Compare the tiers</a>
+          <a class="btn btn-primary" href="./pricing.html">Get founding access — $99</a>
+          <a class="btn btn-ghost" href="./loop.html">Walk the loop first</a>
         </div>
       </div>
     </section>
@@ -625,7 +321,7 @@
   <footer class="footer">
     <div class="container footer-grid">
       <div class="footer-brand">
-        <a class="brand" href="#top" aria-label="Yellofield home">
+        <a class="brand" href="./index.html" aria-label="Yellofield home">
           <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
             <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
             <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#F5F5F7" />
@@ -638,11 +334,13 @@
       </div>
       <nav class="footer-col" aria-label="Sections">
         <p class="footer-head mono">System</p>
-        <a href="#loop">The Loop</a>
-        <a href="#organization">Organization</a>
-        <a href="#infrastructure">Infrastructure</a>
-        <a href="#evidence">Evidence</a>
-        <a href="#pricing">Pricing</a>
+        <a href="./loop.html">The Loop</a>
+        <a href="./organization.html">Organization</a>
+        <a href="./infrastructure.html">Infrastructure</a>
+        <a href="./evidence.html">Evidence</a>
+        <a href="./pricing.html">Pricing</a>
+        <a href="./faq.html">FAQ</a>
+        <a href="./console.html">Console</a>
       </nav>
       <div class="footer-col">
         <p class="footer-head mono">Records</p>

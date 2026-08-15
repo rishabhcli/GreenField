@@ -327,15 +327,14 @@ h3 {
   position: fixed;
   inset: 0 0 auto 0;
   z-index: 90;
-  transition: background-color 0.4s var(--ease-out), border-color 0.4s var(--ease-out);
-  border-bottom: 1px solid transparent;
+  transition: transform 0.55s var(--ease-out);
+  will-change: transform;
 }
 
-.nav.is-scrolled {
-  background: rgba(5, 5, 6, 0.72);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  backdrop-filter: blur(20px) saturate(160%);
-  border-bottom-color: var(--border-soft);
+/* Scrolling lifts the bar off the top edge and collapses it into a floating
+   glass pill; scrolling back to the very top docks it flush again. */
+.nav.is-floating {
+  transform: translateY(12px);
 }
 
 .nav-inner {
@@ -344,6 +343,37 @@ h3 {
   justify-content: space-between;
   gap: 24px;
   height: 64px;
+  border: 1px solid transparent;
+  transition:
+    max-width 0.55s var(--ease-out),
+    height 0.45s var(--ease-out),
+    padding 0.55s var(--ease-out),
+    background-color 0.45s var(--ease-out),
+    border-color 0.45s var(--ease-out),
+    border-radius 0.55s var(--ease-out),
+    box-shadow 0.45s var(--ease-out);
+}
+
+.nav.is-floating .nav-inner {
+  max-width: 940px;
+  height: 56px;
+  padding-inline: 14px;
+  border-radius: 999px;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(10, 10, 12, 0.72);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.52),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.nav.is-floating .nav-panel {
+  width: min(940px, calc(100% - 24px));
+  margin: 10px auto 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.52);
 }
 
 .brand {
@@ -679,19 +709,29 @@ h3 {
    Marquee
 --------------------------------------------------------------------------- */
 .marquee-section {
-  padding-block: clamp(40px, 5vw, 60px);
+  padding-block: clamp(64px, 8vw, 104px);
   border-block: 1px solid var(--border-soft);
   background: var(--bg-raised);
   overflow: hidden;
 }
 
-.marquee-label {
+.marquee-head {
   text-align: center;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  margin-bottom: 22px;
+  max-width: 860px;
+  margin-bottom: clamp(36px, 5vw, 56px);
+}
+
+.marquee-head h2 {
+  font-size: clamp(32px, 5vw, 58px);
+  line-height: 1.05;
+}
+
+/* The claim, lit by the brand: functional is the point. */
+.marquee-accent {
+  background: linear-gradient(180deg, #fff9d6 0%, var(--neon) 58%, #d9bc00 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .marquee {
@@ -713,19 +753,51 @@ h3 {
 .marquee-list {
   display: flex;
   align-items: center;
-  gap: 44px;
-  padding-right: 44px;
-  font-size: 17px;
+  gap: 52px;
+  padding-right: 52px;
+  font-size: 16.5px;
   font-weight: 500;
   letter-spacing: -0.01em;
   color: var(--text-2);
   white-space: nowrap;
 }
 
-/* Separator glyphs are the even children in both tracks (name, ·, name, ·). */
-.marquee-list li:nth-child(even) {
-  color: var(--neon);
-  opacity: 0.75;
+.sponsor {
+  display: inline-flex;
+  align-items: center;
+  gap: 13px;
+  transition: color 0.25s var(--ease-out);
+}
+
+/* Real sponsor marks on a uniform app-grid tile, so mixed shapes (square
+   tiles, circles, bare glyphs) read as one deliberate wall. */
+.sponsor-mark {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 7px;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.045);
+  transition: transform 0.45s var(--ease-spring), border-color 0.3s var(--ease-out);
+}
+
+.sponsor-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.sponsor:hover {
+  color: var(--text);
+}
+
+.sponsor:hover .sponsor-mark {
+  transform: translateY(-2px) scale(1.05);
+  border-color: var(--border);
 }
 
 @keyframes marquee {
@@ -1213,6 +1285,88 @@ h3 {
 }
 
 /* ---------------------------------------------------------------------------
+   Sub-page hero + explore cards (multi-page layout)
+--------------------------------------------------------------------------- */
+.page-hero {
+  position: relative;
+  padding-top: clamp(132px, 17vh, 176px);
+  padding-bottom: clamp(28px, 4vw, 48px);
+  overflow: hidden;
+}
+
+.page-hero h1 {
+  font-size: clamp(38px, 5.6vw, 66px);
+}
+
+.page-sub {
+  margin-top: 22px;
+  max-width: 660px;
+  color: var(--text-2);
+  font-size: clamp(16px, 1.6vw, 18px);
+  line-height: 1.65;
+}
+
+.explore-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.explore-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 30px 28px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  transition:
+    transform 0.5s var(--ease-spring),
+    border-color 0.3s var(--ease-out),
+    background-color 0.3s var(--ease-out);
+  will-change: transform;
+}
+
+.explore-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+
+.explore-num {
+  font-size: 12px;
+  color: var(--neon);
+}
+
+.explore-card h3 {
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.explore-card p {
+  flex: 1;
+  color: var(--text-2);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.explore-go {
+  font-size: 12px;
+  color: var(--text-3);
+  transition: color 0.25s var(--ease-out);
+}
+
+.explore-card:hover .explore-go {
+  color: var(--neon);
+}
+
+@media (max-width: 900px) {
+  .explore-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Final CTA
 --------------------------------------------------------------------------- */
 .cta-section {
@@ -1637,5 +1791,806 @@ h3 {
 
   .tier-featured {
     order: -1;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Layer 2 — additive polish (scroll progress, silver headline, floating
+   hero cards, card spotlight, FAQ, mobile menu, nav/loop active states,
+   button shine). Everything below extends the system without overriding it.
+--------------------------------------------------------------------------- */
+
+/* Scroll progress — a neon hairline that fills as the page is read. */
+.scroll-progress {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 2px;
+  z-index: 120;
+  pointer-events: none;
+}
+
+.scroll-progress-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--neon), var(--neon-hot));
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  will-change: transform;
+}
+
+/* Silver gradient on the hero's second line — crisp metal, not glow. */
+.h1-silver {
+  background: linear-gradient(180deg, #ffffff 0%, #c3c3ca 58%, #8f8f96 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Floating satellite cards around the hero console — spatial depth. */
+.float-card {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgba(12, 12, 14, 0.82);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  animation: floatDrift 7.5s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.float-card-a {
+  top: -20px;
+  right: -16px;
+}
+
+.float-card-b {
+  bottom: 40px;
+  left: -22px;
+  animation-duration: 9s;
+  animation-delay: -3.5s;
+}
+
+.float-card-k {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.float-card-v {
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.float-card-neon {
+  color: var(--neon-hot);
+  font-family: var(--font-mono);
+}
+
+@keyframes floatDrift {
+  from {
+    transform: translate3d(0, -5px, 0);
+  }
+  to {
+    transform: translate3d(0, 6px, 0);
+  }
+}
+
+/* Pointer-tracked spotlight on cards — warm, faint, brand-tinted. */
+.card-spot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 340px;
+  height: 340px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 232, 26, 0.075), transparent 72%);
+  transform: translate3d(-170px, -170px, 0);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.45s var(--ease-out), transform 0.22s var(--ease-out);
+  will-change: transform, opacity;
+}
+
+.gov-card,
+.stat {
+  overflow: hidden;
+}
+
+/* Active section in the desktop nav — a single neon hairline. */
+.nav-links a {
+  position: relative;
+}
+
+.nav-links a.is-active {
+  color: var(--text);
+}
+
+.nav-links a.is-active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -7px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--neon);
+}
+
+/* Current step in the loop rail. */
+.loop-step.is-current {
+  background: var(--surface);
+  border-color: var(--border-soft);
+}
+
+.loop-step.is-current::before {
+  background: var(--neon);
+  border-color: var(--neon);
+}
+
+.loop-step.is-current .loop-num {
+  color: var(--neon);
+}
+
+/* Button shine — a soft sweep across the primary button on hover. */
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-primary::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -55%;
+  width: 36%;
+  background: linear-gradient(100deg, transparent, rgba(5, 5, 6, 0.09), transparent);
+  transform: skewX(-18deg);
+  pointer-events: none;
+}
+
+.btn-primary:hover::after {
+  animation: btnShine 0.9s var(--ease-out);
+}
+
+@keyframes btnShine {
+  from {
+    transform: skewX(-18deg) translateX(0);
+  }
+  to {
+    transform: skewX(-18deg) translateX(460%);
+  }
+}
+
+/* FAQ — accessible accordion, spring chevron, grid-rows expansion. */
+.faq-container {
+  max-width: 880px;
+}
+
+.faq-list {
+  display: grid;
+  gap: 10px;
+}
+
+.faq-item {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+  transition: border-color 0.3s var(--ease-out), background-color 0.3s var(--ease-out);
+}
+
+.faq-item:hover {
+  border-color: var(--border);
+}
+
+.faq-item.is-open {
+  border-color: var(--neon-dim);
+  background: var(--surface-hover);
+}
+
+.faq-q {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 24px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.faq-chevron {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 400;
+  color: var(--text-3);
+  transition: transform 0.45s var(--ease-spring), color 0.3s var(--ease-out);
+}
+
+.faq-item.is-open .faq-chevron {
+  transform: rotate(45deg);
+  color: var(--neon);
+}
+
+.faq-a {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.5s var(--ease-out);
+}
+
+.faq-a-inner {
+  overflow: hidden;
+}
+
+.faq-a-inner p {
+  padding: 0 24px 22px;
+  color: var(--text-2);
+  font-size: 14.5px;
+  line-height: 1.65;
+}
+
+.faq-item.is-open .faq-a {
+  grid-template-rows: 1fr;
+}
+
+/* Mobile menu — glass sheet under the nav, bar-to-X toggle. */
+.nav-menu-btn {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  width: 40px;
+  height: 40px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+}
+
+.nav-menu-bar {
+  display: block;
+  height: 1.5px;
+  width: 100%;
+  background: var(--text);
+  border-radius: 1px;
+  transition: transform 0.4s var(--ease-spring), opacity 0.25s var(--ease-out);
+}
+
+.nav-menu-btn.is-open .nav-menu-bar:first-child {
+  transform: translateY(3.75px) rotate(45deg);
+}
+
+.nav-menu-btn.is-open .nav-menu-bar:last-child {
+  transform: translateY(-3.75px) rotate(-45deg);
+}
+
+.nav-panel {
+  border-top: 1px solid var(--border-soft);
+  background: rgba(5, 5, 6, 0.88);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
+}
+
+.nav-panel[hidden] {
+  display: none;
+}
+
+.nav-panel:not([hidden]) {
+  animation: panelIn 0.35s var(--ease-out);
+}
+
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.nav-panel-links {
+  display: flex;
+  flex-direction: column;
+  padding: 14px var(--gutter) 20px;
+}
+
+.nav-panel-links a {
+  padding: 12px 4px;
+  font-size: 15px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-soft);
+  transition: color 0.2s var(--ease-out);
+}
+
+.nav-panel-links a:last-child {
+  border-bottom: none;
+}
+
+.nav-panel-links a:hover {
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .nav-menu-btn {
+    display: inline-flex;
+  }
+
+  .nav .btn-sm {
+    display: none;
+  }
+}
+
+@media (max-width: 1024px) {
+  .float-card {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float-card {
+    animation: none;
+  }
+
+  .card-spot {
+    display: none;
+  }
+
+  .btn-primary:hover::after {
+    animation: none;
+  }
+
+  .nav-panel:not([hidden]) {
+    animation: none;
+  }
+}
+
+/* ===========================================================================
+   LAYER 3 — MONOCHROME MULTI-PAGE REDESIGN
+
+   Scoped entirely under body.lp (the landing pages). Nothing above is
+   removed or mutated: the console page carries no .lp class, so every rule
+   it inherits stays exactly as shipped. The landing pages trade the neon
+   accent for a strict monochrome system — deep blacks, sleek grays, crisp
+   whites — and add the shared page furniture (page hero, hub grid,
+   next-page strip) the multi-page structure needs.
+=========================================================================== */
+
+/* --- The LED field retires on the landing pages. The element and its loop
+       remain in place (and under test); hiding it means layout() measures a
+       zero rect, so the rAF loop never starts and costs nothing. --------- */
+body.lp .hero-leds {
+  display: none;
+}
+
+/* --- Monochrome accent system ------------------------------------------ */
+body.lp {
+  animation: lpPageIn 0.55s var(--ease-out);
+}
+
+@keyframes lpPageIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+body.lp ::selection {
+  background: rgba(245, 245, 247, 0.22);
+  color: #fff;
+}
+
+body.lp :focus-visible {
+  outline-color: rgba(245, 245, 247, 0.85);
+}
+
+body.lp .eyebrow::before {
+  background: var(--text-2);
+  box-shadow: none;
+}
+
+body.lp .chip-verified {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+body.lp .sq-live {
+  background: var(--text);
+}
+
+body.lp .sq-wired {
+  background: var(--text-3);
+}
+
+body.lp .stat-zero .stat-num {
+  color: var(--text);
+}
+
+body.lp .scroll-progress-fill {
+  background: linear-gradient(90deg, rgba(245, 245, 247, 0.28), #f5f5f7);
+}
+
+body.lp .nav-links a.is-active::after {
+  background: var(--text);
+}
+
+body.lp .loop-step.is-current::before {
+  background: var(--text);
+  border-color: var(--text);
+}
+
+body.lp .loop-step.is-current .loop-num {
+  color: var(--text);
+}
+
+body.lp .faq-item.is-open {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+body.lp .faq-item.is-open .faq-chevron {
+  color: var(--text);
+}
+
+body.lp .card-spot {
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.06), transparent 72%);
+}
+
+body.lp .float-card-neon {
+  color: var(--text);
+}
+
+body.lp .btn-primary:hover {
+  box-shadow: 0 12px 34px rgba(245, 245, 247, 0.16);
+}
+
+body.lp .hero-caption a,
+body.lp .hero-caption-link {
+  color: var(--text-2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  transition: color 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
+}
+
+body.lp .hero-caption a:hover,
+body.lp .hero-caption-link:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* --- Pricing, monochrome featured tier ---------------------------------- */
+body.lp .tier-featured {
+  border-color: rgba(255, 255, 255, 0.34);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.02));
+  box-shadow: 0 24px 70px -34px rgba(255, 255, 255, 0.16);
+}
+
+body.lp .tier-featured:hover {
+  border-color: rgba(255, 255, 255, 0.52);
+}
+
+body.lp .tier-flag {
+  background: var(--text);
+  color: #0a0a0c;
+}
+
+body.lp .tier-featured .tier-amt {
+  color: var(--text);
+}
+
+body.lp .tier-featured .tier-list li::before {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+/* Slow sheen travelling the featured tier border — transform-only. */
+body.lp .tier-featured::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    115deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 80%
+  );
+  background-size: 260% 100%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: lpTierSheen 5.5s var(--ease-out) infinite;
+}
+
+@keyframes lpTierSheen {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -130% 0;
+  }
+}
+
+/* --- Hero ambient light — replaces the LED field's visual role. A soft
+       monochrome key light that breathes; opacity + transform only. ------ */
+.hero-ambient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 52% 44% at 71% 30%, rgba(255, 255, 255, 0.06), transparent 66%),
+    radial-gradient(ellipse 40% 36% at 18% 78%, rgba(255, 255, 255, 0.028), transparent 70%);
+  animation: lpAmbientBreath 9s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+
+@keyframes lpAmbientBreath {
+  from {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+/* --- Page hero — the shared header every subpage opens with ------------- */
+.page-hero {
+  position: relative;
+  padding-top: clamp(140px, 19vh, 196px);
+  padding-bottom: clamp(52px, 6.5vw, 84px);
+  overflow: hidden;
+}
+
+.page-hero-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 62% 55% at 50% 0%, rgba(255, 255, 255, 0.05), transparent 65%),
+    linear-gradient(rgba(255, 255, 255, 0.026) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.026) 1px, transparent 1px);
+  background-size: 100% 100%, 76px 76px, 76px 76px;
+  -webkit-mask-image: radial-gradient(ellipse 92% 85% at 50% 0%, #000 25%, transparent 76%);
+  mask-image: radial-gradient(ellipse 92% 85% at 50% 0%, #000 25%, transparent 76%);
+}
+
+.page-hero-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 20px;
+}
+
+.page-hero-meta .sep {
+  width: 26px;
+  height: 1px;
+  background: var(--text-3);
+  opacity: 0.6;
+}
+
+.page-hero h1 {
+  font-size: clamp(36px, 5.4vw, 62px);
+  max-width: 760px;
+}
+
+.page-hero-sub {
+  margin-top: 20px;
+  max-width: 640px;
+  color: var(--text-2);
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+/* --- Hub grid — the landing page's map into the rest of the site -------- */
+.hub {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 14px;
+}
+
+.hub-card {
+  position: relative;
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px;
+  min-height: 200px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  overflow: hidden;
+  transition:
+    transform 0.5s var(--ease-spring),
+    border-color 0.3s var(--ease-out),
+    background-color 0.3s var(--ease-out);
+  will-change: transform;
+}
+
+.hub-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+
+.hub-card::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  opacity: 0;
+  transition: opacity 0.3s var(--ease-out);
+}
+
+.hub-card:hover::after {
+  opacity: 1;
+}
+
+.hub-tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+
+.hub-card h3 {
+  font-size: 19px;
+  letter-spacing: -0.015em;
+}
+
+.hub-card p {
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.hub-arrow {
+  margin-top: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-3);
+  transition: transform 0.4s var(--ease-spring), color 0.25s var(--ease-out);
+}
+
+.hub-card:hover .hub-arrow {
+  transform: translateX(7px);
+  color: var(--text);
+}
+
+.hub-wide {
+  grid-column: span 4;
+}
+
+/* --- Next-page strip — closes each subpage with a way forward ----------- */
+.page-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 26px 30px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  transition:
+    transform 0.5s var(--ease-spring),
+    border-color 0.3s var(--ease-out),
+    background-color 0.3s var(--ease-out);
+}
+
+.page-next:hover {
+  transform: translateY(-3px);
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+
+.page-next-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.page-next-k {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.page-next-v {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+.page-next-arrow {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  color: var(--text-3);
+  transition: transform 0.4s var(--ease-spring), color 0.25s var(--ease-out);
+}
+
+.page-next:hover .page-next-arrow {
+  transform: translateX(8px);
+  color: var(--text);
+}
+
+.page-next-wrap {
+  margin-top: clamp(56px, 7vw, 84px);
+}
+
+/* --- Performance: skip rendering offscreen sections until they approach.
+       The loop section is exempt — it owns a sticky column. -------------- */
+body.lp .section:not(.loop-section),
+body.lp .cta-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 900px;
+}
+
+/* --- Responsive additions ------------------------------------------------ */
+@media (max-width: 1024px) {
+  .hub-card,
+  .hub-wide {
+    grid-column: span 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .hub-card,
+  .hub-wide {
+    grid-column: span 1;
+    min-height: 0;
+  }
+
+  .page-next {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* --- Reduced-motion additions -------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  body.lp {
+    animation: none;
+  }
+
+  .hero-ambient {
+    animation: none;
+  }
+
+  body.lp .tier-featured::after {
+    animation: none;
+    opacity: 0.5;
   }
 }
