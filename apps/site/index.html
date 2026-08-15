@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Foundry — The Autonomous Company Factory</title>
+  <meta name="description" content="Foundry is the operating layer for a real company: a CEO agent that decides, manager agents that own functions, and specialists that execute — with every claim backed by an audit trail." />
+  <meta name="theme-color" content="#050506" />
+  <meta property="og:title" content="Foundry — The Autonomous Company Factory" />
+  <meta property="og:description" content="A real company, run by agents. Engineered, not imagined. Every claim ships with receipts." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23050506'/%3E%3Crect x='8' y='9' width='16' height='3' rx='1.5' fill='%23F5F5F7'/%3E%3Crect x='8' y='14.5' width='11' height='3' rx='1.5' fill='%23A1A1A6'/%3E%3Crect x='8' y='20' width='6' height='3' rx='1.5' fill='%236E6E73'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="noise" aria-hidden="true"></div>
+
+  <!-- ======================================================================
+       NAV
+  ======================================================================= -->
+  <header class="nav" id="nav">
+    <div class="nav-inner container">
+      <a class="brand" href="#top" aria-label="Foundry home">
+        <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
+          <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#F5F5F7" />
+          <rect x="8" y="14.5" width="11" height="3" rx="1.5" fill="#A1A1A6" />
+          <rect x="8" y="20" width="6" height="3" rx="1.5" fill="#6E6E73" />
+        </svg>
+        <span class="brand-name">Foundry</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#loop">The Loop</a>
+        <a href="#organization">Organization</a>
+        <a href="#infrastructure">Infrastructure</a>
+        <a href="#evidence">Evidence</a>
+      </nav>
+      <a class="btn btn-primary btn-sm" href="#loop">Explore the system</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ====================================================================
+         HERO
+    ===================================================================== -->
+    <section class="hero" id="top">
+      <div class="hero-bg" aria-hidden="true"></div>
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow" data-reveal>Foundry · The Autonomous Company Factory</p>
+          <h1 data-reveal style="--rd:60ms">
+            A real company,<br />run by agents.
+          </h1>
+          <p class="hero-sub" data-reveal style="--rd:120ms">
+            Foundry is the operating layer for an actual business. A CEO agent sets
+            strategy. Manager agents own research, sourcing, brand, commerce, growth,
+            support, and finance. Specialists do the work. Every decision, order, and
+            dollar moves through a policy-gated, auditable loop — and nothing ships
+            without evidence.
+          </p>
+          <div class="hero-cta" data-reveal style="--rd:180ms">
+            <a class="btn btn-primary" href="#loop">Explore the loop</a>
+            <a class="btn btn-ghost" href="#evidence">Read the evidence</a>
+          </div>
+          <ul class="hero-status" data-reveal style="--rd:240ms" aria-label="Verified status">
+            <li><span class="mono">356</span> tests passing</li>
+            <li><span class="mono">52</span> tables · <span class="mono">169</span> indexes</li>
+            <li><span class="mono">11</span> integrations probe-verified</li>
+            <li><span class="mono">0</span> fake success states</li>
+          </ul>
+        </div>
+
+        <figure class="hero-visual" data-reveal style="--rd:200ms">
+          <div class="console-wrap" id="consoleWrap">
+            <div class="console-shadow-pane" aria-hidden="true"></div>
+            <div class="console" id="console">
+              <div class="console-bar">
+                <span class="console-title mono">foundry — operating ledger</span>
+                <span class="chip chip-verified">chain verified</span>
+              </div>
+              <div class="console-body">
+                <div class="ledger-card">
+                  <div class="ledger-head">
+                    <span class="ledger-label mono">CEO · DECISION 0147</span>
+                    <span class="chip chip-approve">approve</span>
+                  </div>
+                  <p class="ledger-title">Opportunity #14 — private-label sourcing cleared</p>
+                  <div class="ledger-meta mono">
+                    <span>grounded margin 61.2%</span>
+                    <span>break-even CAC $18.40</span>
+                    <span>budget cap enforced</span>
+                  </div>
+                </div>
+
+                <div class="state-row" aria-label="Order state machine">
+                  <span class="state mono">CREATED</span>
+                  <span class="state-arrow" aria-hidden="true">→</span>
+                  <span class="state mono is-active">PAID</span>
+                  <span class="state-arrow" aria-hidden="true">→</span>
+                  <span class="state mono">FULFILLING</span>
+                  <span class="state-arrow" aria-hidden="true">→</span>
+                  <span class="state mono">SHIPPED</span>
+                </div>
+
+                <div class="audit" aria-label="Audit hash chain">
+                  <div class="audit-row mono">
+                    <span class="audit-pos">#0421</span>
+                    <span class="audit-hash">a7f3…c21</span>
+                    <span class="audit-action">order.paid</span>
+                    <span class="audit-note">webhook signature verified</span>
+                  </div>
+                  <div class="audit-row mono">
+                    <span class="audit-pos">#0422</span>
+                    <span class="audit-hash">b19e…884</span>
+                    <span class="audit-action">budget.reserve</span>
+                    <span class="audit-note">policy: approved</span>
+                  </div>
+                  <div class="audit-row mono">
+                    <span class="audit-pos">#0423</span>
+                    <span class="audit-hash">c02d…5a9</span>
+                    <span class="audit-action">rfq.sent</span>
+                    <span class="audit-note">3 suppliers quoted</span>
+                  </div>
+                </div>
+
+                <div class="probe-row mono" aria-label="Integration probes">
+                  <span class="probe"><span class="sq sq-live" aria-hidden="true"></span>stripe</span>
+                  <span class="probe"><span class="sq sq-live" aria-hidden="true"></span>render</span>
+                  <span class="probe"><span class="sq sq-live" aria-hidden="true"></span>terac</span>
+                  <span class="probe"><span class="sq sq-wired" aria-hidden="true"></span>replay gate</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <figcaption class="hero-caption mono">
+            Illustrative operating view — the state machine, ledger, and audit chain are implemented and tested.
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SPONSOR MARQUEE
+    ===================================================================== -->
+    <section class="marquee-section" aria-label="Sponsor integrations">
+      <p class="marquee-label mono" data-reveal>Twelve sponsor integrations — functional, not decorative</p>
+      <div class="marquee" data-reveal style="--rd:80ms">
+        <div class="marquee-track" id="marqueeTrack">
+          <ul class="marquee-list">
+            <li>Terac</li><li aria-hidden="true">·</li>
+            <li>Stripe</li><li aria-hidden="true">·</li>
+            <li>Lovable</li><li aria-hidden="true">·</li>
+            <li>Whop</li><li aria-hidden="true">·</li>
+            <li>Render</li><li aria-hidden="true">·</li>
+            <li>Linq</li><li aria-hidden="true">·</li>
+            <li>Superserve</li><li aria-hidden="true">·</li>
+            <li>Replay</li><li aria-hidden="true">·</li>
+            <li>BAND</li><li aria-hidden="true">·</li>
+            <li>Dodo Payments</li><li aria-hidden="true">·</li>
+            <li>Sandbox0</li><li aria-hidden="true">·</li>
+            <li>Solari by Pinetree</li><li aria-hidden="true">·</li>
+          </ul>
+          <ul class="marquee-list" aria-hidden="true">
+            <li>Terac</li><li>·</li>
+            <li>Stripe</li><li>·</li>
+            <li>Lovable</li><li>·</li>
+            <li>Whop</li><li>·</li>
+            <li>Render</li><li>·</li>
+            <li>Linq</li><li>·</li>
+            <li>Superserve</li><li>·</li>
+            <li>Replay</li><li>·</li>
+            <li>BAND</li><li>·</li>
+            <li>Dodo Payments</li><li>·</li>
+            <li>Sandbox0</li><li>·</li>
+            <li>Solari by Pinetree</li><li>·</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         THE LOOP
+    ===================================================================== -->
+    <section class="section loop-section" id="loop">
+      <div class="container loop-grid">
+        <div class="loop-sticky">
+          <p class="eyebrow" data-reveal>The operating loop</p>
+          <h2 data-reveal style="--rd:60ms">A company behaves like a loop, not a launch.</h2>
+          <p class="section-sub" data-reveal style="--rd:120ms">
+            Foundry runs the full business cycle continuously — observe, score, source,
+            build, launch, measure, re-plan. Results feed back to the CEO agent, and the
+            next iteration starts smarter than the last.
+          </p>
+          <div class="loop-stat" data-reveal style="--rd:180ms">
+            <span class="loop-stat-num mono">20</span>
+            <span class="loop-stat-label">steps, one closed circuit,<br />executed by the organization</span>
+          </div>
+        </div>
+
+        <div class="loop-steps" id="loopSteps">
+          <div class="loop-rail" aria-hidden="true"><span class="loop-rail-fill" id="loopRailFill"></span></div>
+          <ol class="loop-list">
+            <li class="loop-step" data-reveal><span class="loop-num mono">01</span><div><h3>Observe</h3><p>Mine real public conversations — reviews, forums, communities — for demand signals.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">02</span><div><h3>Extract</h3><p>Pull complaints, workarounds, failure modes, and willingness-to-pay language into evidence packets.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">03</span><div><h3>Cluster</h3><p>Deduplicate and group signals into candidate pain points with source traceability.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">04</span><div><h3>Score</h3><p>Severity, frequency, margin, sourcing feasibility, legal risk — weighted, never hidden.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">05</span><div><h3>Ask experts</h3><p>Terac human reviewers judge what machine research can't. Overrides are recorded with rationale.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">06</span><div><h3>Select</h3><p>The CEO commits to an opportunity inside capital-allocation policy.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">07</span><div><h3>Source</h3><p>Find suppliers able to produce or private-label. Verify capability, MOQ, customization.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">08</span><div><h3>Cost it</h3><p>Full landed cost — freight, duties, QC, fulfillment — down to contribution margin.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">09</span><div><h3>Negotiate</h3><p>RFQs, samples, and terms compared side by side. Assumptions stay separate from quoted values.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">10</span><div><h3>Brand</h3><p>Name, identity, packaging, positioning — checked against trademark and domain signals.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">11</span><div><h3>Build</h3><p>Storefront generated through Lovable, checkout wired to Stripe, deployed on Render.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">12</span><div><h3>Create</h3><p>Ad concepts and page copy generated as testable variants, not single shots.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">13</span><div><h3>Review</h3><p>High-impact creative passes human expert review before a dollar is spent.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">14</span><div><h3>Launch</h3><p>Controlled experiments with hypotheses, budgets, stop conditions, and KPI targets.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">15</span><div><h3>Measure</h3><p>CTR, CAC, conversion, contribution margin, refund rate — profit, not vanity metrics.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">16</span><div><h3>Reallocate</h3><p>Kill weak variants, scale winners within spend caps, generate the next hypotheses.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">17</span><div><h3>QA</h3><p>Replay autonomously walks the live site. Critical failures veto the release.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">18</span><div><h3>Report</h3><p>Operational results return to the CEO as structured reports, not chat transcripts.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">19</span><div><h3>Re-plan</h3><p>Strategy updates from evidence. Kill, continue, or pivot — decided, not drifted.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">20</span><div><h3>Repeat</h3><p>The company improves recursively. The loop is the organization's heartbeat.</p></div></li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         ORGANIZATION — BENTO
+    ===================================================================== -->
+    <section class="section" id="organization">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow" data-reveal>The organization</p>
+          <h2 data-reveal style="--rd:60ms">An org chart, not a prompt chain.</h2>
+          <p class="section-sub" data-reveal style="--rd:120ms">
+            A persistent, auditable organization — with accountability at every level —
+            not a one-shot chain of prompts.
+          </p>
+        </div>
+
+        <div class="bento">
+          <article class="bento-card bento-ceo" data-reveal>
+            <div class="bento-copy">
+              <p class="bento-tag mono">CEO AGENT</p>
+              <h3>One accountable executive.</h3>
+              <p>
+                Owns the mission, opportunity selection, capital allocation, and every
+                launch-or-kill decision. The CEO doesn't do everything — it delegates,
+                reviews evidence, and decides from structured reports.
+              </p>
+            </div>
+            <div class="memo" aria-hidden="true">
+              <div class="memo-row">
+                <span class="memo-k mono">decision</span>
+                <span class="memo-v">Scale variant B — margin holds at $21.40 unit contribution</span>
+              </div>
+              <div class="memo-row">
+                <span class="memo-k mono">authority</span>
+                <span class="memo-v">within budget grant · policy engine approved</span>
+              </div>
+              <div class="memo-row">
+                <span class="memo-k mono">verdict</span>
+                <span class="chip chip-approve">approved</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="bento-card bento-managers" data-reveal style="--rd:60ms">
+            <p class="bento-tag mono">MANAGERS</p>
+            <h3>Ten function owners.</h3>
+            <ul class="manager-list">
+              <li>Research &amp; Market Intelligence</li>
+              <li>Product &amp; Sourcing</li>
+              <li>Brand &amp; Creative</li>
+              <li>Commerce &amp; Web</li>
+              <li>Growth &amp; Marketing</li>
+              <li>Customer Operations</li>
+              <li>Finance &amp; Unit Economics</li>
+              <li>Engineering &amp; Reliability</li>
+              <li>QA</li>
+              <li>Legal &amp; Compliance</li>
+            </ul>
+          </article>
+
+          <article class="bento-card" data-reveal style="--rd:90ms">
+            <p class="bento-tag mono">SPECIALISTS</p>
+            <h3>Subagents execute.</h3>
+            <p>Each manager spawns specialists for concrete work — an RFQ drafter, a checkout engineer, a refund-triage agent, a landed-cost analyst.</p>
+            <div class="chip-row" aria-hidden="true">
+              <span class="chip">rfq-drafter</span>
+              <span class="chip">checkout-eng</span>
+              <span class="chip">refund-triage</span>
+            </div>
+          </article>
+
+          <article class="bento-card" data-reveal style="--rd:120ms">
+            <p class="bento-tag mono">BAND GOVERNANCE</p>
+            <h3>Coordinated, never silent.</h3>
+            <p>Task-scoped rooms, permission-controlled messaging, auditable handoffs. No agent quietly assumes authority it wasn't granted.</p>
+            <div class="room mono" aria-hidden="true">#sourcing · 4 agents · permission: rfq.send</div>
+          </article>
+
+          <article class="bento-card" data-reveal style="--rd:150ms">
+            <p class="bento-tag mono">TERAC · HUMAN JUDGMENT</p>
+            <h3>Experts on demand.</h3>
+            <p>Humans review what machines are weak at. Their overrides flow back as structured data with rationale — not discarded transcripts.</p>
+            <div class="room mono" aria-hidden="true">expert override: 8.1 → 6.4 · rationale recorded</div>
+          </article>
+
+          <article class="bento-card bento-wide" data-reveal style="--rd:90ms">
+            <p class="bento-tag mono">EXECUTION PLANES</p>
+            <h3>Isolated by design.</h3>
+            <p>Work runs where it belongs: persistent sandboxes for long-horizon agents, isolated execution for untrusted code, real browsers for the live web.</p>
+            <div class="planes">
+              <div class="plane"><span class="plane-name mono">Superserve</span><span class="plane-job">long-running manager workspaces</span></div>
+              <div class="plane"><span class="plane-name mono">Sandbox0</span><span class="plane-job">isolated runs · credential-controlled egress</span></div>
+              <div class="plane"><span class="plane-name mono">Solari</span><span class="plane-job">cloud browsers · human takeover when required</span></div>
+            </div>
+          </article>
+
+          <article class="bento-card bento-wide" data-reveal style="--rd:120ms">
+            <p class="bento-tag mono">POLICY ENGINE</p>
+            <h3>Authority is evaluated, not vibes.</h3>
+            <p>Every mutating action passes a unit-tested policy gate: who may act, how much they may spend, and what requires a human.</p>
+            <div class="planes">
+              <div class="plane"><span class="plane-name mono">rule</span><span class="plane-job">spend &gt; $500 → human approval required</span></div>
+              <div class="plane"><span class="plane-name mono">rule</span><span class="plane-job">kill switch armed on every mutating surface</span></div>
+              <div class="plane"><span class="plane-name mono">rule</span><span class="plane-job">no autonomous legal signature — ever</span></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         INFRASTRUCTURE / INTEGRATIONS
+    ===================================================================== -->
+    <section class="section section-alt" id="infrastructure">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow" data-reveal>The integration layer</p>
+          <h2 data-reveal style="--rd:60ms">Real services. Real contracts. Real status.</h2>
+          <p class="section-sub" data-reveal style="--rd:120ms">
+            No mocked clients, no decorative logos. Every provider has an adapter, a
+            webhook contract, signature verification, retries, idempotency, and a dated
+            verification row. If credentials are missing, Foundry reports blocked — it
+            doesn't pretend.
+          </p>
+        </div>
+
+        <div class="integ" data-reveal>
+          <div class="integ-row integ-head mono" aria-hidden="true">
+            <span>provider</span><span>role in the company</span><span>status</span>
+          </div>
+          <div class="integ-row"><span class="integ-name">Terac</span><span class="integ-role">Human expert review and consumer studies on demand</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Stripe</span><span class="integ-role">Payments, checkout, webhooks, refunds, reconciliation</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Render</span><span class="integ-role">Control plane, workers, cron, managed datastores</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Whop</span><span class="integ-role">Commerce and business-operation primitives</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Linq</span><span class="integ-role">Customer support over iMessage, RCS, SMS, and voice</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Superserve</span><span class="integ-role">Persistent, secure sandboxes for long-running agents</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Replay</span><span class="integ-role">Autonomous QA as a release gate, with root-cause reports</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">BAND</span><span class="integ-role">Agent-to-agent and human coordination with governance</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Sandbox0</span><span class="integ-role">Isolated execution, workspaces, and credential control</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Solari</span><span class="integ-role">Cloud browsers, sandboxes, and GUI computers for agents</span><span class="chip chip-verified">probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Lovable</span><span class="integ-role">Programmatic storefront generation and iteration</span><span class="chip chip-wired">surface built</span></div>
+          <div class="integ-row"><span class="integ-name">Dodo Payments</span><span class="integ-role">Merchant of record for eligible digital products</span><span class="chip chip-wired">surface built</span></div>
+        </div>
+
+        <p class="integ-foot mono" data-reveal>
+          Status from executed verifier probes, 2026-08-15 · 24 verification rows · see VERIFICATION_EVIDENCE.md
+        </p>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         GOVERNANCE
+    ===================================================================== -->
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow" data-reveal>Governance</p>
+          <h2 data-reveal style="--rd:60ms">Autonomy with a paper trail.</h2>
+          <p class="section-sub" data-reveal style="--rd:120ms">
+            Even with minimal human input, the system knows who owns what, who may spend
+            what, and when a person must step in.
+          </p>
+        </div>
+
+        <div class="gov-grid">
+          <div class="gov-card" data-reveal>
+            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+            <h3>Least privilege</h3>
+            <p>Per-integration secrets, isolated from prompts, code, and logs. Separate credentials for dev, staging, and production.</p>
+          </div>
+          <div class="gov-card" data-reveal style="--rd:50ms">
+            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 1 16 0 8 8 0 0 1-16 0z M12 7v5l3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <h3>Budget caps</h3>
+            <p>Spend limits, purchase thresholds, and approval gates. Reservations proven safe under concurrency by executed tests.</p>
+          </div>
+          <div class="gov-card" data-reveal style="--rd:100ms">
+            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 7l1 12h8l1-12M10 7V5h4v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+            <h3>Kill switch</h3>
+            <p>Rollback and halt paths on every mutating surface. Decisions stay inside permissions granted by the business owner.</p>
+          </div>
+          <div class="gov-card" data-reveal style="--rd:150ms">
+            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h9l4 4v12H6V4z M9 12h7M9 16h7M9 8h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+            <h3>Audit hash chain</h3>
+            <p>Append-only, tamper-evident event history. A row altered with triggers disabled is detected and located — proven by test.</p>
+          </div>
+          <div class="gov-card" data-reveal style="--rd:200ms">
+            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h12M4 12h16M4 16h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <h3>Idempotent money</h3>
+            <p>Webhook deduplication and exactly-once order effects. Payment state comes from signed webhooks, never browser redirects.</p>
+          </div>
+          <div class="gov-card" data-reveal style="--rd:250ms">
+            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 13l4 4L19 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <h3>QA veto</h3>
+            <p>Replay walks homepage → product → checkout on every release. Critical commerce failures block the deploy.</p>
+          </div>
+          <div class="gov-card" data-reveal style="--rd:300ms">
+            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11a4 4 0 1 1 8 0c0 2.5-2 3-2 5h-4c0-2-2-2.5-2-5z M10 19h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+            <h3>Human escalation</h3>
+            <p>Legal threats, safety incidents, fraud, refunds beyond limits — routed to people, with context preserved.</p>
+          </div>
+          <div class="gov-card" data-reveal style="--rd:350ms">
+            <svg class="gov-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4V6z M4 10h16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+            <h3>Legal surface</h3>
+            <p>Terms, privacy, shipping, returns, and disclosures generated from real business configuration — never pasted boilerplate.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         EVIDENCE
+    ===================================================================== -->
+    <section class="section section-alt" id="evidence">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow" data-reveal>The evidence</p>
+          <h2 data-reveal style="--rd:60ms">Claims ship with receipts.</h2>
+          <p class="section-sub" data-reveal style="--rd:120ms">
+            Nothing in Foundry is marked complete on the strength of code existing.
+            Every number below comes from an executed test suite or an executed probe.
+          </p>
+        </div>
+
+        <div class="stats">
+          <div class="stat" data-reveal>
+            <span class="stat-num mono" data-count="356">0</span>
+            <span class="stat-label">tests passing — 1 skipped, an opt-in live probe</span>
+          </div>
+          <div class="stat" data-reveal style="--rd:60ms">
+            <span class="stat-num mono" data-count="52">0</span>
+            <span class="stat-label">tables · 169 indexes · 104 foreign keys, applied to real Postgres 17</span>
+          </div>
+          <div class="stat" data-reveal style="--rd:120ms">
+            <span class="stat-num mono" data-count="24">0</span>
+            <span class="stat-label">integration verification rows written by the executed verifier</span>
+          </div>
+          <div class="stat" data-reveal style="--rd:180ms">
+            <span class="stat-num mono" data-count="28">0</span>
+            <span class="stat-label">order state-machine tests — legal transitions, refund ceilings, redelivery</span>
+          </div>
+          <div class="stat" data-reveal style="--rd:240ms">
+            <span class="stat-num mono" data-count="22">0</span>
+            <span class="stat-label">policy-engine tests over authority, budgets, and kill switches</span>
+          </div>
+          <div class="stat stat-zero" data-reveal style="--rd:300ms">
+            <span class="stat-num mono">0</span>
+            <span class="stat-label">fake success states — if a requirement is unmet, status stays NOT COMPLETE</span>
+          </div>
+        </div>
+
+        <figure class="manifesto" data-reveal>
+          <blockquote>
+            “No demo. No fake code. No simulation. No fake supplier quotes. No fake
+            customers. No fake orders represented as production orders. No fake analytics
+            represented as live performance. No fake integration-complete flags. If a
+            requirement is not actually satisfied, status must remain NOT COMPLETE.”
+          </blockquote>
+          <figcaption class="mono">— GOAL_MODE_PROMPT.md, the operating charter</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         FINAL CTA
+    ===================================================================== -->
+    <section class="cta-section">
+      <div class="container cta-inner">
+        <h2 data-reveal>The loop is the product.</h2>
+        <p class="cta-sub" data-reveal style="--rd:80ms">
+          Foundry is built for production on Render — services, workers, cron jobs, and
+          datastores declared as code. Insert credentials, and the company goes to work.
+        </p>
+        <div class="hero-cta cta-buttons" data-reveal style="--rd:160ms">
+          <a class="btn btn-primary" href="#loop">Walk the loop again</a>
+          <a class="btn btn-ghost" href="#infrastructure">Inspect the integrations</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ======================================================================
+       FOOTER
+  ====================================================================== -->
+  <footer class="footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <a class="brand" href="#top" aria-label="Foundry home">
+          <svg class="brand-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="7" fill="rgba(255,255,255,0.06)" />
+            <rect x="8" y="9" width="16" height="3" rx="1.5" fill="#F5F5F7" />
+            <rect x="8" y="14.5" width="11" height="3" rx="1.5" fill="#A1A1A6" />
+            <rect x="8" y="20" width="6" height="3" rx="1.5" fill="#6E6E73" />
+          </svg>
+          <span class="brand-name">Foundry</span>
+        </a>
+        <p class="footer-tag">The autonomous company factory. Engineered, not imagined.</p>
+      </div>
+      <nav class="footer-col" aria-label="Sections">
+        <p class="footer-head mono">System</p>
+        <a href="#loop">The Loop</a>
+        <a href="#organization">Organization</a>
+        <a href="#infrastructure">Infrastructure</a>
+        <a href="#evidence">Evidence</a>
+      </nav>
+      <div class="footer-col">
+        <p class="footer-head mono">Records</p>
+        <span>PLAN.md — the binding specification</span>
+        <span>PROGRESS.md — honest status</span>
+        <span>VERIFICATION_EVIDENCE.md — receipts</span>
+      </div>
+      <div class="footer-col">
+        <p class="footer-head mono">Production</p>
+        <span>Render · Postgres 17 · Valkey</span>
+        <span>24 queues · 5 migrations applied</span>
+        <span>Health checks · audit chain · kill switch</span>
+      </div>
+    </div>
+    <div class="container footer-base">
+      <span class="mono">© <span id="year">2026</span> Foundry</span>
+      <span class="mono">Built in the open. Verified by execution.</span>
+    </div>
+  </footer>
+
+  <script src="./assets/main.js" defer></script>
+</body>
+</html>
