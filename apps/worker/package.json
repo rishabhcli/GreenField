@@ -1,0 +1,23 @@
+{
+  "name": "@foundry/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node --enable-source-maps dist/index.js"
+  },
+  "dependencies": {
+    "@foundry/agents": "workspace:*",
+    "@foundry/core": "workspace:*",
+    "@foundry/db": "workspace:*",
+    "@foundry/obs": "workspace:*",
+    "@foundry/providers": "workspace:*",
+    "@foundry/queue": "workspace:*",
+    "@foundry/runtime": "workspace:*",
+    "@foundry/services": "workspace:*",
+    "ioredis": "^5.9.0",
+    "zod": "^4.1.12"
+  }
+}

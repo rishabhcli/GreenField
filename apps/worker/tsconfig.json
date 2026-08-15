@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "./src", "outDir": "./dist" },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/obs" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/providers" },
+    { "path": "../../packages/queue" },
+    { "path": "../../packages/agents" },
+    { "path": "../../packages/services" },
+    { "path": "../../packages/runtime" }
+  ]
+}

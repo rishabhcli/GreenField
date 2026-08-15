@@ -1,0 +1,436 @@
+# Render Blueprint — the production topology.
+#
+# This file IS the deployment. There is no local mode: every service below is a
+# hosted Render resource, every datastore is managed, and the processes read
+# their configuration from this file's environment bindings rather than from a
+# developer's shell.
+#
+# Schema notes verified against Render's Blueprint reference on 2026-08-14
+# (docs/research/SPONSOR_API_RESEARCH.md § Render):
+#   * `runtime:` supersedes the older `env:` key for service runtime selection.
+#   * `autoDeployTrigger:` replaces the boolean `autoDeploy:`.
+#   * Key Value instances need `maxmemoryPolicy: noeviction`. BullMQ stores job
+#     state in Redis keys; an eviction policy silently drops queued jobs, which
+#     for this system means dropping paid orders awaiting fulfilment.
+#   * No `disk:` is attached anywhere on purpose. A disk pins a service to one
+#     instance and disables zero-downtime deploys. All durable state lives in
+#     Postgres or object storage.
+#   * `healthCheckPath` must answer 2xx within 5 seconds. `/ready` is designed
+#     for that budget: it checks liveness and cached dependency state, never a
+#     fresh round-trip to every provider.
+#
+# Secrets are declared with `sync: false`, which means Render prompts for them
+# and never stores them in this repository. Nothing here contains a credential.
+# Services boot without the provider keys and report their capabilities as
+# blocked; they do not pretend to be configured.
+
+previewsEnabled: false
+
+databases:
+  - name: foundry-postgres
+    databaseName: foundry
+    user: foundry
+    # Postgres 17. The schema uses generated columns, `MERGE`, and jsonb
+    # subscripting, so an older major will fail migration 0001 outright.
+    postgresMajorVersion: "17"
+    plan: basic-1gb
+    region: oregon
+    ipAllowList: []          # empty list = private network access only
+    readReplicas: []
+
+services:
+  # ---------------------------------------------------------------------------
+  # Key Value (Valkey 8) — BullMQ backing store.
+  # ---------------------------------------------------------------------------
+  - type: keyvalue
+    name: foundry-keyvalue
+    plan: standard
+    region: oregon
+    # See the header: eviction here means losing consequential jobs.
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+  # ---------------------------------------------------------------------------
+  # API — control plane. Webhooks, storefront commerce API, governance, health.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: foundry-api
+    runtime: node
+    plan: standard
+    region: oregon
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    startCommand: node apps/api/dist/index.js
+    # Migrations run once per deploy, before any new instance takes traffic.
+    # Running them in the start command would race N instances against each
+    # other; running them by hand would let code deploy ahead of its schema.
+    preDeployCommand: node packages/db/dist/cli/migrate.js
+    healthCheckPath: /ready
+    autoDeployTrigger: commit
+    numInstances: 2          # rolling deploys need at least two
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: NODE_OPTIONS
+        value: --enable-source-maps
+      - key: PORT
+        value: "10000"
+      - key: PUBLIC_BASE_URL
+        # Webhook URLs registered with providers are built from this.
+        fromService:
+          name: foundry-api
+          type: web
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: foundry-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: foundry-keyvalue
+          type: keyvalue
+          property: connectionString
+      - fromGroup: foundry-provider-secrets
+      - fromGroup: foundry-operator
+
+  # ---------------------------------------------------------------------------
+  # Worker — every queue except the agent loop. Scales independently of the API
+  # so a long research job never delays a webhook acknowledgement.
+  # ---------------------------------------------------------------------------
+  - type: worker
+    name: foundry-worker
+    runtime: node
+    plan: standard
+    region: oregon
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    startCommand: node apps/worker/dist/index.js
+    autoDeployTrigger: commit
+    numInstances: 2
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: NODE_OPTIONS
+        value: --enable-source-maps
+      - key: WORKER_CONCURRENCY
+        value: "8"
+      - key: WORKER_ROLE
+        value: general
+      - key: PUBLIC_BASE_URL
+        fromService:
+          name: foundry-api
+          type: web
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: foundry-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: foundry-keyvalue
+          type: keyvalue
+          property: connectionString
+      - fromGroup: foundry-provider-secrets
+      - fromGroup: foundry-operator
+
+  # ---------------------------------------------------------------------------
+  # Agent worker — the CEO/manager/specialist organisation.
+  #
+  # Separated from the general worker because model calls are slow, expensive
+  # and rate-limited. Mixing them with fulfilment work would let a stuck agent
+  # run starve order processing, and would make cost attribution meaningless.
+  # ---------------------------------------------------------------------------
+  - type: worker
+    name: foundry-agents
+    runtime: node
+    plan: standard
+    region: oregon
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    startCommand: node apps/worker/dist/index.js
+    autoDeployTrigger: commit
+    numInstances: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: NODE_OPTIONS
+        value: --enable-source-maps
+      - key: WORKER_CONCURRENCY
+        value: "4"
+      - key: WORKER_ROLE
+        # Consumes only agent.run and loop.tick.
+        value: agents
+      - key: PUBLIC_BASE_URL
+        fromService:
+          name: foundry-api
+          type: web
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: foundry-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: foundry-keyvalue
+          type: keyvalue
+          property: connectionString
+      - fromGroup: foundry-provider-secrets
+      - fromGroup: foundry-operator
+
+  # ---------------------------------------------------------------------------
+  # Cron: operating loop tick.
+  #
+  # The loop is driven by a scheduled tick rather than an in-process timer, so a
+  # restarted or redeployed worker cannot stall the company. The tick only
+  # enqueues; all work happens on the queues.
+  # ---------------------------------------------------------------------------
+  - type: cron
+    name: foundry-loop-tick
+    runtime: node
+    plan: starter
+    region: oregon
+    rootDir: .
+    schedule: "*/15 * * * *"
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    startCommand: node apps/worker/dist/cron/loop-tick.js
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_BASE_URL
+        fromService:
+          name: foundry-api
+          type: web
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: foundry-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: foundry-keyvalue
+          type: keyvalue
+          property: connectionString
+      - fromGroup: foundry-provider-secrets
+
+  # ---------------------------------------------------------------------------
+  # Cron: capability verification sweep.
+  #
+  # Runs the non-destructive probe for every provider and writes the result to
+  # `integration_verifications`. This is the ONLY way a capability becomes
+  # `live_verified` — the registry derives that state from a dated probe row, so
+  # nothing in the system can claim a working integration without this job
+  # having actually succeeded against the provider.
+  # ---------------------------------------------------------------------------
+  - type: cron
+    name: foundry-verify
+    runtime: node
+    plan: starter
+    region: oregon
+    rootDir: .
+    schedule: "17 */6 * * *"
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    startCommand: node apps/verifier/dist/index.js
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_BASE_URL
+        fromService:
+          name: foundry-api
+          type: web
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: foundry-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: foundry-keyvalue
+          type: keyvalue
+          property: connectionString
+      - fromGroup: foundry-provider-secrets
+
+  # ---------------------------------------------------------------------------
+  # Cron: nightly finance reconciliation and budget rollover.
+  #
+  # Reconciliation compares the internal double-entry ledger against provider
+  # balance records. A drift is an incident, not a rounding difference, so this
+  # runs on its own schedule and alerts rather than self-correcting.
+  # ---------------------------------------------------------------------------
+  - type: cron
+    name: foundry-reconcile
+    runtime: node
+    plan: starter
+    region: oregon
+    rootDir: .
+    schedule: "20 7 * * *"
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
+    startCommand: node apps/worker/dist/cron/reconcile.js
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_BASE_URL
+        fromService:
+          name: foundry-api
+          type: web
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: foundry-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: foundry-keyvalue
+          type: keyvalue
+          property: connectionString
+      - fromGroup: foundry-provider-secrets
+
+# -----------------------------------------------------------------------------
+# Environment groups.
+#
+# Every value is `sync: false`: Render prompts for it at Blueprint apply time
+# and stores it encrypted. None of them exist in this repository, and the
+# services start without them — each provider simply reports
+# `blocked_missing_credentials` until its key is present AND a probe succeeds.
+# -----------------------------------------------------------------------------
+envVarGroups:
+  - name: foundry-operator
+    envVars:
+      # Gates every mutating governance route (approvals, kill switches,
+      # budgets). Unset means those routes refuse, not that they are open.
+      - key: OPERATOR_API_TOKEN
+        generateValue: true
+      - key: OWNER_EMAIL
+        sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+
+  - name: foundry-provider-secrets
+    envVars:
+      # --- Model inference -------------------------------------------------
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
+      # --- Payments --------------------------------------------------------
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: DODO_API_KEY
+        sync: false
+      - key: DODO_WEBHOOK_SECRET
+        sync: false
+      - key: WHOP_API_KEY
+        sync: false
+      - key: WHOP_COMPANY_ID
+        sync: false
+      - key: WHOP_WEBHOOK_SECRET
+        sync: false
+
+      # --- Research and expert review --------------------------------------
+      - key: TERAC_API_KEY
+        sync: false
+      - key: TERAC_PROJECT_ID
+        sync: false
+      - key: TERAC_WEBHOOK_SECRET
+        sync: false
+      - key: SOLARI_API_KEY
+        sync: false
+      - key: BAND_AGENT_API_KEY
+        sync: false
+      - key: BAND_USER_API_KEY
+        sync: false
+
+      # --- Build, host, QA --------------------------------------------------
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_OWNER_ID
+        sync: false
+      - key: RENDER_STOREFRONT_SERVICE_ID
+        sync: false
+      - key: LOVABLE_OAUTH_ACCESS_TOKEN
+        sync: false
+      - key: LOVABLE_WEBHOOK_SECRET
+        sync: false
+      - key: SANDBOX0_TOKEN
+        sync: false
+      - key: SANDBOX0_WEBHOOK_SECRET
+        sync: false
+      - key: SUPERSERVE_API_KEY
+        sync: false
+      - key: REPLAY_API_KEY
+        sync: false
+      - key: REPLAY_PROJECT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+
+      # --- Marketing and support -------------------------------------------
+      - key: META_ADS_ACCESS_TOKEN
+        sync: false
+      - key: META_ADS_ACCOUNT_ID
+        sync: false
+      - key: GOOGLE_ADS_DEVELOPER_TOKEN
+        sync: false
+      - key: GOOGLE_ADS_CLIENT_ID
+        sync: false
+      - key: GOOGLE_ADS_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_ADS_REFRESH_TOKEN
+        sync: false
+      - key: GOOGLE_ADS_CUSTOMER_ID
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: LINQ_API_V3_API_KEY
+        sync: false
+      - key: LINQ_FROM_NUMBER
+        sync: false
+      - key: LINQ_WEBHOOK_SECRET
+        sync: false
+
+      # --- Sourcing and fulfilment -----------------------------------------
+      - key: ALIBABA_APP_KEY
+        sync: false
+      - key: ALIBABA_APP_SECRET
+        sync: false
+      - key: SHIPPO_API_TOKEN
+        sync: false

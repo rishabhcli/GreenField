@@ -1,0 +1,29 @@
+{
+  "name": "@foundry/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "bin": {
+    "foundry-migrate": "./dist/cli/migrate.js"
+  },
+  "scripts": {
+    "build": "tsc -b && node ./scripts/copy-sql.mjs",
+    "migrate": "node ./dist/cli/migrate.js",
+    "migrate:status": "node ./dist/cli/migrate.js status",
+    "migrate:dry-run": "node ./dist/cli/migrate.js --dry-run"
+  },
+  "dependencies": {
+    "@foundry/core": "workspace:*",
+    "@foundry/obs": "workspace:*",
+    "pg": "^8.16.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5"
+  }
+}

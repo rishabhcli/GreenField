@@ -1,0 +1,25 @@
+{
+  "name": "@foundry/providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
+    "@foundry/core": "workspace:*",
+    "@foundry/obs": "workspace:*",
+    "stripe": "^22.5.0",
+    "ws": "^8.18.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}

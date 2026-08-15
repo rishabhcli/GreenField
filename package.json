@@ -1,0 +1,29 @@
+{
+  "name": "autonomous-company-factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production operating layer for autonomous companies: research -> sourcing -> brand -> commerce -> marketing -> support, run by a CEO/manager/specialist agent organization.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "clean": "tsc -b tsconfig.build.json --clean && rm -rf packages/*/dist apps/*/dist",
+    "typecheck": "tsc -b tsconfig.build.json --pretty",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "migrate": "node --enable-source-maps packages/db/dist/cli/migrate.js",
+    "verify": "node --enable-source-maps apps/verifier/dist/cli.js",
+    "preflight": "pnpm build && pnpm test && pnpm lint"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^22.15.3",
+    "eslint": "^9.39.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.39.0",
+    "vitest": "^3.2.4"
+  }
+}

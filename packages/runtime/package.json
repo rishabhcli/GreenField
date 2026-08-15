@@ -1,0 +1,20 @@
+{
+  "name": "@foundry/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": "./dist/index.js" },
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@foundry/agents": "workspace:*",
+    "@foundry/core": "workspace:*",
+    "@foundry/db": "workspace:*",
+    "@foundry/obs": "workspace:*",
+    "@foundry/providers": "workspace:*",
+    "@foundry/queue": "workspace:*",
+    "@foundry/services": "workspace:*",
+    "ioredis": "^5.9.0"
+  }
+}

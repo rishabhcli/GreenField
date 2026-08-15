@@ -1,0 +1,398 @@
+/**
+ * Agent executor — runs one agent role to completion, durably.
+ *
+ * Every message is persisted before the next request goes out, so a worker that
+ * dies mid-run leaves a complete, inspectable trace rather than a black hole.
+ * Token spend is accumulated as it happens, so even a killed run reports what
+ * it cost.
+ *
+ * The system prompt is assembled from the org chart — mandate, deliverables,
+ * authorities, and the honesty rules that apply to every role. Those rules are
+ * not decoration: they are the difference between an agent that reports a
+ * blocked dependency and one that invents a plausible result.
+ */
+
+import {
+  MODEL_BY_TIER,
+  ValidationError,
+  describeError,
+  roleByKey,
+  type AgentRunStatus,
+  type RoleDefinition,
+} from './deps.js';
+import type { Repositories } from '@foundry/db';
+import type { AnthropicAdapter, MessageParam, ToolDefinition } from '@foundry/providers';
+import { effortForTier } from '@foundry/providers';
+import { getLogger, metrics, withContext } from '@foundry/obs';
+import { executeToolCall, type ToolContext, type ToolRegistry } from './tool-registry.js';
+import type { PolicyGate } from './policy-gate.js';
+
+export interface ExecutorDeps {
+  readonly repos: Repositories;
+  readonly llm: AnthropicAdapter;
+  readonly tools: ToolRegistry;
+  readonly gate: PolicyGate;
+}
+
+export interface RunRequest {
+  readonly runId: string;
+  readonly companyId: string;
+  readonly roleKey: string;
+  readonly objective: string;
+  readonly inputRefs?: Record<string, unknown>;
+  readonly maxIterations?: number;
+  readonly signal: AbortSignal;
+}
+
+export interface RunOutcome {
+  readonly status: AgentRunStatus;
+  readonly finalText: string;
+  readonly iterations: number;
+  readonly toolCalls: number;
+  readonly costMinorUsd: number;
+  /** Set when the run could not proceed: blocked capability, denial, refusal. */
+  readonly blockedReason: string | null;
+}
+
+export class AgentExecutor {
+  constructor(private readonly deps: ExecutorDeps) {}
+
+  async run(request: RunRequest): Promise<RunOutcome> {
+    const role = roleByKey(request.roleKey);
+    if (!role) {
+      throw new ValidationError(`Unknown role "${request.roleKey}" — it is not in the org chart`);
+    }
+
+    return withContext(
+      { traceId: request.runId, companyId: request.companyId, runId: request.runId, route: `agent:${role.key}` },
+      async () => this.#execute(request, role),
+    );
+  }
+
+  async #execute(request: RunRequest, role: RoleDefinition): Promise<RunOutcome> {
+    const log = getLogger();
+    const { repos, llm, tools, gate } = this.deps;
+
+    const missing = tools.missingForRole(role.tools);
+    if (missing.length > 0) {
+      // A role wired to tools that do not exist is a configuration bug, and
+      // running it anyway would silently reduce what the role can do.
+      throw new ValidationError(
+        `Role "${role.key}" references unregistered tools: ${missing.join(', ')}`,
+        { roleKey: role.key, missing },
+      );
+    }
+
+    const roleTools = tools.forRole(role.tools);
+    const toolDefinitions: ToolDefinition[] = roleTools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.jsonSchema,
+      strict: true,
+    }));
+
+    const systemPrompt = buildSystemPrompt(role, request);
+    const model = MODEL_BY_TIER[role.tier];
+
+    await repos.agents.runs.markStarted(request.runId);
+    let sequence = await repos.agents.messages.nextSequence(request.runId);
+
+    await repos.agents.messages.append({
+      runId: request.runId,
+      sequence: sequence++,
+      role: 'system',
+      content: { text: systemPrompt },
+    });
+
+    const initialMessages: MessageParam[] = [
+      {
+        role: 'user',
+        content: renderObjective(request),
+      },
+    ];
+    await repos.agents.messages.append({
+      runId: request.runId,
+      sequence: sequence++,
+      role: 'user',
+      content: initialMessages[0]!.content,
+    });
+
+    let toolCallCount = 0;
+    let blockedReason: string | null = null;
+
+    const toolCtx: ToolContext = {
+      companyId: request.companyId,
+      runId: request.runId,
+      roleKey: role.key,
+      actorHandle: role.key,
+      traceId: request.runId,
+      signal: request.signal,
+    };
+
+    try {
+      const result = await llm.runToolLoop({
+        model,
+        system: systemPrompt,
+        messages: initialMessages,
+        tools: toolDefinitions,
+        effort: effortForTier(role.tier),
+        maxIterations: request.maxIterations ?? 20,
+        maxTokens: 16_000,
+        signal: request.signal,
+        executeTool: async (call) => {
+          toolCallCount += 1;
+          const outcome = await executeToolCall(tools, gate, { name: call.name, input: call.input }, toolCtx);
+
+          if (!outcome.ok) {
+            // A denial or blocked capability is recorded so the loop's reason
+            // for stopping short is visible afterwards, not just in the text.
+            if (outcome.kind === 'denied' || outcome.kind === 'needs_approval') {
+              blockedReason = outcome.reason;
+            }
+            return { content: outcome.reason, isError: true };
+          }
+          return { content: JSON.stringify(outcome.output ?? null), isError: false };
+        },
+        onStep: async (step) => {
+          await repos.agents.messages.append({
+            runId: request.runId,
+            sequence: sequence++,
+            role: 'assistant',
+            content: step.assistant,
+          });
+          for (const toolResult of step.toolResults) {
+            await repos.agents.messages.append({
+              runId: request.runId,
+              sequence: sequence++,
+              role: 'tool_result',
+              content: { toolUseId: toolResult.toolUseId, content: toolResult.content },
+              toolUseId: toolResult.toolUseId,
+              isError: toolResult.isError,
+            });
+          }
+          // Usage is written per step, so a run killed mid-flight still
+          // reports what it consumed.
+          await repos.agents.runs.addUsage(request.runId, {
+            inputTokens: step.usage.inputTokens,
+            outputTokens: step.usage.outputTokens,
+            costMinorUsd: step.usage.costMinorUsd,
+            toolCalls: step.toolResults.length,
+          });
+        },
+      });
+
+      /* ---------------------------------------------------------------- */
+      /* Terminal outcomes                                                 */
+      /* ---------------------------------------------------------------- */
+
+      if (result.refusal) {
+        const reason =
+          `The model declined this request (${result.refusal.category ?? 'unspecified category'}): ` +
+          `${result.refusal.explanation ?? 'no explanation given'}`;
+        await repos.agents.runs.finish({
+          id: request.runId,
+          status: 'failed',
+          roleKey: role.key,
+          error: reason,
+          output: { refusal: result.refusal },
+        });
+        await this.#audit(request, role, 'failure', { reason, kind: 'model_refusal' });
+        return {
+          status: 'failed',
+          finalText: '',
+          iterations: result.iterations,
+          toolCalls: toolCallCount,
+          costMinorUsd: result.usage.costMinorUsd,
+          blockedReason: reason,
+        };
+      }
+
+      if (result.stopReason === 'max_iterations') {
+        const reason = `Run hit the ${request.maxIterations ?? 20}-iteration cap without finishing.`;
+        await repos.agents.runs.finish({
+          id: request.runId,
+          status: 'failed',
+          roleKey: role.key,
+          error: reason,
+          output: { iterations: result.iterations },
+        });
+        await this.#audit(request, role, 'failure', { reason, kind: 'iteration_cap' });
+        return {
+          status: 'failed',
+          finalText: '',
+          iterations: result.iterations,
+          toolCalls: toolCallCount,
+          costMinorUsd: result.usage.costMinorUsd,
+          blockedReason: reason,
+        };
+      }
+
+      await repos.agents.runs.finish({
+        id: request.runId,
+        status: 'succeeded',
+        roleKey: role.key,
+        output: { text: result.finalText, blockedReason },
+      });
+      await this.#audit(request, role, 'success', {
+        iterations: result.iterations,
+        toolCalls: toolCallCount,
+        costMinorUsd: result.usage.costMinorUsd,
+        blocked: blockedReason !== null,
+      });
+
+      log.info(
+        { role: role.key, iterations: result.iterations, toolCalls: toolCallCount, costMinorUsd: result.usage.costMinorUsd },
+        'agent run finished',
+      );
+
+      return {
+        status: 'succeeded',
+        finalText: result.finalText,
+        iterations: result.iterations,
+        toolCalls: toolCallCount,
+        costMinorUsd: result.usage.costMinorUsd,
+        blockedReason,
+      };
+    } catch (error) {
+      const detail = describeError(error);
+      const timedOut = request.signal.aborted;
+      const status: AgentRunStatus = timedOut ? 'timed_out' : 'failed';
+
+      await repos.agents.runs.finish({
+        id: request.runId,
+        status,
+        roleKey: role.key,
+        error: String(detail['message'] ?? 'run failed'),
+        output: { error: detail },
+      });
+      await this.#audit(request, role, 'failure', detail);
+      metrics.agentRuns.inc({ role: role.key, outcome: status });
+
+      log.error({ role: role.key, err: error }, 'agent run failed');
+      return {
+        status,
+        finalText: '',
+        iterations: 0,
+        toolCalls: toolCallCount,
+        costMinorUsd: 0,
+        blockedReason: String(detail['message'] ?? 'run failed'),
+      };
+    }
+  }
+
+  async #audit(
+    request: RunRequest,
+    role: RoleDefinition,
+    outcome: 'success' | 'failure',
+    detail: Record<string, unknown>,
+  ): Promise<void> {
+    await this.deps.repos.audit.append({
+      companyId: request.companyId,
+      kind: 'agent_run_finished',
+      actorId: request.runId,
+      actorKind: role.tier === 'executive' ? 'ceo_agent' : role.tier === 'manager' ? 'manager_agent' : 'specialist_agent',
+      action: `${role.key}: ${request.objective.slice(0, 120)}`,
+      subjectType: 'agent_run',
+      subjectRefId: request.runId,
+      outcome,
+      detail,
+    });
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Prompt assembly                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Honesty rules applied to every role.
+ *
+ * These exist because the failure mode that would make this whole system
+ * worthless is an agent that reports success it did not achieve. Each line
+ * targets a specific way that happens.
+ */
+const OPERATING_RULES = `
+# How you operate
+
+Report outcomes faithfully. If a tool failed, say so with the error. If a step
+was skipped or blocked, say that plainly. Only claim something is done when a
+tool result in this session shows it is done — before reporting progress, audit
+each claim against a tool result you actually received.
+
+Never invent data. You may not fabricate a supplier quote, a customer, an order,
+a metric, a review, or a source. If you do not have a real value, say the value
+is unknown and explain what would produce it. An honest "blocked, here is what
+is needed" is a successful outcome; a plausible invention is a failure even if
+nobody catches it.
+
+When a tool is denied by policy or a capability is unavailable, that is
+information, not an obstacle to route around. Report it, then continue with the
+work that does not depend on it. Do not retry a denial, and do not attempt an
+equivalent action through a different tool.
+
+Distinguish what you observed from what you assumed. When you estimate, label it
+an estimate and state what it rests on.
+
+Deliver what was asked at the scope intended. Make routine judgment calls
+yourself; check in only when different readings lead to materially different
+work. Finish the whole task, not just the easy part — if you genuinely cannot
+complete something, do the rest and state plainly what is missing and why.
+
+Lead with the outcome. Your first sentence should answer what happened or what
+you found. Supporting detail comes after.
+`.trim();
+
+export function buildSystemPrompt(role: RoleDefinition, request: RunRequest): string {
+  const sections: string[] = [
+    `You are the ${role.title} of an autonomous company. Your role key is \`${role.key}\`.`,
+    '',
+    '# Your mandate',
+    role.mandate,
+  ];
+
+  if (role.deliverables.length > 0) {
+    sections.push('', '# What you are accountable for producing', ...role.deliverables.map((d) => `- ${d}`));
+  }
+
+  if (role.authorities.length > 0) {
+    sections.push(
+      '',
+      '# Your authority',
+      `You hold: ${role.authorities.join(', ')}.`,
+      role.spendCeilingMinorUsd === null
+        ? 'You have no independent spend authority — every action that costs money needs human approval, which the platform requests for you automatically.'
+        : `You may commit up to ${(role.spendCeilingMinorUsd / 100).toFixed(2)} USD per action without human approval. Above that the platform opens an approval request automatically.`,
+      'Anything outside this list is refused by the policy layer before it runs. That is expected — report it rather than working around it.',
+    );
+  }
+
+  sections.push('', OPERATING_RULES);
+
+  if (role.reportsTo) {
+    sections.push(
+      '',
+      '# Reporting',
+      `You report to \`${role.reportsTo}\`. When you finish, your final message is your report: what you found or did, what it means for the business, and what you need from them.`,
+    );
+  }
+
+  sections.push(
+    '',
+    '# Company context',
+    `Company id: ${request.companyId}. Agent run id: ${request.runId}.`,
+  );
+
+  return sections.join('\n');
+}
+
+function renderObjective(request: RunRequest): string {
+  const parts = [`# Objective\n${request.objective}`];
+  const refs = request.inputRefs ?? {};
+  if (Object.keys(refs).length > 0) {
+    parts.push(`\n# Inputs\n${JSON.stringify(refs, null, 2)}`);
+  }
+  parts.push(
+    '\nBegin. Use your tools to gather what you need rather than assuming. When you are done, write your report.',
+  );
+  return parts.join('\n');
+}

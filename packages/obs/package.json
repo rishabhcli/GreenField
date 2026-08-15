@@ -1,0 +1,14 @@
+{
+  "name": "@foundry/obs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": "./dist/index.js" },
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@foundry/core": "workspace:*",
+    "pino": "^9.13.1"
+  }
+}
