@@ -36,6 +36,34 @@ export const BandAgentIdentity = z
   .passthrough();
 export type BandAgentIdentity = z.infer<typeof BandAgentIdentity>;
 
+/** POST /me/agents/register — API key is shown once. */
+export const BandAgentRegistration = z
+  .object({
+    data: z
+      .object({
+        agent: z.object({ id: z.string() }).passthrough().optional(),
+        credentials: z.object({ api_key: z.string() }).passthrough().optional(),
+      })
+      .passthrough()
+      .optional(),
+    agent: z.object({ id: z.string() }).passthrough().optional(),
+    credentials: z.object({ api_key: z.string() }).passthrough().optional(),
+  })
+  .passthrough();
+export type BandAgentRegistration = z.infer<typeof BandAgentRegistration>;
+
+export function registrationApiKey(body: BandAgentRegistration): { agentId: string; apiKey: string } | undefined {
+  const nested = body.data;
+  const agentId =
+    (typeof nested?.agent?.id === 'string' ? nested.agent.id : undefined) ??
+    (typeof body.agent?.id === 'string' ? body.agent.id : undefined);
+  const apiKey =
+    (typeof nested?.credentials?.api_key === 'string' ? nested.credentials.api_key : undefined) ??
+    (typeof body.credentials?.api_key === 'string' ? body.credentials.api_key : undefined);
+  if (!agentId || !apiKey) return undefined;
+  return { agentId, apiKey };
+}
+
 export const BandPeer = z
   .object({
     id: z.string(),
@@ -196,6 +224,16 @@ export type BandMemory = z.infer<typeof BandMemory>;
  */
 export function bandListEnvelope<T extends z.ZodTypeAny>(item: T) {
   return z.union([z.object({ items: z.array(item).optional(), data: z.array(item).optional() }).passthrough(), z.array(item)]);
+}
+
+/** Live 2026-08-15: single resources are wrapped `{ data: T }`. */
+export function bandResource<T extends z.ZodTypeAny>(item: T) {
+  return z.preprocess((raw) => {
+    if (raw && typeof raw === 'object' && 'data' in raw && !('id' in raw)) {
+      return (raw as { data: unknown }).data;
+    }
+    return raw;
+  }, item);
 }
 
 export function normaliseBandList<T>(raw: readonly T[] | { items?: T[]; data?: T[] }): readonly T[] {

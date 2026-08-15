@@ -17,7 +17,8 @@ export const HANDLED_DODO_EVENTS: readonly string[] = DODO_MANIFEST.webhooks?.[0
 
 export function mapDodoEventToOrderTransition(eventType: string, payload: unknown): MappingResult {
   const envelope = DodoWebhookEnvelope.safeParse(payload);
-  const data = envelope.success ? envelope.data.data : asRecord(payload);
+  const nested = envelope.success ? envelope.data.data : {};
+  const data = Object.keys(nested).length > 0 ? nested : asRecord(payload);
   const ids = externalIds(data);
 
   switch (eventType) {
@@ -137,6 +138,16 @@ export function mapDodoEventToOrderTransition(eventType: string, payload: unknow
 
     case 'subscription.active':
     case 'subscription.renewed':
+      return {
+        action: 'transition',
+        intent: {
+          orderStatus: null,
+          kind: 'status_changed',
+          externalIds: ids,
+          detail: { eventType, status: data['status'] ?? null },
+        },
+      };
+
     case 'subscription.on_hold':
     case 'subscription.paused':
     case 'subscription.cancelled':

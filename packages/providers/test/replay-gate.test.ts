@@ -13,8 +13,21 @@
 
 import { describe, expect, it } from 'vitest';
 import { evaluateReleaseGate } from '@foundry/core';
-import { flowFromBug, isTerminalExplorationStatus, severityFromBug, toQaRunAndDefects } from '../src/replay/gate.js';
-import { ReplayBug, ReplayExploration, ReplayJourney, ReplayProject } from '../src/replay/schemas.js';
+import {
+  flowFromBug,
+  isProjectIdle,
+  isTerminalExplorationStatus,
+  severityFromBug,
+  toQaRunAndDefects,
+  toQaRunFromProject,
+} from '../src/replay/gate.js';
+import {
+  ReplayBug,
+  ReplayExploration,
+  ReplayJourney,
+  ReplayProject,
+  ReplayProjectTiming,
+} from '../src/replay/schemas.js';
 
 function project(overrides: Record<string, unknown> = {}) {
   return ReplayProject.parse({
@@ -251,5 +264,59 @@ describe('toQaRunAndDefects', () => {
 
     expect(result.verdict).toBe('block');
     expect(result.blockers.some((b) => b.code === 'critical_flow_uncovered')).toBe(true);
+  });
+
+  it('passes Replay reproduction_steps through when the API sent them', () => {
+    const { defects } = toQaRunAndDefects(project(), exploration(), [
+      bug({ reproduction_steps: ['Open /checkout', 'Submit the form'] }),
+    ]);
+    expect(defects[0]?.reproductionSteps).toEqual(['Open /checkout', 'Submit the form']);
+  });
+});
+
+describe('isProjectIdle', () => {
+  it('is idle only when finished_at is a non-empty timestamp', () => {
+    expect(isProjectIdle(ReplayProjectTiming.parse({ finished_at: '2026-08-15T12:00:00.000Z' }))).toBe(true);
+    expect(isProjectIdle(ReplayProjectTiming.parse({ finished_at: null, started_at: '2026-08-15T11:00:00.000Z' }))).toBe(
+      false,
+    );
+  });
+});
+
+describe('toQaRunFromProject', () => {
+  it('maps a still-running project to running, never completed', () => {
+    const { run } = toQaRunFromProject(
+      project(),
+      ReplayProjectTiming.parse({ started_at: '2026-08-15T11:00:00.000Z', finished_at: null }),
+      [],
+      [],
+    );
+    expect(run.status).toBe('running');
+    expect(run.status).not.toBe('completed');
+  });
+
+  it('maps idle-without-start to failed — unexecuted QA is not a pass', () => {
+    const { run } = toQaRunFromProject(
+      project(),
+      ReplayProjectTiming.parse({ created_at: '2026-08-15T11:00:00.000Z', started_at: null, finished_at: '2026-08-15T11:00:01.000Z' }),
+      [],
+      [],
+    );
+    expect(run.status).toBe('failed');
+    expect(run.status).not.toBe('completed');
+  });
+
+  it('maps idle after real work to completed so the gate can judge defects', () => {
+    const { run } = toQaRunFromProject(
+      project(),
+      ReplayProjectTiming.parse({
+        started_at: '2026-08-15T11:00:00.000Z',
+        finished_at: '2026-08-15T11:20:00.000Z',
+      }),
+      [],
+      [journey({ name: 'Homepage' })],
+    );
+    expect(run.status).toBe('completed');
+    expect(run.flowsCovered).toContain('homepage_loads');
   });
 });

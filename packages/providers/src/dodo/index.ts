@@ -17,7 +17,6 @@ import { bearerAuth, type ProviderHttpClient } from '../http/client.js';
 import { verifyStandardWebhook, type VerificationInput, type VerificationResult } from '../http/webhook-verify.js';
 import { DODO_MANIFEST, SECRETS } from '../manifests.js';
 import { DodoCheckoutSession, DodoProduct, DodoProductList, DodoRefund } from './schemas.js';
-import { mapDodoEventToOrderTransition } from './events.js';
 
 export { mapDodoEventToOrderTransition, HANDLED_DODO_EVENTS } from './events.js';
 
@@ -74,7 +73,11 @@ export class DodoAdapter extends ProviderAdapter {
   }
 
   async createCheckout(input: DodoCheckoutInput): Promise<DodoCheckoutResult> {
-    refuseIfPhysical(input.productKind, 'Dodo');
+    if (input.productKind === 'physical_good') {
+      throw new ValidationError(
+        'Dodo cannot collect payment for physical goods. Use Stripe as merchant of record for physical products.',
+      );
+    }
     this.assertActivated();
     assertPaymentRoute(input.productKind === 'membership' ? 'membership' : input.productKind, 'dodo_merchant_of_record');
     if (input.productCart.length === 0) {
@@ -119,7 +122,11 @@ export class DodoAdapter extends ProviderAdapter {
     currency: string;
     idempotencyKey?: string;
   }): Promise<{ productId: string | null }> {
-    refuseIfPhysical(input.productKind, 'Dodo');
+    if (input.productKind === 'physical_good') {
+      throw new ValidationError(
+        'Dodo cannot list a physical product. Use Stripe as merchant of record for physical products.',
+      );
+    }
     this.assertActivated();
     const response = await this.#http().request(
       {
@@ -185,12 +192,4 @@ export function refusePhysicalGoods(): never {
   throw new ValidationError(
     'Dodo cannot collect payment for physical goods. Use Stripe as merchant of record for physical products.',
   );
-}
-
-function refuseIfPhysical(kind: string, vendor: string): void {
-  if (kind === 'physical_good') {
-    throw new ValidationError(
-      `${vendor} cannot collect payment for physical goods. Use Stripe as merchant of record for physical products.`,
-    );
-  }
 }

@@ -4,7 +4,7 @@ Status legend: **DONE** = built and verified by an executed test. **PARTIAL** = 
 not yet fully verified. **NOT COMPLETE** = not built, or built but a stated requirement
 is unmet. Nothing is marked DONE on the strength of code existing.
 
-Last updated: 2026-08-15.
+Last updated: 2026-08-15 (verifier rows + Render Workflows). Production **NOT COMPLETE**. Loop **not DONE**.
 
 ---
 
@@ -25,30 +25,25 @@ Last updated: 2026-08-15.
 | Double-entry ledger | **DONE** | Integration tests: balanced sale written, unbalanced transaction rejected before reaching the database, P&L derived not asserted. |
 | Agent run records | **DONE** | Integration tests: model resolved from the org chart tier, usage accumulated, unknown role refused. |
 
-Full suite: **132 tests, 132 passing**, stable across three consecutive runs.
+Full suite this session: **354 passed, 1 skipped** (`live-prize-probes` unless `LIVE_PROBES=1`). `pnpm typecheck` passed.
 
-## Built, not yet verified against a live service
+## Built vs live-verified
 
 | Area | Status | What is missing |
 |---|---|---|
-| Provider HTTP client (retry, breaker, rate limit, idempotency, error classification) | **PARTIAL** | Unit tests not yet written; no live call made. |
-| Webhook signature verifiers (Standard Webhooks, Stripe, Terac, Lovable, Sandbox0) | **PARTIAL** | Written against documented schemes; unit tests with known-good vectors not yet written. Sandbox0's exact signed-content layout is UNVERIFIED by the vendor's docs. |
-| Provider manifests (20 providers) | **PARTIAL** | Encodes the 2026-08-14 documentation research. No live probe has run, so every capability is correctly reporting `blocked_missing_credentials` or `configured_unverified`. |
-| Queue system (BullMQ over Render Key Value) | **PARTIAL** | 24 queues, policies and schedules defined; no Redis integration test yet. |
+| Provider HTTP client | **PARTIAL** | Unit coverage exists; not every client path has a live call. |
+| Webhook signature verifiers | **PARTIAL** | Stripe ingest blocked: `STRIPE_WEBHOOK_SECRET` unset. |
+| Provider manifests / registry | **PARTIAL** | Verifier wrote 24 rows. **11 providers `live_verified`** (probe only). See `VERIFICATION_EVIDENCE.md`. |
+| Queue system | **PARTIAL** | Render Key Value provisioned (`noeviction`). BullMQ 5 rejects `:`; local fix `environment.name`. Deployed `main` still fails workflow ticks. 24 queues. |
+| Dodo / Whop / Lovable | **PARTIAL** | Whop `live_verified`. Dodo 401. Lovable missing OAuth. Physical refuse local. |
+| Prize-track adapters | **PARTIAL** | Probe-verified: Terac, Stripe, Linq (phone), Replay (list), Superserve, Pioneer (catalog), Band, Render. Still blocked: Agent Pay 2011, Pioneer inference, Terac study (0 projects), Replay QA, workflow task success. |
 
-## Not built yet
+## Not complete (production)
 
-- Provider adapters (Stripe, Dodo, Whop, Terac, Replay, BAND, Superserve, Sandbox0,
-  Solari, Render, Lovable, Anthropic, Meta Ads, Google Ads, Resend, Cloudflare, Shippo,
-  sourcing, images) — **NOT COMPLETE**
-- Agent runtime and tool registry — **NOT COMPLETE**
-- Business services (research, sourcing, brand, commerce, marketing, support, finance,
-  legal, QA orchestration) — **NOT COMPLETE**
-- API service (`apps/api`), worker (`apps/worker`), verifier (`apps/verifier`) — **NOT COMPLETE**
-- `render.yaml` deployment blueprint — **NOT COMPLETE**
-- Remaining required markdown (ARCHITECTURE, SPONSORS, INTEGRATIONS, DATA_MODEL, AGENTS,
-  SECURITY, LEGAL_COMPLIANCE, TESTING, RUNBOOK, PRODUCTION_CHECKLIST, DECISIONS, BLOCKERS,
-  VERIFICATION_EVIDENCE) — **NOT COMPLETE**
+- Company loop on `foundry-api` + workers — **NOT COMPLETE** (`foundry-api` not created)
+- Linq Agent Pay, Pioneer GLiNER2/GLiGuard inference, Dodo, Lovable MCP — **NOT COMPLETE**
+- Workflow `tickCompanyLoop` **accepted** (HTTP 202) then **failed** on deployed queue names — **NOT COMPLETE** until local BullMQ fix is deployed
+- Remaining required markdown (ARCHITECTURE, SPONSORS, INTEGRATIONS, DATA_MODEL, AGENTS, SECURITY, LEGAL_COMPLIANCE, TESTING, RUNBOOK, PRODUCTION_CHECKLIST, DECISIONS) — **NOT COMPLETE**
 
 ## Design decisions forced by testing
 
@@ -71,8 +66,12 @@ These were found by tests failing, not by review:
 
 ## Honest position on live integrations
 
-No live API call has been made against any provider, because no credentials exist. Every
-capability therefore reports `blocked_missing_credentials` or `configured_unverified`, and
-the capability registry structurally cannot report `live_verified` without a dated,
-successful probe row written by the verification harness. That is the intended behaviour,
-not a gap to paper over.
+Verifier **ran** against hosted Render Postgres and wrote 24 `integration_verifications` rows.
+**11 `live_verified`:** terac, stripe, whop, render, linq, superserve, replay, band, sandbox0, solari, pioneer
+(those are `probe()` rows — not Agent Pay settlement, not Pioneer inference, not a Terac study, not a finished workflow tick).
+
+Render Workflows: `POST /v1/workflows` created `foundry-workflows`; `POST /v1/task-runs` returned **202** then failed on deployed `Queue name cannot contain :`. Local queue key fix is unpushed.
+
+Human blockers unchanged: Linq **2011**, Pioneer **403 card_required**, Dodo **401**, Lovable OAuth, Egoist by design.
+
+See `VERIFICATION_EVIDENCE.md` and `BLOCKERS.md`.

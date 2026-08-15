@@ -15,9 +15,16 @@ import {
   type QueueName,
 } from './contracts.js';
 
-/** Namespaced so staging and production can share a Key Value instance safely. */
+/**
+ * Namespaced so staging and production can share a Key Value instance safely.
+ * BullMQ ≥5 rejects `:` in queue names (`Queue name cannot contain :`).
+ */
 export function queueKey(environment: string, name: QueueName): string {
-  return `${environment}:${name}`;
+  const key = `${environment}.${name}`;
+  if (key.includes(':')) {
+    throw new Error(`BullMQ queue name cannot contain ':': got ${JSON.stringify(key)}`);
+  }
+  return key;
 }
 
 export interface QueueSetOptions {

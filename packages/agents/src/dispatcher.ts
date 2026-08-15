@@ -110,6 +110,12 @@ export class OrgDispatcher {
   }
 
   async #enqueueRun(request: DispatchRequest, toRoleKey: string): Promise<DispatchResult> {
+    if (!this.coordination?.band) {
+      throw new ValidationError(
+        'Dispatch requires BAND coordination. The room is the handoff; enqueue without posting to a BAND room is refused.',
+      );
+    }
+
     const run = await this.repos.agents.runs.create({
       companyId: request.companyId,
       roleKey: toRoleKey,
@@ -118,8 +124,20 @@ export class OrgDispatcher {
       parentRunId: request.parentRunId ?? null,
     });
 
-    if (this.coordination?.band) {
+    try {
       await this.#postBandAssignment(request, run.id, toRoleKey);
+    } catch (error) {
+      try {
+        await this.repos.agents.runs.finish({
+          id: run.id,
+          status: 'failed',
+          roleKey: toRoleKey,
+          error: 'BAND handoff failed; the specialist was not enqueued.',
+        });
+      } catch {
+        /* keep the handoff error */
+      }
+      throw error;
     }
 
     await this.queues.enqueue(
@@ -223,14 +241,22 @@ export class OrgDispatcher {
   async #postBandAssignment(request: DispatchRequest, runId: string, toRoleKey: string): Promise<void> {
     const band = this.coordination!.band;
     const me = await band.getMe();
-    const handle = me.handle ?? me.id;
+    const handle = (me.handle ?? me.id)?.replace(/^@/, '');
+    if (!handle || handle.trim().length === 0) {
+      throw new ValidationError(
+        'BAND GET /agent/me returned no handle to @mention; dispatch cannot route a handoff.',
+        { runId },
+      );
+    }
     const chatId = await this.#ensureCompanyChat(request.companyId, band);
+    // @mention is the routing primitive. Enqueue happens only after this send
+    // returns — taking the room away (or a send that cannot mention) breaks dispatch.
     const message = await band.sendMessage(chatId, {
       recipients: [handle],
       body:
         `DISPATCH role=${toRoleKey} run=${runId}\n` +
         `${request.objective}\n` +
-        `A specialist must not start this work except by acknowledging this message.`,
+        `A specialist must not start this work except by claiming this message.`,
       taskId: runId,
     });
     await this.repos.agents.runs.attachRoom(runId, chatId);

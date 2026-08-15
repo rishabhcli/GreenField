@@ -41,7 +41,9 @@ import {
   LinqChat,
   LinqChatList,
   LinqExperienceInvocation,
+  LinqExperienceList,
   LinqIMessageAppPart,
+  LinqMessage,
   LinqMessageList,
   LinqMessagePartInput,
   LinqPaymentRequest,
@@ -49,9 +51,13 @@ import {
   LinqPhoneNumberList,
   LinqSendMessageResponse,
   blockedHandlesOf,
+  chatsOf,
   extractLinqErrorCode,
   extractLinqErrorMessage,
+  messagesOf,
+  nextCursorOf,
   phoneNumbersOf,
+  reputationStatusOf,
 } from './schemas.js';
 
 /* -------------------------------------------------------------------------- */
@@ -123,9 +129,11 @@ export class LinqAdapter extends ProviderAdapter {
   override readonly manifest = LINQ_MANIFEST;
   #optOutState: OptOutStateStore = NO_LOCAL_OPT_OUT_STATE;
   #client: ProviderHttpClient | undefined;
+  readonly #fetchImpl: typeof fetch | undefined;
 
-  constructor(ctx: AdapterContext) {
+  constructor(ctx: AdapterContext, overrides?: { readonly fetchImpl?: typeof fetch }) {
     super(ctx);
+    this.#fetchImpl = overrides?.fetchImpl;
   }
 
   /** Wires a real opt-out ledger. See `NO_LOCAL_OPT_OUT_STATE` for the fallback behaviour without one. */
@@ -138,6 +146,7 @@ export class LinqAdapter extends ProviderAdapter {
       this.#client = this.http(bearerAuth(this.requireSecret(SECRETS.linqApiKey)), {
         idempotencyHeader: 'Idempotency-Key',
         classifyError: (status, body) => this.#classifyError(status, body),
+        fetchImpl: this.#fetchImpl,
       });
     }
     return this.#client;
@@ -168,6 +177,21 @@ export class LinqAdapter extends ProviderAdapter {
         httpStatus: status,
       });
     }
+    if (code === 2011) {
+      return new ValidationError(
+        'Linq Agent Pay is not usable: no connected payment account on file (error 2011). Connect a Stripe account in the Linq dashboard before POST /v3/payment_requests.',
+        { linqErrorCode: code, httpStatus: status },
+      );
+    }
+    if (code === 2018) {
+      return new ValidationError(`iMessage app messages can only be sent over iMessage (error 2018): ${message}`, {
+        linqErrorCode: code,
+        httpStatus: status,
+      });
+    }
+    if (code === 1005) {
+      return new ValidationError(message, { linqErrorCode: code, httpStatus: status });
+    }
     return undefined;
   }
 
@@ -187,8 +211,7 @@ export class LinqAdapter extends ProviderAdapter {
       evidence: {
         endpoint: 'GET /v3/phone_numbers',
         lineCount: numbers.length,
-        statuses: numbers.map((n) => n.status),
-        reputations: numbers.map((n) => n.reputation),
+        reputations: numbers.map((n) => reputationStatusOf(n) ?? null),
       },
     };
   }
@@ -204,9 +227,10 @@ export class LinqAdapter extends ProviderAdapter {
    * than guessing which one Linq actually keys on.
    */
   async sendMessage(input: LinqSendMessageInput): Promise<LinqSendMessageResult> {
-    this.assertActivated();
     if (input.to.length === 0) throw new ValidationError('sendMessage requires at least one recipient');
     if (input.parts.length === 0) throw new ValidationError('sendMessage requires at least one message part');
+    assertMessageParts(input.parts, input.preferredService);
+    this.assertActivated();
 
     // Checked before any network call. Linq enforces the same rule
     // server-side (error 2024 / HTTP 403) — this is defence in depth, saving
@@ -217,12 +241,14 @@ export class LinqAdapter extends ProviderAdapter {
       }
     }
 
+    const preferredService =
+      input.parts.some((part) => part.type === 'imessage_app') ? 'iMessage' : input.preferredService;
     const body = {
       to: input.to,
       ...(input.from ? { from: input.from } : {}),
       message: {
         parts: input.parts,
-        ...(input.preferredService ? { preferred_service: input.preferredService } : {}),
+        ...(preferredService ? { preferred_service: preferredService } : {}),
         ...(input.replyTo
           ? { reply_to: { message_id: input.replyTo.messageId, part_index: input.replyTo.partIndex } }
           : {}),
@@ -271,6 +297,7 @@ export class LinqAdapter extends ProviderAdapter {
     if (input.to.length !== 1) {
       throw new ValidationError('Linq experience cards go to exactly one recipient');
     }
+    assertExperienceInvocation(input.experience);
     this.assertActivated();
     for (const handle of input.to) {
       if (await this.#optOutState.isOptedOut(handle)) {
@@ -278,12 +305,17 @@ export class LinqAdapter extends ProviderAdapter {
       }
     }
     const path = input.chatId ? `/v3/chats/${encodeURIComponent(input.chatId)}/messages` : '/v3/messages';
+    const experienceMessage = {
+      experience: input.experience,
+      preferred_service: 'iMessage' as const,
+      idempotency_key: input.idempotencyKey,
+    };
     const body = input.chatId
-      ? { message: { experience: input.experience, idempotency_key: input.idempotencyKey } }
+      ? { message: experienceMessage }
       : {
           to: input.to,
           ...(input.from ? { from: input.from } : {}),
-          message: { experience: input.experience, idempotency_key: input.idempotencyKey },
+          message: experienceMessage,
         };
     const res = await this.#httpClient().request(
       { method: 'POST', path, operation: 'messages.sendExperience', body, idempotencyKey: input.idempotencyKey },
@@ -302,6 +334,7 @@ export class LinqAdapter extends ProviderAdapter {
     readonly part: LinqIMessageAppPart;
     readonly idempotencyKey: string;
   }): Promise<LinqSendMessageResult> {
+    assertRealIMessageAppPart(input.part);
     return this.sendMessage({
       to: input.to,
       from: input.from,
@@ -369,7 +402,9 @@ export class LinqAdapter extends ProviderAdapter {
 
   /**
    * Agent Pay card in iMessage. `checkout_url` must be from our own
-   * `createPaymentRequest` — a Stripe Payment Link is rejected by Linq.
+   * `createPaymentRequest` (a `*.linqapp.com` URL). A Stripe Payment Link is
+   * rejected here — live Linq error 1005: "checkout_url must be a Linq checkout
+   * link (linqapp.com)". Error 2011 is a separate gate on payment_requests.
    */
   async sendAgentPay(input: {
     readonly to: string;
@@ -378,6 +413,17 @@ export class LinqAdapter extends ProviderAdapter {
     readonly from?: string;
     readonly idempotencyKey: string;
   }): Promise<LinqSendMessageResult> {
+    if (isStripePaymentLinkUrl(input.checkoutUrl)) {
+      throw new ValidationError(
+        'Linq Agent Pay checkout_url must be a Linq payment_request URL, not a Stripe Payment Link',
+        { host: 'buy.stripe.com' },
+      );
+    }
+    if (!isLinqCheckoutUrl(input.checkoutUrl)) {
+      throw new ValidationError('Linq Agent Pay checkout_url must be a Linq checkout link (linqapp.com)', {
+        checkoutUrlHost: hostOf(input.checkoutUrl),
+      });
+    }
     return this.sendExperience({
       to: [input.to],
       from: input.from,
@@ -391,17 +437,80 @@ export class LinqAdapter extends ProviderAdapter {
     });
   }
 
+  /**
+   * Linq-hosted `link` / `open` iMessage card. This is the working iMessage App
+   * path when Agent Pay is 2011: Linq renders it with its own Messages
+   * extension (`team_id` M9X86M4PHN). A Stripe Payment Link is allowed as
+   * `params.url` — it is not an agentpay `checkout_url`.
+   */
+  async sendLink(input: {
+    readonly to: string;
+    readonly url: string;
+    readonly title?: string;
+    readonly subtitle?: string;
+    readonly button?: string;
+    readonly chatId?: string;
+    readonly from?: string;
+    readonly idempotencyKey: string;
+  }): Promise<LinqSendMessageResult> {
+    const params: Record<string, unknown> = { url: input.url };
+    if (input.title) params['title'] = input.title;
+    if (input.subtitle) params['subtitle'] = input.subtitle;
+    if (input.button) params['button'] = input.button;
+    return this.sendExperience({
+      to: [input.to],
+      from: input.from,
+      chatId: input.chatId,
+      idempotencyKey: input.idempotencyKey,
+      experience: { name: 'link', action: 'open', params },
+    });
+  }
+
+  /**
+   * Linq-hosted agentcard. `attach_card` is catalog-valid but live-rejected
+   * until the recipient has connected a payment method (error 1005).
+   * `approve_card` requires `params.payment_id`.
+   */
+  async sendAgentCard(input: {
+    readonly to: string;
+    readonly action: string;
+    readonly params?: Readonly<Record<string, unknown>>;
+    readonly chatId?: string;
+    readonly from?: string;
+    readonly idempotencyKey: string;
+  }): Promise<LinqSendMessageResult> {
+    return this.sendExperience({
+      to: [input.to],
+      from: input.from,
+      chatId: input.chatId,
+      idempotencyKey: input.idempotencyKey,
+      experience: { name: 'agentcard', action: input.action, params: input.params },
+    });
+  }
+
+  async listExperiences(): Promise<LinqExperienceList> {
+    this.assertActivated();
+    const res = await this.#httpClient().request(
+      { method: 'GET', path: '/v3/experiences', operation: 'experiences.list' },
+      LinqExperienceList,
+    );
+    return res.body;
+  }
+
   /* ---------------------------------------------------------------------- */
   /* Chats & messages                                                        */
   /* ---------------------------------------------------------------------- */
 
-  async listChats(input: { cursor?: string; limit?: number } = {}): Promise<LinqChatList> {
+  async listChats(input: { cursor?: string; limit?: number } = {}): Promise<{
+    readonly data: readonly LinqChat[];
+    readonly next_cursor: string | null | undefined;
+  }> {
     this.assertActivated();
     const res = await this.#httpClient().request(
       { method: 'GET', path: '/v3/chats', operation: 'chats.list', query: { cursor: input.cursor, limit: input.limit } },
       LinqChatList,
     );
-    return res.body;
+    return { data: chatsOf(res.body), next_cursor: nextCursorOf(res.body) };
   }
 
   async getChat(chatId: string): Promise<LinqChat> {
@@ -414,7 +523,10 @@ export class LinqAdapter extends ProviderAdapter {
   }
 
   /** `GET /v3/chats/{chatId}/messages` — confirmed path, cursor + limit (1-100, default 50). */
-  async listMessages(chatId: string, input: { cursor?: string; limit?: number } = {}): Promise<LinqMessageList> {
+  async listMessages(
+    chatId: string,
+    input: { cursor?: string; limit?: number } = {},
+  ): Promise<{ readonly data: readonly LinqMessage[]; readonly next_cursor: string | null | undefined }> {
     this.assertActivated();
     const res = await this.#httpClient().request(
       {
@@ -425,7 +537,7 @@ export class LinqAdapter extends ProviderAdapter {
       },
       LinqMessageList,
     );
-    return res.body;
+    return { data: messagesOf(res.body), next_cursor: nextCursorOf(res.body) };
   }
 
   /** `POST /v3/chats/{chatId}/messages` — confirmed path. Subject to the same opt-out handling as `sendMessage`. */
@@ -433,15 +545,22 @@ export class LinqAdapter extends ProviderAdapter {
     chatId: string,
     input: { parts: readonly LinqMessagePartInput[]; idempotencyKey: string },
   ): Promise<LinqSendMessageResult> {
-    this.assertActivated();
     if (input.parts.length === 0) throw new ValidationError('sendToChat requires at least one message part');
+    assertMessageParts(input.parts, 'iMessage');
+    this.assertActivated();
     try {
       const res = await this.#httpClient().request(
         {
           method: 'POST',
           path: `/v3/chats/${encodeURIComponent(chatId)}/messages`,
           operation: 'chats.messages.send',
-          body: { message: { parts: input.parts, idempotency_key: input.idempotencyKey } },
+          body: {
+            message: {
+              parts: input.parts,
+              idempotency_key: input.idempotencyKey,
+              ...(input.parts.some((part) => part.type === 'imessage_app') ? { preferred_service: 'iMessage' } : {}),
+            },
+          },
           idempotencyKey: input.idempotencyKey,
         },
         LinqSendMessageResponse,
@@ -692,6 +811,12 @@ export type LinqSupportUpdate =
       readonly reputation: string | null;
     }
   | { readonly kind: 'call_event'; readonly callId: string | null; readonly event: string }
+  | {
+      readonly kind: 'payment';
+      readonly event: string;
+      readonly paymentRequestId: string | null;
+      readonly status: string | null;
+    }
   | { readonly kind: 'unhandled'; readonly eventType: string; readonly reason: string };
 
 /** Event names this mapper claims to handle — exactly `LINQ_MANIFEST.webhooks[0].events`, checked by `linq-optout.test.ts`. */
@@ -711,6 +836,9 @@ export const HANDLED_LINQ_EVENTS: readonly string[] = [
   'call.answered',
   'call.ended',
   'call.failed',
+  'payment.succeeded',
+  'payment.canceled',
+  'payment.expired',
   'call.declined',
   'call.no_answer',
 ];
@@ -788,6 +916,15 @@ export function mapLinqEventToSupportUpdate(eventType: string, payload: unknown)
       // Voice payload shape is UNVERIFIED end to end (see `initiateCall`);
       // this extracts an id defensively rather than asserting a schema.
       return { kind: 'call_event', callId: str(payload, 'call_id') ?? str(payload, 'id'), event: eventType };
+    case 'payment.succeeded':
+    case 'payment.canceled':
+    case 'payment.expired':
+      return {
+        kind: 'payment',
+        event: eventType,
+        paymentRequestId: str(payload, 'id') ?? str(payload, 'payment_request_id'),
+        status: str(payload, 'status') ?? eventType.replace('payment.', ''),
+      };
     default:
       return {
         kind: 'unhandled',
@@ -824,13 +961,124 @@ function str(payload: unknown, key: string): string | null {
 }
 
 function toSendResult(body: LinqSendMessageResponse): LinqSendMessageResult {
+  const nestedId = body.message?.id;
+  const messageIds = body.message_ids ?? (nestedId ? [nestedId] : []);
+  const from = body.from ?? body.from_selection?.from ?? '';
+  const reason = body.from_selection?.reason ?? 'unspecified';
   return {
     chatId: body.chat_id,
-    messageIds: body.message_ids,
-    fromSelection: body.from_selection,
-    createdChat: body.created_chat,
-    traceId: body.trace_id,
+    messageIds,
+    fromSelection: { from, reason },
+    createdChat: body.created_chat ?? body.created_new_chat ?? false,
+    traceId: body.trace_id ?? '',
   };
+}
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** Stripe Payment Links (`buy.stripe.com` / Dashboard payment-link URLs) are not Linq Agent Pay checkouts. */
+export function isStripePaymentLinkUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'buy.stripe.com' || parsed.hostname.endsWith('.buy.stripe.com')) return true;
+    if (parsed.hostname === 'stripe.com' || parsed.hostname.endsWith('.stripe.com')) {
+      return parsed.pathname.includes('/payment-links') || parsed.pathname.includes('/test/') || url.includes('plink_');
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Live Agent Pay checkout_url host: `*.linqapp.com` (typically `zero.linqapp.com`). */
+export function isLinqCheckoutUrl(url: string): boolean {
+  const host = hostOf(url);
+  if (!host) return false;
+  return host === 'linqapp.com' || host.endsWith('.linqapp.com');
+}
+
+const PLACEHOLDER_TEAM_IDS = new Set(['A1B2C3D4E5', 'XXXXXXXXXX']);
+
+function isPlaceholderBundleId(bundleId: string): boolean {
+  return /example/i.test(bundleId) || /placeholder/i.test(bundleId) || /yourcompany/i.test(bundleId);
+}
+
+function layoutHasVisibleField(layout: LinqIMessageAppPart['layout'] | LinqMessagePartInput['layout']): boolean {
+  if (!layout) return false;
+  return Boolean(
+    layout.caption ||
+      layout.subcaption ||
+      ('trailing_caption' in layout && layout.trailing_caption) ||
+      ('trailing_subcaption' in layout && layout.trailing_subcaption) ||
+      ('image_url' in layout && layout.image_url),
+  );
+}
+
+/** Partner `imessage_app` parts need a real Apple team_id + bundle_id. Docs placeholders are refused. */
+export function assertRealIMessageAppPart(part: LinqIMessageAppPart | LinqMessagePartInput): void {
+  if (part.type !== 'imessage_app') return;
+  const teamId = part.app?.team_id ?? '';
+  const bundleId = part.app?.bundle_id ?? '';
+  if (!/^[A-Z0-9]{10}$/.test(teamId) || PLACEHOLDER_TEAM_IDS.has(teamId) || isPlaceholderBundleId(bundleId) || bundleId.includes(':')) {
+    throw new ValidationError(
+      'imessage_app parts require a real Apple team_id and bundle_id of an installed Messages extension. Without one, send a Linq-hosted experience (agentpay/agentcard/link) instead.',
+      { teamId, bundleId },
+    );
+  }
+  if (!layoutHasVisibleField(part.layout)) {
+    throw new ValidationError(
+      'imessage_app parts need layout caption, subcaption, trailing_caption, trailing_subcaption, or image_url',
+    );
+  }
+}
+
+function assertMessageParts(parts: readonly LinqMessagePartInput[], preferredService?: string): void {
+  const linkCount = parts.filter((part) => part.type === 'link').length;
+  if (linkCount > 0 && parts.length !== 1) {
+    throw new ValidationError('A Linq link part must be the only part in the message');
+  }
+  const appParts = parts.filter((part) => part.type === 'imessage_app');
+  if (appParts.length === 0) return;
+  if (parts.length !== 1) {
+    throw new ValidationError('An imessage_app part must be the only part in the message');
+  }
+  if (preferredService && preferredService !== 'iMessage') {
+    throw new ValidationError('iMessage app messages can only be sent over iMessage');
+  }
+  for (const part of appParts) assertRealIMessageAppPart(part);
+}
+
+function assertExperienceInvocation(experience: LinqExperienceInvocation): void {
+  if (experience.name === 'agentpay') {
+    const checkoutUrl = typeof experience.params?.['checkout_url'] === 'string' ? experience.params['checkout_url'] : '';
+    if (isStripePaymentLinkUrl(checkoutUrl)) {
+      throw new ValidationError(
+        'Linq Agent Pay checkout_url must be a Linq payment_request URL, not a Stripe Payment Link',
+        { host: 'buy.stripe.com' },
+      );
+    }
+    if (!isLinqCheckoutUrl(checkoutUrl)) {
+      throw new ValidationError('Linq Agent Pay checkout_url must be a Linq checkout link (linqapp.com)', {
+        checkoutUrlHost: hostOf(checkoutUrl),
+      });
+    }
+  }
+  if (experience.name === 'link') {
+    const url = typeof experience.params?.['url'] === 'string' ? experience.params['url'] : '';
+    if (!url) throw new ValidationError('Linq link experience requires params.url');
+  }
+  if (experience.name === 'agentcard' && experience.action === 'approve_card') {
+    const paymentId = experience.params?.['payment_id'];
+    if (typeof paymentId !== 'string' || paymentId.length === 0) {
+      throw new ValidationError('agentcard approve_card requires params.payment_id');
+    }
+  }
 }
 
 export { CredentialsMissingError };

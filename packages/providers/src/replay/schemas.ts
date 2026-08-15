@@ -113,12 +113,31 @@ export const ReplayProject = z
 export type ReplayProject = z.infer<typeof ReplayProject>;
 
 /** `GET /projects/{id}/status`. Exact field set beyond `status` UNVERIFIED. */
+/** `GET /projects/{id}/status`. Field set beyond a status string is UNVERIFIED. */
 export const ReplayProjectStatus = z
   .object({
-    status: z.string(),
+    status: z.string().nullish(),
+    finished_at: z.string().nullish(),
+    started_at: z.string().nullish(),
   })
   .passthrough();
 export type ReplayProjectStatus = z.infer<typeof ReplayProjectStatus>;
+
+/**
+ * `GET /projects/{id}/timing`. Documented idle signal: `finished_at` is set
+ * when QA last went idle and is null while work is still running.
+ */
+export const ReplayProjectTiming = z
+  .object({
+    created_at: z.string().nullish(),
+    started_at: z.string().nullish(),
+    first_event_at: z.string().nullish(),
+    finished_at: z.string().nullish(),
+    time_to_first_event_ms: z.number().nullish(),
+    time_to_complete_ms: z.number().nullish(),
+  })
+  .passthrough();
+export type ReplayProjectTiming = z.infer<typeof ReplayProjectTiming>;
 
 /* -------------------------------------------------------------------------- */
 /* Journeys                                                                    */
@@ -166,6 +185,10 @@ export const ReplayBug = z
     recording_url: z.string().nullish(),
     root_cause: z.string().nullish(),
     suggested_fix: z.string().nullish(),
+    reproduction_steps: z.union([z.array(z.string()), z.string()]).nullish(),
+    expected_behavior: z.string().nullish(),
+    actual_behavior: z.string().nullish(),
+    analysis: z.string().nullish(),
     created_at: z.string().nullish(),
     updated_at: z.string().nullish(),
   })

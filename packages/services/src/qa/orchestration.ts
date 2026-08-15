@@ -1,10 +1,11 @@
 /**
  * QA orchestration and the production release gate.
  *
- * Replay exploration is a real provider call. If Replay is unavailable the run
- * is recorded as `provider_unavailable` — never as passed. Payment-state checks
- * exercise the in-process order state machine. Data-integrity checks the
- * ledger when those methods exist; otherwise the run is incomplete.
+ * Replay's documented loop is: create a project (that starts exploration),
+ * poll timing until idle, then read bugs. Do not POST a second exploration.
+ * If Replay is unavailable the run is recorded as `provider_unavailable` —
+ * never as passed. A timeout is `failed`, not completed. Unexecuted QA is
+ * not a pass.
  */
 
 import {
@@ -14,6 +15,9 @@ import {
   ORDER_STATUSES,
   ORDER_TRANSITIONS,
   PRODUCTION_REQUIRED_RUN_KINDS,
+  ProviderAuthError,
+  ProviderUnavailableError,
+  TimeoutError,
   assertTransition,
   canTransition,
   evaluateReleaseGate,
@@ -23,7 +27,12 @@ import {
   type QaRunKind,
   type ReleaseGateResult,
 } from '@foundry/core';
-import { ReplayAdapter, toQaRunAndDefects } from '@foundry/providers';
+import {
+  ReplayAdapter,
+  isLocalTargetUrl,
+  toQaRunFromProject,
+  REPLAY_CRITICAL_FLOW_INSTRUCTIONS,
+} from '@foundry/providers';
 import { optionalCapability, type ServiceDeps, type ServiceOutcome } from '../deps.js';
 
 export interface QaRunInput {
@@ -148,25 +157,17 @@ export class QaOrchestrationService {
   async #runReplay(input: QaRunInput): Promise<{ runId: string; blockedOn?: { capability: Capability; reason: string } }> {
     const adapter = optionalCapability<ReplayAdapter>(this.deps, 'qa.autonomous_exploration');
     if (!adapter || typeof adapter.createProject !== 'function') {
-      const row = await this.deps.repos.build.qa.markProviderUnavailable({
-        companyId: input.companyId,
-        siteId: input.siteId,
-        deploymentId: input.deploymentId,
-        kind: 'autonomous_exploration',
-        provider: 'replay',
-        targetUrl: input.targetUrl,
-        reason: this.#reason('qa.autonomous_exploration'),
-      });
-      return {
-        runId: row.id,
-        blockedOn: { capability: 'qa.autonomous_exploration', reason: this.#reason('qa.autonomous_exploration') },
-      };
+      return this.#markReplayUnavailable(input, this.#reason('qa.autonomous_exploration'));
     }
 
     try {
-      const project = await adapter.createProject({
+      const open = typeof adapter.ensureProjectForTarget === 'function' ? adapter.ensureProjectForTarget.bind(adapter) : adapter.createProject.bind(adapter);
+      const project = await open({
         name: `qa:${input.siteId}`,
         targetUrl: input.targetUrl,
+        instructions: REPLAY_CRITICAL_FLOW_INSTRUCTIONS,
+        useReverseProxy: isLocalTargetUrl(input.targetUrl),
+        webhookUrl: replayWebhookUrl(this.deps.publicBaseUrl),
       });
       const started = await this.deps.repos.build.qa.startRun({
         companyId: input.companyId,
@@ -177,59 +178,98 @@ export class QaOrchestrationService {
         targetUrl: input.targetUrl,
         externalProjectId: project.id,
       });
-      const startedExploration = await adapter.startExploration(project.id);
-      const finished = await adapter.waitForExploration(startedExploration.id, {
-        timeoutMs: 8 * 60_000,
-        pollIntervalMs: 5_000,
-      });
-      const bugs = await adapter.listBugs(project.id, { pageSize: 100 });
-      let exploration = finished;
-      if ((!finished.journeys || finished.journeys.length === 0) && typeof adapter.listJourneys === 'function') {
-        const page = await adapter.listJourneys(project.id, { pageSize: 100 });
-        exploration = { ...finished, journeys: [...page.items] };
-      }
-      const bridged = toQaRunAndDefects(project, exploration, bugs.items);
-      for (const defect of bridged.defects) {
-        await this.deps.repos.build.qa.recordDefect({
-          companyId: input.companyId,
-          qaRunId: started.id,
-          provider: 'replay',
-          externalId: defect.externalId,
-          title: defect.title,
-          description: defect.description,
-          severity: defect.severity,
-          affectedFlow: defect.affectedFlow,
-          reproductionSteps: defect.reproductionSteps,
-          rootCause: defect.rootCause,
-          suggestedFix: defect.suggestedFix,
-          evidenceUrl: defect.evidenceUrl,
+
+      try {
+        if (typeof adapter.waitForProjectIdle !== 'function') {
+          throw new CapabilityUnsupportedError(
+            'replay',
+            'qa.autonomous_exploration',
+            'waitForProjectIdle is required; Replay starts QA on create and must be polled via project timing',
+          );
+        }
+        const timing = await adapter.waitForProjectIdle(project.id, {
+          timeoutMs: 8 * 60_000,
+          pollIntervalMs: 5_000,
         });
+        const bugs = await adapter.listBugs(project.id, { pageSize: 100 });
+        const journeys =
+          typeof adapter.listJourneys === 'function'
+            ? await adapter.listJourneys(project.id, { pageSize: 100 })
+            : { items: [] as const };
+        let exploration =
+          project.exploration_id && typeof adapter.getExploration === 'function'
+            ? await adapter.getExploration(project.exploration_id).catch(() => null)
+            : null;
+        if (!exploration && typeof adapter.listExplorations === 'function') {
+          const listed = await adapter.listExplorations(project.id, { pageSize: 100 });
+          exploration = listed.items[0] ?? null;
+        }
+        const bridged = toQaRunFromProject(project, timing, bugs.items, [...journeys.items], exploration);
+        for (const defect of bridged.defects) {
+          await this.deps.repos.build.qa.recordDefect({
+            companyId: input.companyId,
+            qaRunId: started.id,
+            provider: 'replay',
+            externalId: defect.externalId,
+            title: defect.title,
+            description: defect.description,
+            severity: defect.severity,
+            affectedFlow: defect.affectedFlow,
+            reproductionSteps: defect.reproductionSteps,
+            rootCause: defect.rootCause,
+            suggestedFix: defect.suggestedFix,
+            evidenceUrl: defect.evidenceUrl,
+          });
+        }
+        const status =
+          bridged.run.status === 'completed' || bridged.run.status === 'failed' || bridged.run.status === 'cancelled'
+            ? bridged.run.status
+            : 'failed';
+        await this.deps.repos.build.qa.finishRun(started.id, {
+          status,
+          flowsCovered: [...bridged.run.flowsCovered],
+          externalRunId: exploration?.id ?? project.exploration_id ?? null,
+          evidenceUrl: bridged.run.evidenceUrl,
+        });
+        return { runId: started.id };
+      } catch (error) {
+        if (error instanceof TimeoutError) {
+          await this.deps.repos.build.qa.finishRun(started.id, {
+            status: 'failed',
+            flowsCovered: [],
+            externalRunId: project.exploration_id ?? null,
+          });
+          return { runId: started.id };
+        }
+        throw error;
       }
-      const status = bridged.run.status === 'completed' || bridged.run.status === 'failed' || bridged.run.status === 'cancelled'
-        ? bridged.run.status
-        : 'failed';
-      await this.deps.repos.build.qa.finishRun(started.id, {
-        status,
-        flowsCovered: [...bridged.run.flowsCovered],
-        externalRunId: startedExploration.id,
-        evidenceUrl: bridged.run.evidenceUrl,
-      });
-      return { runId: started.id };
     } catch (error) {
-      if (error instanceof CredentialsMissingError || error instanceof CapabilityUnsupportedError) {
-        const row = await this.deps.repos.build.qa.markProviderUnavailable({
-          companyId: input.companyId,
-          siteId: input.siteId,
-          deploymentId: input.deploymentId,
-          kind: 'autonomous_exploration',
-          provider: 'replay',
-          targetUrl: input.targetUrl,
-          reason: error.message,
-        });
-        return { runId: row.id, blockedOn: { capability: 'qa.autonomous_exploration', reason: error.message } };
+      if (
+        error instanceof CredentialsMissingError ||
+        error instanceof CapabilityUnsupportedError ||
+        error instanceof ProviderUnavailableError ||
+        error instanceof ProviderAuthError
+      ) {
+        return this.#markReplayUnavailable(input, error.message);
       }
       throw error;
     }
+  }
+
+  async #markReplayUnavailable(
+    input: QaRunInput,
+    reason: string,
+  ): Promise<{ runId: string; blockedOn: { capability: Capability; reason: string } }> {
+    const row = await this.deps.repos.build.qa.markProviderUnavailable({
+      companyId: input.companyId,
+      siteId: input.siteId,
+      deploymentId: input.deploymentId,
+      kind: 'autonomous_exploration',
+      provider: 'replay',
+      targetUrl: input.targetUrl,
+      reason,
+    });
+    return { runId: row.id, blockedOn: { capability: 'qa.autonomous_exploration', reason } };
   }
 
   /**
@@ -331,5 +371,16 @@ export class QaOrchestrationService {
   #reason(capability: Capability): string {
     const status = this.deps.providers.forCapability(capability).status;
     return status.remediation ?? `capability state is ${status.state}`;
+  }
+}
+
+function replayWebhookUrl(publicBaseUrl: string | undefined): string | undefined {
+  if (!publicBaseUrl) return undefined;
+  try {
+    const host = new URL(publicBaseUrl).hostname;
+    if (host === 'example.test' || host.includes('personal-ydgn') || host === 'localhost') return undefined;
+    return new URL('/webhooks/replay', publicBaseUrl).toString();
+  } catch {
+    return undefined;
   }
 }

@@ -43,7 +43,14 @@ import {
   type TeracPage,
 } from './schemas.js';
 import { TeracWebhookEnvelope, interpretTeracWebhookEvent, type TeracWebhookResult } from './events.js';
-import { TERAC_MCP_URL, TeracMcpClient, type TeracMcpTool, type TeracMcpToolResult } from './mcp.js';
+import {
+  TERAC_MCP_URL,
+  TeracMcpClient,
+  mcpResultText,
+  parseMcpJsonContent,
+  type TeracMcpTool,
+  type TeracMcpToolResult,
+} from './mcp.js';
 
 /**
  * UNVERIFIED path segment. The research pass confirmed a `getFeasibilityRequest`
@@ -95,13 +102,17 @@ export interface RequestFeasibilityInput {
 
 export interface CreateOpportunityTaskInput {
   readonly sequence: number;
-  readonly taskType: string;
-  readonly reviewType: string;
-  readonly taskUrl: string;
-  readonly durationMinutes: number;
+  /** MCP/REST enum: interview | file_upload | activity */
+  readonly taskType: 'interview' | 'file_upload' | 'activity';
+  /** MCP/REST enum: auto_approve | manual_review | self_report */
+  readonly reviewType: 'auto_approve' | 'manual_review' | 'self_report';
+  readonly taskUrl?: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly durationMinutes?: number;
 }
 
-/** Exact required/optional fields per `POST /opportunities` in the research doc. */
+/** Exact required/optional fields per live MCP `terac_create_opportunity` (2026-08-15). */
 export interface CreateOpportunityInput {
   /** 1-200 characters. */
   readonly title: string;
@@ -110,9 +121,14 @@ export interface CreateOpportunityInput {
   readonly numParticipants: number;
   readonly businessType: 'b2c' | 'b2b';
   readonly tasks: readonly CreateOpportunityTaskInput[];
-  /** <=5000 characters. */
+  /** <=8000 characters on MCP. */
   readonly description?: string;
   readonly filters?: readonly unknown[];
+  /**
+   * Required when `filters` is omitted. True = General Population
+   * (worldwide, any age, any language). Rejected if sent alongside filters.
+   */
+  readonly unrestrictedAudience?: boolean;
   readonly screeningQuestions?: readonly string[];
   /** <=200 entries. */
   readonly crossQuotas?: readonly unknown[];
@@ -251,12 +267,23 @@ export class TeracAdapter extends ProviderAdapter {
             sequence: t.sequence,
             task_type: t.taskType,
             review_type: t.reviewType,
-            task_url: t.taskUrl,
-            duration_minutes: t.durationMinutes,
+            ...(t.taskUrl ? { task_url: t.taskUrl } : {}),
+            ...(t.title ? { title: t.title } : {}),
+            ...(t.description ? { description: t.description } : {}),
+            ...(t.durationMinutes !== undefined ? { duration_minutes: t.durationMinutes } : {}),
           })),
           ...(input.description ? { description: input.description } : {}),
           ...(input.filters ? { filters: input.filters } : {}),
-          ...(input.screeningQuestions ? { screening_questions: input.screeningQuestions } : {}),
+          ...(input.unrestrictedAudience ? { unrestricted_audience: true } : {}),
+          ...(input.screeningQuestions
+            ? {
+                screening_questions: input.screeningQuestions.map((text, index) => ({
+                  key: `q${index}`,
+                  text,
+                  pick: 'text',
+                })),
+              }
+            : {}),
           ...(input.crossQuotas ? { cross_quotas: input.crossQuotas } : {}),
           ...(input.deviceTypes ? { device_types: input.deviceTypes } : {}),
           ...(input.expectedDaysToComplete !== undefined
@@ -268,6 +295,52 @@ export class TeracAdapter extends ProviderAdapter {
       TeracOpportunity,
     );
     return response.body;
+  }
+
+  async listOpportunities(options: { readonly limit?: number; readonly cursor?: string } = {}): Promise<TeracPage<TeracOpportunity>> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      {
+        method: 'GET',
+        path: '/opportunities',
+        operation: 'opportunities.list',
+        query: { limit: options.limit, cursor: options.cursor },
+      },
+      teracPage(TeracOpportunity),
+    );
+    return response.body;
+  }
+
+  async getOpportunity(opportunityId: string): Promise<TeracOpportunity> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      {
+        method: 'GET',
+        path: `/opportunities/${encodeURIComponent(opportunityId)}`,
+        operation: 'opportunities.get',
+      },
+      TeracOpportunity,
+    );
+    return response.body;
+  }
+
+  /**
+   * Spends org credit. Live 2026-08-15: General Population draft of 5 at
+   * $40 CPI requires $200. MCP `terac_launch_draft_opportunity` returns
+   * isError; REST `POST /opportunities/{id}/launch` returns HTTP 412
+   * PRECONDITION_FAILED with the same insufficient-balance message.
+   */
+  async launchDraftOpportunity(opportunityId: string): Promise<TeracOpportunity> {
+    this.assertActivated();
+    const mcp = await this.mcpCall('terac_launch_draft_opportunity', { opportunityId });
+    const text = mcpResultText(mcp.content);
+    if (mcp.isError || /insufficient balance/i.test(text)) {
+      throw new ValidationError(text || 'Terac refused to launch the draft opportunity', {
+        opportunityId,
+        teracLaunchBlocked: true,
+      });
+    }
+    return this.getOpportunity(opportunityId);
   }
 
   /* --- Submissions --------------------------------------------------------- */
@@ -307,6 +380,56 @@ export class TeracAdapter extends ProviderAdapter {
   }
 
   /* --- Projects -------------------------------------------------------------- */
+
+  async createProject(input: { readonly name: string; readonly description?: string }): Promise<TeracProject> {
+    this.assertActivated();
+    if (input.name.length < 1) {
+      throw new ValidationError('createProject requires a name');
+    }
+    const mcp = await this.mcpCall('terac_create_project', { name: input.name });
+    if (mcp.isError) {
+      throw new ProviderUnavailableError('terac', 'MCP terac_create_project failed', {
+        content: clip(mcp.content),
+      });
+    }
+    const parsed = parseMcpJsonContent(mcp.content);
+    const id = typeof parsed?.['id'] === 'string' ? parsed['id'] : null;
+    if (!id || !parsed) {
+      throw new ProviderContractError('terac', 'terac_create_project did not return an id', {
+        content: clip(mcp.content),
+      });
+    }
+    return TeracProject.parse({ id, name: parsed['name'] ?? input.name, ...parsed });
+  }
+
+  async getProject(projectId: string): Promise<TeracProject> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      {
+        method: 'GET',
+        path: `/projects/${encodeURIComponent(projectId)}`,
+        operation: 'projects.get',
+      },
+      TeracProject,
+    );
+    return response.body;
+  }
+
+  async ensureProject(name = 'Foundry General Population product feedback'): Promise<TeracProject> {
+    const configured = this.optionalSecret(SECRETS.teracProjectId)?.reveal();
+    if (configured) {
+      try {
+        return await this.getProject(configured);
+      } catch {
+        // Fall through to list/create rather than invent a project id.
+      }
+    }
+    const existing = await this.listProjects({ limit: 25 });
+    const match = configured ? existing.data.find((row) => row.id === configured) : undefined;
+    if (match) return match;
+    if (existing.data[0]) return existing.data[0];
+    return this.createProject({ name });
+  }
 
   async listProjects(options: ListProjectsOptions = {}): Promise<TeracPage<TeracProject>> {
     this.assertActivated();
@@ -403,24 +526,84 @@ export class TeracAdapter extends ProviderAdapter {
     return this.mcpClient().callTool(tool, args);
   }
 
+  /** Non-destructive MCP handshake used by live verification. */
+  async mcpListTools(): Promise<unknown> {
+    this.assertActivated();
+    return this.mcpClient().listTools();
+  }
+
   /**
-   * Launch a General Population study through the MCP tools Terac documents
-   * for agents. REST `createOpportunity` remains available; this is the
-   * submission-required path.
+   * General Population path: ensure a project exists, price via MCP feasibility,
+   * then create an unrestricted-audience DRAFT. Launch is a separate call —
+   * it spends org credit and must not be implied by a successful draft.
    */
   async launchGeneralPopulationStudy(input: {
     readonly role: string;
     readonly task: string;
     readonly count: number;
-  }): Promise<{ readonly tool: string; readonly content: unknown }> {
+    readonly projectId?: string;
+    readonly taskUrl?: string;
+  }): Promise<{
+    readonly tool: string;
+    readonly content: unknown;
+    readonly projectId?: string;
+    readonly feasibilityId?: string;
+    readonly opportunityId?: string;
+  }> {
     this.assertActivated();
     const mcp = this.mcpClient();
-    const feasibility = await mcp.callTool('terac_request_feasibility', {
-      role: input.role,
-      task: `${input.task}\n\nAudience: General Population (hackathon targeting — do not restrict to a specialist niche unless the task itself requires one).`,
-      count: input.count,
+    const project = input.projectId
+      ? await this.getProject(input.projectId)
+      : await this.ensureProject();
+    const listed = await this.listOpportunities({ limit: 25 });
+    const reusable = listed.data.find((row) => {
+      const status = (row.status ?? '').toLowerCase();
+      return status === 'draft' || status === 'launched' || status === 'in_progress' || status === 'active';
     });
-    return { tool: 'terac_request_feasibility', content: feasibility.content };
+    if (reusable) {
+      return {
+        tool: 'terac_list_opportunities',
+        content: reusable,
+        projectId: project.id,
+        feasibilityId: reusable.feasibility_request_id ?? undefined,
+        opportunityId: reusable.id,
+      };
+    }
+    const feasibility = await mcp.callTool('terac_request_feasibility', {
+      taskDescription: input.task,
+      panelDescription: `${input.role}. Audience: General Population (unrestricted — worldwide, any age, any language; do not restrict to a specialist niche).`,
+      submissionCount: input.count,
+    });
+    const feasibilityJson = parseMcpJsonContent(feasibility.content);
+    const feasibilityId =
+      typeof feasibilityJson?.['id'] === 'string' ? feasibilityJson['id'] : undefined;
+    const created = await this.createOpportunity({
+      title: input.task.slice(0, 200),
+      projectId: project.id,
+      numParticipants: input.count,
+      businessType: 'b2c',
+      unrestrictedAudience: true,
+      description: input.task.slice(0, 5000),
+      feasibilityRequestId: feasibilityId,
+      tasks: [
+        {
+          sequence: 1,
+          taskType: 'activity',
+          reviewType: 'manual_review',
+          title: 'Buy / no-buy + price',
+          description: input.task.slice(0, 2000),
+          durationMinutes: 8,
+          ...(input.taskUrl ? { taskUrl: input.taskUrl } : {}),
+        },
+      ],
+    });
+    return {
+      tool: 'terac_create_opportunity',
+      content: created,
+      projectId: project.id,
+      feasibilityId,
+      opportunityId: created.id,
+    };
   }
 }
 
@@ -923,7 +1106,12 @@ export function buildReviewRubric(subject: ExpertReviewSubject): TeracReviewRubr
   }
 }
 
-export { TERAC_MCP_URL, TeracMcpClient, TERAC_MCP_TOOLS } from './mcp.js';
+export { TERAC_MCP_URL, TeracMcpClient, TERAC_MCP_TOOLS, parseMcpJsonContent, mcpResultText } from './mcp.js';
 export { CredentialsMissingError };
 export * from './schemas.js';
 export * from './events.js';
+
+function clip(value: unknown): string {
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text ? text.slice(0, 400) : '';
+}

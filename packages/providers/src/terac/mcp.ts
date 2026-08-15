@@ -19,12 +19,23 @@ import { z } from 'zod';
 export const TERAC_MCP_URL = 'https://terac.com/api/mcp';
 
 export const TERAC_MCP_TOOLS = [
+  'terac_get_context',
+  'terac_list_projects',
+  'terac_create_project',
+  'terac_get_project',
+  'terac_update_project',
+  'terac_list_filters',
+  'terac_get_filter_options',
   'terac_list_opportunities',
   'terac_request_feasibility',
   'terac_get_feasibility_request',
+  'terac_list_feasibility_requests',
+  'terac_create_opportunity',
+  'terac_get_opportunity',
+  'terac_update_opportunity',
   'terac_launch_draft_opportunity',
   'terac_get_submissions',
-  'terac_get_context',
+  'terac_get_submission',
   'terac_pause_opportunity',
 ] as const;
 
@@ -109,7 +120,11 @@ export class TeracMcpClient {
 
   async #post(payload: Record<string, unknown>, expectResult: boolean): Promise<unknown> {
     const headers: Record<string, string> = {
+      // Chat clients use OAuth. The issued programmatic credential is an API
+      // key: REST docs say Bearer, the key dialog / MCP note says x-api-key.
+      // Send both rather than guess which one the MCP gateway checks.
       authorization: `Bearer ${this.apiKey}`,
+      'x-api-key': this.apiKey,
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
       'mcp-protocol-version': '2025-03-26',
@@ -135,6 +150,47 @@ export class TeracMcpClient {
     if (!expectResult) return null;
     return parseMcpBody(text, response.headers.get('content-type'));
   }
+}
+
+/** Flatten MCP `content[].text` (or a string) into one log-safe string. */
+export function mcpResultText(content: unknown): string {
+  return mcpContentText(content) ?? (typeof content === 'string' ? content : JSON.stringify(content ?? ''));
+}
+
+/** Pull JSON from MCP `content[].text` when the tool returns a JSON blob. */
+export function parseMcpJsonContent(content: unknown): Record<string, unknown> | null {
+  const text = mcpContentText(content);
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      const parsed = JSON.parse(match[0]) as unknown;
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function mcpContentText(content: unknown): string | null {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && 'text' in item) return String((item as { text: unknown }).text);
+        return '';
+      })
+      .join('\n');
+  }
+  if (content && typeof content === 'object' && 'text' in content) {
+    return String((content as { text: unknown }).text);
+  }
+  return null;
 }
 
 function parseMcpBody(text: string, contentType: string | null): unknown {

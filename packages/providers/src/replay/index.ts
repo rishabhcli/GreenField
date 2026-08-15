@@ -13,7 +13,6 @@
  */
 
 import {
-  ProviderContractError,
   TimeoutError,
   ValidationError,
   systemClock,
@@ -31,12 +30,13 @@ import {
   ReplayOpenApiDocument,
   ReplayProject,
   ReplayProjectStatus,
+  ReplayProjectTiming,
   ReplayVersion,
   normaliseReplayList,
   replayListEnvelope,
   type ReplayListPage,
 } from './schemas.js';
-import { isTerminalExplorationStatus } from './gate.js';
+import { isProjectIdle, isTerminalExplorationStatus } from './gate.js';
 
 /**
  * Fixed host the OpenAPI discovery document is fetched from. This is
@@ -44,6 +44,37 @@ import { isTerminalExplorationStatus } from './gate.js';
  * `resolveBaseUrl()` exists precisely because those two are allowed to differ.
  */
 const REPLAY_OPENAPI_DISCOVERY_BASE = 'https://loop-qa.replay.io/api/v1';
+
+/** Default prompt Replay's explorer gets on create — the critical commerce paths. */
+export const REPLAY_CRITICAL_FLOW_INSTRUCTIONS =
+  'Explore the live app. Cover homepage load, product page, add to cart, checkout initiation, ' +
+  'payment success and payment failure, order confirmation, support/contact, policy pages, and a mobile viewport. ' +
+  'Do not treat an unreachable or unfinished app as a passing run.';
+
+export function isLocalTargetUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+export function canonicalReplayTargetUrl(url: string): string {
+  const parsed = new URL(url);
+  parsed.hash = '';
+  const path = parsed.pathname.replace(/\/+$/, '') || '/';
+  return `${parsed.protocol}//${parsed.host.toLowerCase()}${path}${parsed.search}`;
+}
+
+function looksLikeReplayApiBase(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.includes('/api') || parsed.hostname.includes('loop-qa.') || parsed.hostname.startsWith('api.');
+  } catch {
+    return false;
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* Inputs                                                                      */
@@ -60,6 +91,8 @@ export interface CreateProjectInput {
   readonly recordingId?: string;
   readonly useReverseProxy?: boolean;
   readonly enabledPolishPasses?: readonly string[];
+  readonly addPolishPasses?: readonly string[];
+  readonly removePolishPasses?: readonly string[];
   readonly budget?: number;
 }
 
@@ -101,9 +134,11 @@ export class ReplayAdapter extends ProviderAdapter {
   override readonly manifest = REPLAY_MANIFEST;
   #resolvedBaseUrl: string | undefined;
   #resolvingBaseUrl: Promise<string> | undefined;
+  readonly #fetchImpl: typeof fetch | undefined;
 
-  constructor(ctx: AdapterContext) {
+  constructor(ctx: AdapterContext, overrides?: { readonly fetchImpl?: typeof fetch }) {
     super(ctx);
+    this.#fetchImpl = overrides?.fetchImpl;
   }
 
   /**
@@ -140,6 +175,7 @@ export class ReplayAdapter extends ProviderAdapter {
       baseUrl: REPLAY_OPENAPI_DISCOVERY_BASE,
       auth: noAuth(),
       defaultTimeoutMs: 10_000,
+      fetchImpl: this.#fetchImpl,
     });
 
     try {
@@ -147,11 +183,11 @@ export class ReplayAdapter extends ProviderAdapter {
         { method: 'GET', path: '/openapi.json', operation: 'openapi.discover' },
         ReplayOpenApiDocument,
       );
-      const server = response.body.servers[0]?.url;
-      if (!server) {
-        throw new ProviderContractError('replay', 'openapi.json servers[] was empty');
-      }
-      const resolved = server.replace(/\/+$/, '');
+      const candidates = response.body.servers.map((s) => s.url.replace(/\/+$/, ''));
+      // Live OpenAPI servers[0] is the web app origin (text/html). Prefer a
+      // URL that actually serves the JSON API, else keep the discovery host.
+      const resolved =
+        candidates.find((url) => looksLikeReplayApiBase(url)) ?? REPLAY_OPENAPI_DISCOVERY_BASE.replace(/\/+$/, '');
       this.#resolvedBaseUrl = resolved;
       getLogger().info(
         { provider: 'replay', resolvedBaseUrl: resolved, source: 'openapi_discovery' },
@@ -175,7 +211,7 @@ export class ReplayAdapter extends ProviderAdapter {
   async #client(): Promise<ProviderHttpClient> {
     const secret = this.requireSecret(SECRETS.replayApiKey);
     const baseUrl = await this.resolveBaseUrl();
-    return this.http(bearerAuth(secret), { baseUrl });
+    return this.http(bearerAuth(secret), { baseUrl, fetchImpl: this.#fetchImpl });
   }
 
   /* --- Probe -------------------------------------------------------------- */
@@ -218,10 +254,14 @@ export class ReplayAdapter extends ProviderAdapter {
           ...(input.finishedWebhookUrl ? { finished_webhook_url: input.finishedWebhookUrl } : {}),
           ...(input.logins !== undefined ? { logins: input.logins } : {}),
           ...(input.designDocument ? { design_document: input.designDocument } : {}),
-          ...(input.instructions ? { instructions: input.instructions } : {}),
+          ...(input.instructions
+            ? { instructions: input.instructions }
+            : { instructions: REPLAY_CRITICAL_FLOW_INSTRUCTIONS }),
           ...(input.recordingId ? { recording_id: input.recordingId } : {}),
           ...(input.useReverseProxy !== undefined ? { use_reverse_proxy: input.useReverseProxy } : {}),
           ...(input.enabledPolishPasses ? { enabled_polish_passes: input.enabledPolishPasses } : {}),
+          ...(input.addPolishPasses ? { add_polish_passes: input.addPolishPasses } : {}),
+          ...(input.removePolishPasses ? { remove_polish_passes: input.removePolishPasses } : {}),
           ...(input.budget !== undefined ? { budget: input.budget } : {}),
         },
       },
@@ -250,9 +290,103 @@ export class ReplayAdapter extends ProviderAdapter {
     return response.body;
   }
 
+  async listProjects(options: ListJourneysOptions = {}): Promise<ReplayListPage<ReplayProject>> {
+    this.assertActivated();
+    const page = options.page ?? 1;
+    const pageSize = options.pageSize ?? 20;
+    const client = await this.#client();
+    const response = await client.request(
+      {
+        method: 'GET',
+        path: '/projects',
+        operation: 'projects.list',
+        query: { page, page_size: pageSize },
+      },
+      replayListEnvelope(ReplayProject),
+    );
+    return normaliseReplayList<ReplayProject>(response.body, page, pageSize);
+  }
+
+  /**
+   * Reattach to the Replay project already pointed at this URL (or the
+   * optional `REPLAY_PROJECT_ID`) so a retried QA job does not mint a second
+   * exploration. `POST /projects` starts QA by itself.
+   */
+  async ensureProjectForTarget(input: CreateProjectInput): Promise<ReplayProject> {
+    this.assertActivated();
+    const target = canonicalReplayTargetUrl(input.targetUrl);
+    const configuredId = this.optionalSecret(SECRETS.replayProjectId)?.reveal();
+    if (configuredId) {
+      try {
+        const configured = await this.getProject(configuredId);
+        if (canonicalReplayTargetUrl(configured.target_url) === target) return configured;
+      } catch {
+        // Listed match below is the fallback when the configured id is stale.
+      }
+    }
+    const listed = await this.listProjects({ page: 1, pageSize: 100 });
+    const existing = listed.items.find((project) => {
+      try {
+        return canonicalReplayTargetUrl(project.target_url) === target;
+      } catch {
+        return false;
+      }
+    });
+    if (existing) return existing;
+    return this.createProject({
+      ...input,
+      useReverseProxy: input.useReverseProxy ?? isLocalTargetUrl(input.targetUrl),
+    });
+  }
+
+  async getProjectTiming(id: string): Promise<ReplayProjectTiming> {
+    this.assertActivated();
+    const client = await this.#client();
+    const response = await client.request(
+      { method: 'GET', path: `/projects/${encodeURIComponent(id)}/timing`, operation: 'projects.timing' },
+      ReplayProjectTiming,
+    );
+    return response.body;
+  }
+
+  /**
+   * Polls project timing until Replay reports idle (`finished_at`). The
+   * documented agent workflow is "create, then poll status" — do not also
+   * `POST /explorations` after create.
+   */
+  async waitForProjectIdle(projectId: string, options: WaitForExplorationOptions): Promise<ReplayProjectTiming> {
+    this.assertActivated();
+    if (options.timeoutMs <= 0) throw new ValidationError('timeoutMs must be positive', { timeoutMs: options.timeoutMs });
+    if (options.pollIntervalMs <= 0) {
+      throw new ValidationError('pollIntervalMs must be positive', { pollIntervalMs: options.pollIntervalMs });
+    }
+
+    const clock = systemClock;
+    const deadline = clock.nowMs() + options.timeoutMs;
+    const maxDelayMs = Math.max(options.pollIntervalMs, 30_000);
+    let delayMs = options.pollIntervalMs;
+
+    for (;;) {
+      const timing = await this.getProjectTiming(projectId);
+      if (isProjectIdle(timing)) return timing;
+
+      const now = clock.nowMs();
+      if (now >= deadline) {
+        throw new TimeoutError(`replay project ${projectId} did not become idle`, options.timeoutMs);
+      }
+      const wait = Math.min(delayMs, maxDelayMs, deadline - now);
+      await clock.sleep(wait, options.signal);
+      delayMs = Math.min(delayMs * 1.5, maxDelayMs);
+    }
+  }
+
   /* --- Explorations --------------------------------------------------------- */
 
-  /** "Run QA now". `prompt` is optional free-text guidance for the exploration. */
+  /**
+   * Explicit "run QA again". Replay's create-project call already starts the
+   * first exploration — release-gate orchestration must not call this on a
+   * freshly created project.
+   */
   async startExploration(projectId: string, prompt?: string): Promise<ReplayExploration> {
     this.assertActivated();
     const client = await this.#client();
@@ -276,6 +410,23 @@ export class ReplayAdapter extends ProviderAdapter {
       ReplayExploration,
     );
     return response.body;
+  }
+
+  async listExplorations(projectId: string, options: ListJourneysOptions = {}): Promise<ReplayListPage<ReplayExploration>> {
+    this.assertActivated();
+    const page = options.page ?? 1;
+    const pageSize = options.pageSize ?? 20;
+    const client = await this.#client();
+    const response = await client.request(
+      {
+        method: 'GET',
+        path: `/projects/${encodeURIComponent(projectId)}/explorations`,
+        operation: 'explorations.list',
+        query: { page, page_size: pageSize },
+      },
+      replayListEnvelope(ReplayExploration),
+    );
+    return normaliseReplayList<ReplayExploration>(response.body, page, pageSize);
   }
 
   /**

@@ -44,6 +44,8 @@ export function mapStripeEventToOrderTransition(eventType: string, dataObject: u
     /* Checkout                                                          */
     /* ---------------------------------------------------------------- */
     case 'checkout.session.completed': {
+      // Fired for Checkout Sessions (physical-goods storefront) and for the
+      // submitted hackathon Payment Link. Both are Stripe-hosted checkouts.
       const session = StripeCheckoutSession.parse(dataObject);
       const ids = sessionIds(session);
 

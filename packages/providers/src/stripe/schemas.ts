@@ -16,6 +16,7 @@ export const StripePaymentLink = z.object({
   object: z.literal('payment_link').optional(),
   url: z.string(),
   active: z.boolean().nullish(),
+  livemode: z.boolean().optional(),
 });
 export type StripePaymentLink = z.infer<typeof StripePaymentLink>;
 

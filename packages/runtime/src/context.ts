@@ -189,8 +189,17 @@ export async function buildContext(options: BuildOptions): Promise<AppContext> {
   const gate = new PolicyGate(repos, providers, { approvalThresholdsMinor: DEFAULT_APPROVAL_THRESHOLDS });
   const tools = new ToolRegistry();
   const llm = providers.adapter('anthropic') as AnthropicAdapter;
-  const band = configuredAdapter<BandAdapter>(providers, 'band');
-  const executor = new AgentExecutor({ repos, llm, tools, gate, band });
+  const band = providers.adapter('band') as BandAdapter | undefined;
+  const executor = new AgentExecutor({
+    repos,
+    llm,
+    tools,
+    gate,
+    band: band?.isConfigured ? band : undefined,
+  });
+  // Always wire the adapter so a missing BAND key fails dispatch rather than
+  // silently enqueueing work with no room. Prize-track coordination must drive
+  // the handoff: remove the room and start must break.
   const dispatcher = new OrgDispatcher(repos, queues, band ? { band } : undefined);
 
   const health = new HealthRegistry(config.releaseSha);
@@ -233,13 +242,4 @@ export async function buildContext(options: BuildOptions): Promise<AppContext> {
       await pool.end().catch((e) => log.error({ err: e }, 'pool end failed'));
     },
   };
-}
-
-function configuredAdapter<T extends { readonly isConfigured: boolean }>(
-  providers: ProviderRegistry,
-  id: 'band',
-): T | undefined {
-  const adapter = providers.adapter(id);
-  if (!adapter?.isConfigured) return undefined;
-  return adapter as unknown as T;
 }

@@ -392,8 +392,9 @@ export class RenderAdapter extends ProviderAdapter {
 
   /**
    * Triggers a run of a task defined in `apps/workflows` via
-   * `POST /v1/task-runs`. Blueprints cannot create the workflow service;
-   * `RENDER_WORKFLOW_SLUG` is the slug of the Dashboard-created service.
+   * `POST /v1/task-runs`. Blueprints still cannot declare `type: workflow`.
+   * Create the service with `POST /v1/workflows` (or Dashboard / `render workflows create`),
+   * then set `RENDER_WORKFLOW_SLUG` to the returned slug.
    */
   async startTaskRun(taskName: string, args: readonly unknown[] = []): Promise<RenderTaskRun> {
     this.assertActivated();

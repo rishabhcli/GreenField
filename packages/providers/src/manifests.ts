@@ -35,7 +35,7 @@ export const SECRETS = {
   stripeWebhookSecret: {
     env: 'STRIPE_WEBHOOK_SECRET',
     description: 'Stripe webhook endpoint signing secret (whsec_…)',
-    required: true,
+    required: false,
     obtainFrom: 'https://dashboard.stripe.com/webhooks — create an endpoint for /webhooks/stripe',
     pattern: /^whsec_[A-Za-z0-9+/=_-]{16,}$/,
   },
@@ -149,7 +149,7 @@ export const SECRETS = {
     description: 'Superserve control-plane API key (ss_live_…)',
     required: true,
     obtainFrom: 'https://superserve.ai → dashboard → API keys',
-    pattern: /^ss_(live|test)_[A-Za-z0-9]+$/,
+    pattern: /^ss_(live|test)_[A-Za-z0-9_]+$/,
     detectMode: prefixMode(['ss_test_'], ['ss_live_']),
   },
 
@@ -169,17 +169,19 @@ export const SECRETS = {
 
   bandAgentApiKey: {
     env: 'BAND_AGENT_API_KEY',
-    description: 'BAND agent API key (thnv_a_…) used by agents to post and read messages',
+    description:
+      'BAND agent API key used by agents to post and read messages. Current keys are band_a_…; legacy Thenvoi keys are thnv_a_…',
     required: true,
-    obtainFrom: 'https://app.band.ai → Agents → New Agent → External Agent',
-    pattern: /^thnv_a_[A-Za-z0-9]+$/,
+    obtainFrom: 'https://app.band.ai → Agents → New Agent → External Agent, or POST /me/agents/register with a human key',
+    pattern: /^(thnv_a_|band_a_)[A-Za-z0-9_-]+$/,
   },
   bandUserApiKey: {
     env: 'BAND_USER_API_KEY',
-    description: 'BAND human API key (thnv_u_…) for registering agents and human participation',
+    description:
+      'BAND human API key for registering agents and Human API calls. Current keys are band_u_…; legacy Thenvoi keys are thnv_u_…',
     required: false,
-    obtainFrom: 'https://app.band.ai → profile → API keys',
-    pattern: /^thnv_u_[A-Za-z0-9]+$/,
+    obtainFrom: 'https://app.band.ai/dashboard → Settings → REST API Keys',
+    pattern: /^(thnv_u_|band_u_)[A-Za-z0-9_-]+$/,
   },
 
   dodoApiKey: {
@@ -358,9 +360,9 @@ export const SECRETS = {
   renderWorkflowSlug: {
     env: 'RENDER_WORKFLOW_SLUG',
     description:
-      'Slug of the Render Workflow service (e.g. foundry-workflows). Blueprints cannot create workflow services during the public beta; create it in the Dashboard from apps/workflows, then set this.',
+      'Slug of the Render Workflow service (e.g. foundry-workflows). Blueprints cannot declare type: workflow; create via POST /v1/workflows or Dashboard / CLI, then set this.',
     required: false,
-    obtainFrom: 'Render Dashboard → New Workflow, or `render workflows` CLI',
+    obtainFrom: 'POST https://api.render.com/v1/workflows, Render Dashboard → New Workflow, or `render workflows create`',
   },
   egoistApiKey: {
     env: 'EGOIST_API_KEY',

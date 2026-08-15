@@ -10,12 +10,16 @@
 import {
   CapabilityUnsupportedError,
   CredentialsMissingError,
+  DimensionScore,
   ExpertReviewSubject,
+  HumanOverride,
+  ValidationError,
   VendorApprovalRequiredError,
   type Capability,
 } from '@foundry/core';
 import {
   TeracAdapter,
+  StripeAdapter,
   buildReviewRubric,
   toExpertReview,
   type TeracOpportunity,
@@ -49,6 +53,8 @@ export interface ExpertPollResult {
   readonly reviewId: string;
   readonly status: string;
   readonly verdict?: string;
+  readonly beforeComposite?: number | null;
+  readonly afterComposite?: number | null;
   readonly blockedOn?: { capability: Capability; reason: string };
 }
 
@@ -105,13 +111,27 @@ export class ExpertReviewService {
     const built = parsedSubject.success ? buildReviewRubric(parsedSubject.data) : undefined;
 
     try {
+      const stimulusUrl = await this.#stimulusUrl();
       try {
         const mcp = await terac.launchGeneralPopulationStudy({
           role: 'General Population reviewer',
           task: input.question,
           count: input.participantsRequested,
+          taskUrl: stimulusUrl,
         });
-        getLogger().info({ tool: mcp.tool }, 'Terac MCP feasibility requested for General Population');
+        getLogger().info({ tool: mcp.tool, opportunityId: mcp.opportunityId }, 'Terac General Population study prepared');
+        if (mcp.opportunityId) {
+          const launch = await this.#tryLaunch(terac, row.id, mcp.opportunityId, mcp.feasibilityId);
+          if (isOpportunitySubject(input.subject)) {
+            await this.deps.repos.research.opportunities.setStage(input.subjectRefId, 'expert_review_requested');
+          }
+          return {
+            reviewId: row.id,
+            externalEngagementId: mcp.opportunityId,
+            externalRequestId: mcp.feasibilityId ?? null,
+            blockedOn: launch.blockedOn,
+          };
+        }
       } catch (mcpError) {
         getLogger().warn({ err: mcpError }, 'Terac MCP launch failed; continuing with REST feasibility');
       }
@@ -124,7 +144,7 @@ export class ExpertReviewService {
       await this.deps.repos.research.expertReviews.setExternalIds(row.id, { requestId: feasibility.id });
 
       if (feasibility.status === 'RESPONDED') {
-        const engagementId = await this.#launchOpportunity(
+        const launched = await this.#launchOpportunity(
           terac,
           row.id,
           input,
@@ -136,8 +156,9 @@ export class ExpertReviewService {
         }
         return {
           reviewId: row.id,
-          externalEngagementId: engagementId,
+          externalEngagementId: launched.opportunityId,
           externalRequestId: feasibility.id,
+          blockedOn: launched.blockedOn,
         };
       }
 
@@ -189,7 +210,7 @@ export class ExpertReviewService {
         }
         await this.deps.repos.research.expertReviews.setStatus(row.id, 'priced');
         const parsedSubject = ExpertReviewSubject.safeParse(row.subject);
-        await this.#launchOpportunity(
+        const launched = await this.#launchOpportunity(
           terac,
           row.id,
           {
@@ -203,6 +224,14 @@ export class ExpertReviewService {
           parsedSubject.success ? buildReviewRubric(parsedSubject.data) : undefined,
           row.external_request_id ?? undefined,
         );
+        if (launched.blockedOn) {
+          return {
+            ok: false,
+            reviewId: row.id,
+            status: 'priced',
+            blockedOn: launched.blockedOn,
+          };
+        }
         return { ok: true, reviewId: row.id, status: 'launched' };
       }
 
@@ -245,7 +274,29 @@ export class ExpertReviewService {
 
       await this.deps.repos.research.expertReviews.setVerdict(row.id, derived.verdict, derived.meanScores);
       if (isOpportunitySubject(row.subject)) {
-        await this.deps.repos.research.opportunities.setStage(row.subject_ref_id, 'expert_reviewed');
+        const applied = await this.#applyHumanRanking(
+          row.subject_ref_id,
+          derived.verdict,
+          row.external_engagement_id,
+          typeof recorded[0]?.['expert_ref'] === 'string' ? recorded[0]['expert_ref'] : 'terac-panel',
+        );
+        if (derived.verdict === 'rejected') {
+          await this.deps.repos.research.opportunities.setStage(
+            row.subject_ref_id,
+            'killed',
+            `General Population Terac review rejected the concept (${applied.beforeComposite ?? 'n/a'} → ${applied.afterComposite ?? 'n/a'}).`,
+          );
+        } else {
+          await this.deps.repos.research.opportunities.setStage(row.subject_ref_id, 'expert_reviewed');
+        }
+        return {
+          ok: true,
+          reviewId: row.id,
+          status: 'completed',
+          verdict: derived.verdict,
+          beforeComposite: applied.beforeComposite,
+          afterComposite: applied.afterComposite,
+        };
       }
       return { ok: true, reviewId: row.id, status: 'completed', verdict: derived.verdict };
     } catch (error) {
@@ -257,51 +308,137 @@ export class ExpertReviewService {
     }
   }
 
+  async #tryLaunch(
+    terac: TeracAdapter,
+    reviewId: string,
+    opportunityId: string,
+    feasibilityId?: string,
+  ): Promise<{ blockedOn?: { capability: Capability; reason: string } }> {
+    await this.deps.repos.research.expertReviews.setExternalIds(reviewId, {
+      engagementId: opportunityId,
+      ...(feasibilityId ? { requestId: feasibilityId } : {}),
+    });
+    try {
+      const launched = await terac.launchDraftOpportunity(opportunityId);
+      await this.deps.repos.research.expertReviews.setStatus(
+        reviewId,
+        'launched',
+        launched.cost_per_participant_minor ?? null,
+        launched.currency ?? null,
+      );
+      return {};
+    } catch (error) {
+      if (isTeracUnfundedLaunch(error)) {
+        await this.deps.repos.research.expertReviews.setStatus(reviewId, 'priced');
+        return {
+          blockedOn: {
+            capability: 'expert.structured_review',
+            reason: error instanceof Error ? error.message : 'Terac launch requires org credit',
+          },
+        };
+      }
+      throw error;
+    }
+  }
+
   async #launchOpportunity(
     terac: TeracAdapter,
     reviewId: string,
     input: RequestReviewInput,
     rubric: ReturnType<typeof buildReviewRubric> | undefined,
     feasibilityRequestId?: string,
-  ): Promise<string> {
-    const projects = await terac.listProjects({ limit: 1 });
-    const projectId = projects.data[0]?.id;
-    if (!projectId) {
-      await this.deps.repos.research.expertReviews.setStatus(reviewId, 'failed');
-      throw new CapabilityUnsupportedError(
-        'terac',
-        'expert.structured_review',
-        'Terac returned no projects; create a project in the Terac dashboard before launching a review.',
-      );
+  ): Promise<{ opportunityId: string; blockedOn?: { capability: Capability; reason: string } }> {
+    const existing = await terac.listOpportunities({ limit: 25 });
+    const reusable = existing.data.find((row) => {
+      const status = (row.status ?? '').toLowerCase();
+      return status === 'draft' || status === 'launched' || status === 'in_progress' || status === 'active';
+    });
+    if (reusable) {
+      const launch = await this.#tryLaunch(terac, reviewId, reusable.id, reusable.feasibility_request_id ?? feasibilityRequestId);
+      return { opportunityId: reusable.id, blockedOn: launch.blockedOn };
     }
+
+    const projects = await terac.listProjects({ limit: 25 });
+    const project =
+      projects.data.find((row) => row.name?.toLowerCase().includes('general population')) ??
+      projects.data[0] ??
+      (await terac.createProject({ name: 'Foundry General Population product feedback' }));
+    const taskUrl = await this.#stimulusUrl();
 
     const created = await terac.createOpportunity({
       title: input.question.slice(0, 200),
-      projectId,
+      projectId: project.id,
       numParticipants: input.participantsRequested,
       businessType: 'b2c',
+      unrestrictedAudience: true,
       description: input.question.slice(0, 5000),
-      screeningQuestions: rubric ? [...rubric.screeningQuestions] : [],
+      screeningQuestions: rubric ? [...rubric.screeningQuestions] : [
+        'Are you answering as a typical consumer rather than a category professional?',
+      ],
       feasibilityRequestId,
       tasks: [
         {
           sequence: 1,
-          taskType: 'review',
-          reviewType: input.subject,
-          taskUrl: new URL(`/expert-reviews/${reviewId}`, this.deps.publicBaseUrl).toString(),
-          durationMinutes: 20,
+          taskType: 'activity',
+          reviewType: 'manual_review',
+          title: 'Buy / no-buy + price',
+          description: input.question.slice(0, 2000),
+          durationMinutes: 8,
+          ...(taskUrl ? { taskUrl } : {}),
         },
       ],
     });
 
-    await this.deps.repos.research.expertReviews.setExternalIds(reviewId, { engagementId: created.id });
-    await this.deps.repos.research.expertReviews.setStatus(
-      reviewId,
-      'launched',
-      created.cost_per_participant_minor ?? null,
-      created.currency ?? null,
-    );
-    return created.id;
+    const launch = await this.#tryLaunch(terac, reviewId, created.id, feasibilityRequestId);
+    return { opportunityId: created.id, blockedOn: launch.blockedOn };
+  }
+
+  async #stimulusUrl(): Promise<string | undefined> {
+    try {
+      const stripe = this.deps.providers.adapter('stripe') as StripeAdapter | undefined;
+      if (!stripe?.isConfigured) return undefined;
+      const link = await stripe.resolveHackathonPaymentLink();
+      return link.url;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async #applyHumanRanking(
+    opportunityId: string,
+    verdict: string,
+    engagementId: string,
+    expertRef: string,
+  ): Promise<{ beforeComposite: number | null; afterComposite: number | null }> {
+    const before = await this.deps.repos.research.opportunities.latestScorecard(opportunityId);
+    if (!before) {
+      return { beforeComposite: null, afterComposite: null };
+    }
+    const dimensions = before.dimensions.flatMap((row) => {
+      const parsed = DimensionScore.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    });
+    const existingOverrides = before.overrides.flatMap((row) => {
+      const parsed = HumanOverride.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    });
+    const overrides = expertVerdictOverrides({
+      verdict,
+      engagementId,
+      expertRef,
+      before: dimensions,
+      recordedAt: new Date().toISOString(),
+    });
+    if (overrides.length === 0 || dimensions.length === 0) {
+      return { beforeComposite: before.composite, afterComposite: before.composite };
+    }
+    const after = await this.deps.repos.research.opportunities.writeScorecard({
+      opportunityId,
+      weightProfile: before.weight_profile,
+      dimensions,
+      overrides: [...existingOverrides, ...overrides],
+    });
+    return { beforeComposite: before.composite, afterComposite: after.composite };
   }
 
   async #recordIfComplete(expertReviewId: string, submission: TeracSubmission): Promise<void> {
@@ -353,4 +490,48 @@ function blockedFrom(error: unknown, capability: Capability): { capability: Capa
     return { capability, reason: error.message };
   }
   return undefined;
+}
+
+function isTeracUnfundedLaunch(error: unknown): boolean {
+  if (!(error instanceof ValidationError)) return false;
+  if (error.context['teracLaunchBlocked'] === true) return true;
+  return /insufficient balance/i.test(error.message);
+}
+
+const VERDICT_RAW: Record<string, { willingness_to_pay: number; pain_severity: number; safety_regulatory_risk: number }> = {
+  approved: { willingness_to_pay: 85, pain_severity: 80, safety_regulatory_risk: 20 },
+  approve_with_changes: { willingness_to_pay: 65, pain_severity: 70, safety_regulatory_risk: 35 },
+  rejected: { willingness_to_pay: 15, pain_severity: 30, safety_regulatory_risk: 85 },
+  inconclusive: { willingness_to_pay: 50, pain_severity: 50, safety_regulatory_risk: 50 },
+};
+
+/**
+ * Maps a completed General Population Terac verdict onto scorecard overrides.
+ * The new scorecard is the after; the previous composite is the before.
+ */
+export function expertVerdictOverrides(input: {
+  readonly verdict: string;
+  readonly engagementId: string;
+  readonly expertRef: string;
+  readonly before: readonly { dimension: string; raw: number }[];
+  readonly recordedAt: string;
+}): HumanOverride[] {
+  const targets = VERDICT_RAW[input.verdict];
+  if (!targets) return [];
+  const overrides: HumanOverride[] = [];
+  for (const dim of input.before) {
+    const next = targets[dim.dimension as keyof typeof targets];
+    if (next === undefined) continue;
+    const parsed = HumanOverride.safeParse({
+      dimension: dim.dimension,
+      previousRaw: dim.raw,
+      newRaw: next,
+      rationale: `General Population Terac verdict ${input.verdict} replaced the machine score for ${dim.dimension}.`,
+      engagementId: input.engagementId,
+      expertRef: input.expertRef,
+      recordedAt: input.recordedAt,
+    });
+    if (parsed.success) overrides.push(parsed.data);
+  }
+  return overrides;
 }

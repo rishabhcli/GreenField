@@ -21,16 +21,6 @@ import {
   assertModeMatchesEnvironment,
   type Secret,
 } from '@foundry/core';
-
-/**
- * Pinned explicitly rather than inherited from the SDK version.
- *
- * From stripe-node v12 onward the library sends the API version it shipped
- * with, so upgrading the npm package would silently move our effective API
- * version and could change response shapes mid-deploy. Verified current stable
- * on 2026-08-14.
- */
-export const STRIPE_API_VERSION = '2026-07-29.dahlia' as Stripe.LatestApiVersion;
 import { getLogger } from '@foundry/obs';
 import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/adapter.js';
 import { verifyStripeSignature } from '../http/webhook-verify.js';
@@ -47,6 +37,24 @@ import {
   refId,
 } from './schemas.js';
 import { mapStripeEventToOrderTransition, type MappingResult } from './events.js';
+
+/**
+ * Pinned explicitly rather than inherited from the SDK version.
+ *
+ * From stripe-node v12 onward the library sends the API version it shipped
+ * with, so upgrading the npm package would silently move our effective API
+ * version and could change response shapes mid-deploy. Verified current stable
+ * on 2026-08-14.
+ */
+export const STRIPE_API_VERSION = '2026-07-29.dahlia' as Stripe.LatestApiVersion;
+
+/**
+ * The single Payment Link submitted to hackathon organizers (customer chooses
+ * price). Reuse this id/url; minting a second link drops organizer tracking.
+ * Organizers get a read-only `rk_` key, never `sk_`.
+ */
+export const HACKATHON_PAYMENT_LINK_ID = 'plink_1U4lK242nB81EBguRPuIHrxS';
+export const HACKATHON_PAYMENT_LINK_URL = 'https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00';
 
 export interface CheckoutLineItemInput {
   readonly productId: string;
@@ -152,7 +160,7 @@ export class StripeAdapter extends ProviderAdapter {
   }
 
   /* ---------------------------------------------------------------------- */
-  /* Checkout                                                                */
+  /* Checkout — production storefront for physical goods (Stripe is MoR)     */
   /* ---------------------------------------------------------------------- */
 
   async createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSessionResult> {
@@ -509,12 +517,23 @@ export class StripeAdapter extends ProviderAdapter {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * Returns the submitted hackathon Payment Link URL. Creating a second link
-   * mid-event drops organizer revenue tracking, so this never mints one
-   * implicitly.
+   * URL the agent payment tool must share. Always the submitted link, even if
+   * env is unset or points elsewhere — a second URL would split organizer tracking.
    */
-  hackathonPaymentLinkUrl(): string | undefined {
-    return this.optionalSecret(SECRETS.stripeHackathonPaymentLinkUrl)?.reveal();
+  hackathonPaymentLinkUrl(): string {
+    const fromEnv = this.optionalSecret(SECRETS.stripeHackathonPaymentLinkUrl)?.reveal();
+    if (fromEnv && normalizePaymentLinkUrl(fromEnv) !== normalizePaymentLinkUrl(HACKATHON_PAYMENT_LINK_URL)) {
+      getLogger().warn(
+        { configuredHost: safePaymentLinkHost(fromEnv) },
+        'STRIPE_HACKATHON_PAYMENT_LINK_URL does not match the submitted Payment Link; using the submitted URL',
+      );
+    }
+    return HACKATHON_PAYMENT_LINK_URL;
+  }
+
+  /** Submitted Payment Link id + URL for the agent collection tool. */
+  agentPaymentLink(): { readonly id: string; readonly url: string } {
+    return { id: HACKATHON_PAYMENT_LINK_ID, url: this.hackathonPaymentLinkUrl() };
   }
 
   async retrievePaymentLink(id: string): Promise<StripePaymentLink> {
@@ -523,19 +542,47 @@ export class StripeAdapter extends ProviderAdapter {
     return StripePaymentLink.parse(raw);
   }
 
+  /**
+   * Confirms the submitted hackathon Payment Link still exists and is active.
+   * Retrieves by the submitted id rather than minting a second link.
+   */
+  async resolveHackathonPaymentLink(): Promise<StripePaymentLink> {
+    return this.#retrieveSubmittedPaymentLink();
+  }
+
+  /**
+   * Reuses the submitted Payment Link. Never calls `paymentLinks.create` while
+   * `plink_1U4lK242nB81EBguRPuIHrxS` is the organizer-tracked collection URL.
+   */
   async createPaymentLink(input: {
     readonly priceId: string;
     readonly quantity?: number;
     readonly idempotencyKey: string;
   }): Promise<StripePaymentLink> {
+    void input;
+    return this.#retrieveSubmittedPaymentLink();
+  }
+
+  async #retrieveSubmittedPaymentLink(): Promise<StripePaymentLink> {
     this.assertActivated();
-    const raw = await this.#call('paymentLinks.create', () =>
-      this.#stripe().paymentLinks.create(
-        { line_items: [{ price: input.priceId, quantity: input.quantity ?? 1 }] },
-        { idempotencyKey: input.idempotencyKey },
-      ),
+    const raw = await this.#call('paymentLinks.retrieve', () =>
+      this.#stripe().paymentLinks.retrieve(HACKATHON_PAYMENT_LINK_ID),
     );
-    return StripePaymentLink.parse(raw);
+    const link = StripePaymentLink.parse(raw);
+    if (link.active === false) {
+      throw new ValidationError(
+        `Hackathon Payment Link ${HACKATHON_PAYMENT_LINK_ID} is inactive. Reactivate that link rather than minting a second one.`,
+        { paymentLinkId: HACKATHON_PAYMENT_LINK_ID },
+      );
+    }
+    if (normalizePaymentLinkUrl(link.url) !== normalizePaymentLinkUrl(HACKATHON_PAYMENT_LINK_URL)) {
+      throw new ProviderContractError(
+        'stripe',
+        `Payment Link ${HACKATHON_PAYMENT_LINK_ID} URL does not match the submitted organizer URL`,
+        { paymentLinkId: HACKATHON_PAYMENT_LINK_ID },
+      );
+    }
+    return link;
   }
 
   /* ---------------------------------------------------------------------- */
@@ -555,6 +602,9 @@ export class StripeAdapter extends ProviderAdapter {
   ): { event: StripeEventEnvelope; timestampSeconds: number } {
     const secret = this.requireSecret(SECRETS.stripeWebhookSecret);
     const verification = verifyStripeSignature({ rawBody, headers, secret });
+
+    // Missing STRIPE_WEBHOOK_SECRET is a hard block (requireSecret above).
+    // Never parse or acknowledge an unsigned body as a payment event.
 
     const parsed = StripeEventEnvelope.safeParse(
       JSON.parse(typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8')),
@@ -580,6 +630,19 @@ export class StripeAdapter extends ProviderAdapter {
   /** Maps a verified event to an order transition intent. */
   interpretEvent(event: StripeEventEnvelope): MappingResult {
     return mapStripeEventToOrderTransition(event.type, event.data.object);
+  }
+
+  /**
+   * Inbound Stripe webhooks are money-authoritative. Unset signing secret means
+   * blocked, not a fabricated verification.
+   */
+  webhookIngestStatus():
+    | { readonly ready: true }
+    | { readonly ready: false; readonly blockedOn: 'STRIPE_WEBHOOK_SECRET' } {
+    if (!this.optionalSecret(SECRETS.stripeWebhookSecret)) {
+      return { ready: false, blockedOn: 'STRIPE_WEBHOOK_SECRET' };
+    }
+    return { ready: true };
   }
 
   /* ---------------------------------------------------------------------- */
@@ -637,6 +700,18 @@ export class StripeAdapter extends ProviderAdapter {
       return new ValidationError(`Stripe rejected ${operation}: ${error.message}`, context);
     }
     return new ProviderContractError('stripe', `${operation}: ${error.message}`, context);
+  }
+}
+
+function normalizePaymentLinkUrl(url: string): string {
+  return url.trim().replace(/\/$/, '');
+}
+
+function safePaymentLinkHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'unparseable';
   }
 }
 

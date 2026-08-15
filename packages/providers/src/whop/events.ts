@@ -19,7 +19,8 @@ export const HANDLED_WHOP_EVENTS: readonly string[] = WHOP_MANIFEST.webhooks?.[0
 export function mapWhopEventToOrderTransition(eventType: string, payload: unknown): MappingResult {
   const parsed = WhopWebhookEnvelope.safeParse(payload);
   const type = eventType || (parsed.success ? parsed.data.type ?? parsed.data.action ?? '' : '');
-  const data = parsed.success ? parsed.data.data : asRecord(payload);
+  const nested = parsed.success ? parsed.data.data : {};
+  const data = Object.keys(nested).length > 0 ? nested : asRecord(payload);
   const ids = externalIds(data);
 
   switch (type) {

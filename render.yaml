@@ -238,12 +238,12 @@ services:
   # ---------------------------------------------------------------------------
   # Render Workflows (public beta).
   #
-  # Blueprints cannot create or manage workflow services yet
-  # (https://render.com/docs/workflows). The task definitions live in
-  # apps/workflows (`task()` from `@renderinc/sdk/workflows`). Create the
-  # workflow service in the Dashboard from that entrypoint, then set
-  # RENDER_WORKFLOW_SLUG. foundry-loop-tick triggers `tickCompanyLoop` via
-  # POST /v1/task-runs when that slug is present.
+  # Blueprints cannot declare `type: workflow`. The REST API can:
+  # POST https://api.render.com/v1/workflows then POST /v1/workflowversions.
+  # Tasks live in apps/workflows (`task()` from `@renderinc/sdk/workflows`).
+  # Set RENDER_WORKFLOW_SLUG to the created slug (foundry-workflows).
+  # Trigger: POST https://api.render.com/v1/task-runs
+  #   { "task": "{slug}/{name}", "input": [...] }
   # ---------------------------------------------------------------------------
 
   # ---------------------------------------------------------------------------

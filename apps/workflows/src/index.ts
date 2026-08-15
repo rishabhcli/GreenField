@@ -6,6 +6,9 @@
  * 2026-08-15). Create this service in the Dashboard from this entrypoint,
  * set RENDER_WORKFLOW_SLUG, and the control plane triggers runs with
  * POST /v1/task-runs.
+ *
+ * Blueprints cannot declare `type: workflow`. Create the service with
+ * POST /v1/workflows (or Dashboard / `render workflows create`).
  */
 
 import { task } from '@renderinc/sdk/workflows';

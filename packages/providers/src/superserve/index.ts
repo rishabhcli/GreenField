@@ -46,6 +46,14 @@ import { SuperservePreviewPort } from './schemas.js';
 // diverging local definition).
 export type { AdapterContext as CoreAdapterContext };
 
+/** Documented browser hostname: `https://{port}-{sandboxId}.sandbox.superserve.ai`. */
+export function superservePreviewUrl(sandboxId: string, port: number): string {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === 49983) {
+    throw new ValidationError('preview port must be an integer 1024–65535 excluding reserved 49983', { port });
+  }
+  return `https://${port}-${sandboxId}.sandbox.superserve.ai`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Inputs                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -168,6 +176,10 @@ export class SuperserveAdapter extends ProviderAdapter {
 
   #dataPlaneHost(sandboxId: string): string {
     return `https://boxd-${sandboxId}.sandbox.superserve.ai`;
+  }
+
+  previewUrl(sandboxId: string, port: number): string {
+    return superservePreviewUrl(sandboxId, port);
   }
 
   #currentAccessToken(sandboxId: string): Secret {
@@ -335,16 +347,17 @@ export class SuperserveAdapter extends ProviderAdapter {
   /** Checkpoints memory + processes + filesystem and stops compute billing, per the docs. */
   async pauseSandbox(sandboxId: string): Promise<SuperserveSandbox> {
     this.assertActivated();
-    const response = await this.#controlPlane().request(
-      { method: 'POST', path: `/sandboxes/${sandboxId}/pause`, retryable: false, operation: 'pauseSandbox' },
-      SuperserveSandbox,
-    );
-    // A paused sandbox's data-plane token is presumed invalid until resume.
-    // Dropping it now turns a would-be confusing provider auth error later
-    // into an immediate, clear ValidationError from #currentAccessToken.
+    const raw = await this.#controlPlane().raw({
+      method: 'POST',
+      path: `/sandboxes/${sandboxId}/pause`,
+      retryable: false,
+      operation: 'pauseSandbox',
+    });
     this.#invalidateToken(sandboxId);
-    getLogger().info({ sandboxId }, 'superserve sandbox paused');
-    return response.body;
+    const parsed = SuperserveSandbox.safeParse(raw.body);
+    const paused = parsed.success ? parsed.data : await this.getSandbox(sandboxId);
+    getLogger().info({ sandboxId, status: paused.status, httpStatus: raw.status }, 'superserve sandbox paused');
+    return paused;
   }
 
   /**

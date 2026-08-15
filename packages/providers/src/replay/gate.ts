@@ -15,7 +15,7 @@
  */
 
 import type { CriticalFlow, Defect, DefectSeverity, QaRunKind, QaRunStatus } from '@foundry/core';
-import type { ReplayBug, ReplayExploration, ReplayJourney, ReplayProject } from './schemas.js';
+import type { ReplayBug, ReplayExploration, ReplayJourney, ReplayProject, ReplayProjectTiming } from './schemas.js';
 
 /* -------------------------------------------------------------------------- */
 /* Exploration status                                                         */
@@ -36,6 +36,17 @@ const TERMINAL_CANCELLED_WORDS = /^(cancelled|canceled|aborted)$/i;
 export function isTerminalExplorationStatus(status: string): boolean {
   const s = status.trim();
   return TERMINAL_SUCCESS_WORDS.test(s) || TERMINAL_FAILURE_WORDS.test(s) || TERMINAL_CANCELLED_WORDS.test(s);
+}
+
+/** Replay documents `finished_at` on project timing as the idle signal. */
+export function isProjectIdle(timing: Pick<ReplayProjectTiming, 'finished_at'>): boolean {
+  return typeof timing.finished_at === 'string' && timing.finished_at.trim().length > 0;
+}
+
+function normalizeReproductionSteps(raw: ReplayBug['reproduction_steps']): readonly string[] {
+  if (Array.isArray(raw)) return raw.filter((step) => step.trim().length > 0);
+  if (typeof raw === 'string' && raw.trim().length > 0) return [raw.trim()];
+  return [];
 }
 
 function qaRunStatusFromExplorationStatus(status: string): QaRunStatus {
@@ -266,10 +277,7 @@ export function toQaRunAndDefects(
     externalId: bug.id,
     title: bug.title,
     description: bug.description ?? bug.title,
-    // Replay's bug object does not document a structured reproduction-steps
-    // field; the freeform description is kept in `description` rather than
-    // being naively split into fabricated "steps".
-    reproductionSteps: [],
+    reproductionSteps: [...normalizeReproductionSteps(bug.reproduction_steps)],
     rootCause: bug.root_cause ?? null,
     suggestedFix: bug.suggested_fix ?? null,
     evidenceUrl: bug.recording_url ?? null,
@@ -307,4 +315,50 @@ export function toQaRunAndDefects(
   };
 
   return { run, defects };
+}
+
+/**
+ * Project-level bridge used after `POST /projects` (which starts QA itself).
+ * An idle project that never started work is `failed`, not `completed` —
+ * unexecuted QA is not a pass.
+ */
+export function toQaRunFromProject(
+  project: ReplayProject,
+  timing: Pick<ReplayProjectTiming, 'started_at' | 'finished_at'>,
+  bugs: readonly ReplayBug[],
+  journeys: readonly ReplayJourney[] = [],
+  exploration?: ReplayExploration | null,
+): { readonly run: ReplayDerivedQaRun; readonly defects: readonly ReplayDerivedDefect[] } {
+  const executed =
+    Boolean(timing.started_at) ||
+    journeys.length > 0 ||
+    bugs.length > 0 ||
+    Boolean(exploration && (exploration.started_at || (exploration.journeys?.length ?? 0) > 0));
+
+  let status: string;
+  if (!isProjectIdle(timing)) {
+    status = exploration?.status ?? 'running';
+  } else if (!executed) {
+    status = 'failed';
+  } else {
+    status =
+      exploration?.status && isTerminalExplorationStatus(exploration.status) ? exploration.status : 'completed';
+  }
+
+  const resolved: ReplayExploration = {
+    id: exploration?.id ?? project.exploration_id ?? `project:${project.id}`,
+    project_id: exploration?.project_id ?? project.id,
+    status,
+    prompt: exploration?.prompt,
+    journeys:
+      exploration?.journeys && exploration.journeys.length > 0 ? exploration.journeys : [...journeys],
+    journey_ids: exploration?.journey_ids,
+    bugs: exploration?.bugs,
+    bug_ids: exploration?.bug_ids,
+    started_at: exploration?.started_at ?? timing.started_at ?? null,
+    finished_at: exploration?.finished_at ?? timing.finished_at ?? null,
+    created_at: exploration?.created_at,
+  };
+
+  return toQaRunAndDefects(project, resolved, bugs);
 }

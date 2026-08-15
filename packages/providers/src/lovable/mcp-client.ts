@@ -12,8 +12,10 @@
  * calls in the same adapter instance.
  */
 
-import { ProviderContractError, ProviderUnavailableError } from '@foundry/core';
+import { ProviderAuthError, ProviderContractError, ProviderUnavailableError, type Secret } from '@foundry/core';
 import { z } from 'zod';
+
+export const LOVABLE_MCP_ENDPOINT = 'https://mcp.lovable.dev';
 
 const JsonRpcResponse = z.object({
   jsonrpc: z.literal('2.0').optional(),
@@ -33,16 +35,61 @@ export interface McpToolCallResult {
   readonly isError: boolean;
 }
 
+export function buildToolsCall(
+  name: string,
+  args: Record<string, unknown>,
+  id: string | number,
+): Record<string, unknown> {
+  return {
+    jsonrpc: '2.0',
+    id,
+    method: 'tools/call',
+    params: { name, arguments: args },
+  };
+}
+
+export function parseSseJsonRpc(text: string): unknown[] {
+  const frames: unknown[] = [];
+  for (const block of text.split(/\n\n+/)) {
+    const data = block
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trim())
+      .filter((line) => line.length > 0 && line !== '[DONE]')
+      .join('');
+    if (!data) continue;
+    frames.push(JSON.parse(data) as unknown);
+  }
+  return frames;
+}
+
 export class LovableMcpClient {
   #sessionId: string | undefined;
   #nextId = 1;
   #initialized = false;
+  readonly #endpoint: string;
+  readonly #accessToken: string;
+  readonly #fetchImpl: typeof fetch;
 
   constructor(
-    private readonly endpoint: string,
-    private readonly accessToken: string,
-    private readonly fetchImpl: typeof fetch = globalThis.fetch,
-  ) {}
+    endpointOrOpts: string | { accessToken: Secret; fetchImpl?: typeof fetch; endpoint?: string },
+    accessToken?: string,
+    fetchImpl?: typeof fetch,
+  ) {
+    if (typeof endpointOrOpts === 'string') {
+      this.#endpoint = endpointOrOpts;
+      this.#accessToken = accessToken ?? '';
+      this.#fetchImpl = fetchImpl ?? globalThis.fetch;
+    } else {
+      this.#endpoint = endpointOrOpts.endpoint ?? LOVABLE_MCP_ENDPOINT;
+      this.#accessToken = endpointOrOpts.accessToken.reveal();
+      this.#fetchImpl = endpointOrOpts.fetchImpl ?? globalThis.fetch;
+    }
+  }
+
+  get initialized(): boolean {
+    return this.#initialized;
+  }
 
   async initialize(): Promise<Record<string, unknown>> {
     const result = await this.#rpc('initialize', {
@@ -63,6 +110,10 @@ export class LovableMcpClient {
       content: record['content'] ?? result,
       isError: record['isError'] === true,
     };
+  }
+
+  async post(payload: Record<string, unknown>, _meta?: { operation?: string }): Promise<unknown> {
+    return this.#post(payload, true);
   }
 
   async #notify(method: string, params: Record<string, unknown>): Promise<void> {
@@ -89,14 +140,14 @@ export class LovableMcpClient {
 
   async #post(payload: Record<string, unknown>, expectResult: boolean): Promise<unknown> {
     const headers: Record<string, string> = {
-      authorization: `Bearer ${this.accessToken}`,
+      authorization: `Bearer ${this.#accessToken}`,
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
       'mcp-protocol-version': '2025-03-26',
     };
     if (this.#sessionId) headers['mcp-session-id'] = this.#sessionId;
 
-    const response = await this.fetchImpl(this.endpoint, {
+    const response = await this.#fetchImpl(this.#endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
@@ -106,6 +157,13 @@ export class LovableMcpClient {
     if (session) this.#sessionId = session;
 
     const text = await response.text();
+    if (response.status === 401 || response.status === 403) {
+      throw new ProviderAuthError(
+        'lovable',
+        'OAuth token rejected. The Lovable MCP server is allowlisted to first-party clients; complete the browser OAuth flow from an allowlisted client and store LOVABLE_OAUTH_ACCESS_TOKEN.',
+        { status: response.status, wwwAuthenticate: response.headers.get('www-authenticate') },
+      );
+    }
     if (!response.ok) {
       throw new ProviderUnavailableError('lovable', `MCP HTTP ${response.status}`, {
         status: response.status,

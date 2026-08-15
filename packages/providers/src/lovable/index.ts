@@ -18,7 +18,7 @@ import { verifyLovableSignature, type VerificationInput, type VerificationResult
 import { LOVABLE_MANIFEST, SECRETS } from '../manifests.js';
 import { LovableMcpClient } from './mcp-client.js';
 
-export { LovableMcpClient, parseMcpBody } from './mcp-client.js';
+export { LovableMcpClient, parseMcpBody, buildToolsCall, parseSseJsonRpc, LOVABLE_MCP_ENDPOINT } from './mcp-client.js';
 
 export interface LovableProject {
   readonly projectId: string;
@@ -57,11 +57,22 @@ export class LovableAdapter extends ProviderAdapter {
     };
   }
 
-  async createProject(input: { name?: string; prompt: string }): Promise<LovableProject> {
+  async createProject(input: {
+    name?: string;
+    prompt?: string;
+    initialMessage?: string;
+    workspaceId?: string;
+    idempotencyKey?: string;
+  }): Promise<LovableProject> {
     this.assertActivated();
+    const prompt = input.prompt ?? input.initialMessage;
+    if (!prompt) {
+      throw new ProviderContractError('lovable', 'create_project requires prompt or initialMessage');
+    }
     const result = await this.#client().callTool('create_project', {
+      initial_message: prompt,
       ...(input.name ? { name: input.name } : {}),
-      prompt: input.prompt,
+      ...(input.workspaceId ? { workspace_id: input.workspaceId } : {}),
     });
     this.#throwIfToolError('create_project', result.isError, result.content);
     const projectId = extractId(result.content);

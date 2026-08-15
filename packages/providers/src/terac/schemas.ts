@@ -107,7 +107,7 @@ export const TeracOpportunityTask = z
     // strings so a value the server accepted still round-trips on read.
     task_type: z.string(),
     review_type: z.string(),
-    task_url: z.string(),
+    task_url: z.string().nullish(),
     duration_minutes: z.number().int().positive(),
   })
   .passthrough();

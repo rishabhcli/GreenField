@@ -21,9 +21,8 @@ import {
   WhopProduct,
   WhopRefund,
 } from './schemas.js';
-import { mapWhopEventToOrderTransition } from './events.js';
 
-export { mapWhopEventToOrderTransition } from './events.js';
+export { mapWhopEventToOrderTransition, HANDLED_WHOP_EVENTS } from './events.js';
 export { WHOP_API_VERSION_DATE } from './schemas.js';
 
 export interface WhopProductInput {
@@ -32,6 +31,7 @@ export interface WhopProductInput {
   readonly visibility?: 'visible' | 'hidden' | 'archived';
   readonly metadata?: Readonly<Record<string, string>>;
   readonly idempotencyKey: string;
+  readonly kind?: 'digital_good' | 'subscription' | 'service' | 'membership' | 'physical_good';
 }
 
 export interface WhopCheckoutInput {
@@ -88,6 +88,11 @@ export class WhopAdapter extends ProviderAdapter {
   }
 
   async createProduct(input: WhopProductInput): Promise<{ id: string }> {
+    if (input.kind === 'physical_good') {
+      throw new ValidationError(
+        'Whop cannot sell physical goods. Use Stripe as merchant of record for physical products.',
+      );
+    }
     this.assertActivated();
     const response = await this.#http().request(
       {
@@ -129,6 +134,29 @@ export class WhopAdapter extends ProviderAdapter {
       WhopCheckoutConfiguration,
     );
     return { id: response.body.id, url: response.body.purchase_url ?? response.body.url ?? null };
+  }
+
+  async createCheckoutConfiguration(input: {
+    kind: WhopProductInput['kind'];
+    currency: string;
+    initialPriceMinor: number;
+    planType: string;
+    idempotencyKey: string;
+    orderId?: string;
+    planId?: string;
+  }): Promise<{ id: string; url: string | null }> {
+    if (input.kind === 'physical_good') {
+      throw new ValidationError(
+        'Whop cannot sell physical goods. Use Stripe as merchant of record for physical products.',
+      );
+    }
+    return this.createCheckout({
+      orderId: input.orderId ?? 'unbound',
+      productKind: input.kind === 'membership' ? 'membership' : 'digital_good',
+      planId: input.planId ?? '',
+      idempotencyKey: input.idempotencyKey,
+      metadata: { currency: input.currency, plan_type: input.planType, initial_price_minor: String(input.initialPriceMinor) },
+    });
   }
 
   async refundPayment(input: {

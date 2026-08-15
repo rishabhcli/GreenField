@@ -13,7 +13,7 @@
  *   - Optional `POST /felix/training-jobs` when a fine-tune is explicitly requested
  */
 
-import { ValidationError } from '@foundry/core';
+import { ValidationError, type FoundryError } from '@foundry/core';
 import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/adapter.js';
 import { apiKeyHeaderAuth, type ProviderHttpClient } from '../http/client.js';
 import { PIONEER_MANIFEST, SECRETS } from '../manifests.js';
@@ -60,20 +60,29 @@ export class PioneerAdapter extends ProviderAdapter {
     const secret = this.requireSecret(SECRETS.pioneerApiKey);
     return this.http(apiKeyHeaderAuth('X-API-Key', secret), {
       defaultHeaders: { accept: 'application/json' },
+      classifyError: (status, body) => classifyPioneerError(status, body),
     });
   }
 
   override async probe(): Promise<ProbeResult> {
     const models = await this.listInferenceModels();
     const ids = models.map((m) => m.id);
-    const hasGliner = ids.some((id) => id.includes('gliner2') || id.includes('gliguard'));
+    const bonus = [PIONEER_GLINER2_PII_MODEL, PIONEER_GLIGUARD_MODEL, PIONEER_GLINER2_BASE_MODEL];
+    const missingBonus = bonus.filter((id) => !ids.includes(id));
+    if (missingBonus.length > 0) {
+      throw new ValidationError(
+        `Pioneer catalog is missing prize-track encoder(s): ${missingBonus.join(', ')}`,
+        { missingBonus, count: models.length },
+      );
+    }
     return {
       succeeded: true,
       detail: `GET /base-models?supports_inference=true returned ${models.length} model(s)`,
       evidence: {
         endpoint: 'GET /base-models?supports_inference=true',
         count: models.length,
-        hasGlinerOrGliguard: hasGliner,
+        hasGlinerOrGliguard: true,
+        bonusModels: bonus,
         sampleIds: ids.slice(0, 8),
       },
     };
@@ -235,4 +244,31 @@ function lookupEntities(raw: unknown): readonly unknown[] | undefined {
 
 function stringOf(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** Live 2026-08-15: inference 403 `{ detail: { code: "card_required", message, resolution_url } }`. */
+export function classifyPioneerError(status: number, body: unknown): FoundryError | undefined {
+  if (status !== 402 && status !== 403) return undefined;
+  const rec = body && typeof body === 'object' ? (body as Record<string, unknown>) : undefined;
+  const detail = rec?.['detail'];
+  const error = rec?.['error'];
+  const detailObj = detail && typeof detail === 'object' ? (detail as Record<string, unknown>) : undefined;
+  const errorObj = error && typeof error === 'object' ? (error as Record<string, unknown>) : undefined;
+  const code = stringOf(detailObj?.['code'] ?? errorObj?.['code'] ?? rec?.['code']);
+  const message =
+    stringOf(detailObj?.['message']) ??
+    (typeof detail === 'string' ? detail : undefined) ??
+    stringOf(errorObj?.['message']) ??
+    (typeof error === 'string' ? error : undefined);
+  const resolutionUrl = stringOf(detailObj?.['resolution_url'] ?? rec?.['resolution_url']);
+  const blob = [code, message, resolutionUrl].filter(Boolean).join(' ');
+  if (!blob) return undefined;
+  if (/subscribe|billing|card_required|Hobby or Pro/i.test(blob)) {
+    return new ValidationError(message ?? blob, {
+      status,
+      code: code ?? 'card_required',
+      resolutionUrl,
+    });
+  }
+  return undefined;
 }

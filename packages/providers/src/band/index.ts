@@ -11,9 +11,9 @@
  * `CredentialsMissingError` naming `BAND_AGENT_API_KEY`.
  *
  * Auth is `X-API-Key` (NOT bearer) — BAND's own docs distinguish an agent key
- * (`thnv_a_...`, used here) from a human key (`thnv_u_...`, for the separate
- * Human API this adapter does not implement) and note that an agent key gets
- * a 403 on Human API endpoints.
+ * (`band_a_...` / legacy `thnv_a_...`, used here) from a human key
+ * (`band_u_...` / legacy `thnv_u_...`, for the Human API that registers agents)
+ * and note that an agent key gets a 403 on Human API endpoints.
  *
  * --- Honest finding: BAND's marketed "governance" is broader than its API ---
  * BAND's landing page describes an interaction *control plane* for
@@ -43,12 +43,14 @@ import {
   ProviderAuthError,
   ProviderUnavailableError,
   RateLimitError,
+  Secret,
   ValidationError,
   type CredentialsMissingError,
   type FoundryError,
 } from '@foundry/core';
 import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/adapter.js';
-import { apiKeyHeaderAuth, type ProviderHttpClient } from '../http/client.js';
+import { apiKeyHeaderAuth, ProviderHttpClient } from '../http/client.js';
+import { limiterFor } from '../http/rate-limit.js';
 import { SECRETS, BAND_MANIFEST } from '../manifests.js';
 import {
   BandAgentIdentity,
@@ -66,7 +68,10 @@ import {
   BandTask,
   BandTaskBoard,
   bandListEnvelope,
+  bandResource,
   normaliseBandList,
+  registrationApiKey,
+  BandAgentRegistration,
 } from './schemas.js';
 import { BandWebSocketClient } from './websocket.js';
 
@@ -133,6 +138,7 @@ export interface CreateMemoryInput {
 
 export class BandAdapter extends ProviderAdapter {
   override readonly manifest = BAND_MANIFEST;
+  #humanHttpClient: ProviderHttpClient | undefined;
 
   constructor(ctx: AdapterContext) {
     super(ctx);
@@ -141,6 +147,25 @@ export class BandAdapter extends ProviderAdapter {
   #client(): ProviderHttpClient {
     const secret = this.requireSecret(SECRETS.bandAgentApiKey);
     return this.http(apiKeyHeaderAuth('X-API-Key', secret), { classifyError: classifyBandError });
+  }
+
+  /**
+   * Separate client: `this.http()` memoises one auth header, and a human key
+   * must not be reused on Agent API paths (or vice versa).
+   */
+  #humanClient(): ProviderHttpClient {
+    if (!this.#humanHttpClient) {
+      const secret = this.requireSecret(SECRETS.bandUserApiKey);
+      this.#humanHttpClient = new ProviderHttpClient({
+        provider: this.provider,
+        baseUrl: this.baseUrl(),
+        auth: apiKeyHeaderAuth('X-API-Key', secret),
+        rateLimiter: limiterFor(this.provider),
+        defaultTimeoutMs: 30_000,
+        classifyError: classifyBandError,
+      });
+    }
+    return this.#humanHttpClient;
   }
 
   /** A Phoenix Channels client for the read-only event stream, wired with the agent API key. */
@@ -154,7 +179,7 @@ export class BandAdapter extends ProviderAdapter {
   override async probe(): Promise<ProbeResult> {
     const response = await this.#client().request(
       { method: 'GET', path: '/agent/me', operation: 'agent.me' },
-      BandAgentIdentity,
+      bandResource(BandAgentIdentity),
     );
     return {
       succeeded: true,
@@ -167,9 +192,54 @@ export class BandAdapter extends ProviderAdapter {
     this.assertActivated();
     const response = await this.#client().request(
       { method: 'GET', path: '/agent/me', operation: 'agent.me' },
-      BandAgentIdentity,
+      bandResource(BandAgentIdentity),
     );
     return response.body;
+  }
+
+  /* --- Human API (register agents) --------------------------------------- */
+
+  async listOwnedAgents(): Promise<unknown> {
+    const response = await this.#humanClient().raw({
+      method: 'GET',
+      path: '/me/agents',
+      operation: 'me.agents.list',
+    });
+    return response.body;
+  }
+
+  /**
+   * Registers a remote agent. The returned API key is shown once — caller must
+   * persist it as BAND_AGENT_API_KEY. Human API is documented as Enterprise;
+   * a Pro-only workspace will fail honestly here.
+   */
+  async registerExternalAgent(input: {
+    readonly name: string;
+    readonly description: string;
+  }): Promise<{ readonly agentId: string; readonly apiKey: Secret }> {
+    if (input.name.trim().length === 0) throw new ValidationError('registerExternalAgent requires a name');
+    const response = await this.#humanClient().request(
+      {
+        method: 'POST',
+        path: '/me/agents/register',
+        operation: 'me.agents.register',
+        retryable: false,
+        body: { agent: { name: input.name, description: input.description } },
+      },
+      BandAgentRegistration,
+    );
+    const extracted = registrationApiKey(response.body);
+    if (!extracted) {
+      throw new ProviderUnavailableError(
+        'band',
+        'POST /me/agents/register succeeded but the response did not include credentials.api_key',
+        { status: response.status },
+      );
+    }
+    return {
+      agentId: extracted.agentId,
+      apiKey: new Secret('BAND_AGENT_API_KEY', extracted.apiKey, 'unknown'),
+    };
   }
 
   /* --- Peers ---------------------------------------------------------------- */
@@ -199,7 +269,7 @@ export class BandAdapter extends ProviderAdapter {
     if (handle.trim().length === 0) throw new ValidationError('addContact requires a non-empty handle');
     const response = await this.#client().request(
       { method: 'POST', path: '/agent/contacts/add', operation: 'agent.contacts.add', body: { handle } },
-      BandContact,
+      bandResource(BandContact),
     );
     return response.body;
   }
@@ -232,7 +302,7 @@ export class BandAdapter extends ProviderAdapter {
         operation: 'agent.contacts.requests.respond',
         body: { request_id: requestId, accept },
       },
-      BandContactRequest,
+      bandResource(BandContactRequest),
     );
     return response.body;
   }
@@ -261,7 +331,7 @@ export class BandAdapter extends ProviderAdapter {
           ...(input.participantHandles ? { participants: input.participantHandles } : {}),
         },
       },
-      BandChat,
+      bandResource(BandChat),
     );
     return response.body;
   }
@@ -270,7 +340,7 @@ export class BandAdapter extends ProviderAdapter {
     this.assertActivated();
     const response = await this.#client().request(
       { method: 'GET', path: `/agent/chats/${encodeURIComponent(chatId)}`, operation: 'agent.chats.get' },
-      BandChat,
+      bandResource(BandChat),
     );
     return response.body;
   }
@@ -280,7 +350,7 @@ export class BandAdapter extends ProviderAdapter {
     if (name.trim().length === 0) throw new ValidationError('renameChat requires a non-empty name', { chatId });
     const response = await this.#client().request(
       { method: 'PATCH', path: `/agent/chats/${encodeURIComponent(chatId)}`, operation: 'agent.chats.rename', body: { name } },
-      BandChat,
+      bandResource(BandChat),
     );
     return response.body;
   }
@@ -311,7 +381,7 @@ export class BandAdapter extends ProviderAdapter {
         path: `/agent/chats/${encodeURIComponent(chatId)}/messages/next`,
         operation: 'agent.chats.messages.next',
       },
-      BandMessage.nullable(),
+      bandResource(BandMessage.nullable()),
     );
     return response.body;
   }
@@ -348,9 +418,23 @@ export class BandAdapter extends ProviderAdapter {
         operation: 'agent.chats.messages.send',
         body: { content, ...(input.taskId ? { task_id: input.taskId } : {}) },
       },
-      BandMessage,
+      bandResource(BandMessage),
     );
     return response.body;
+  }
+
+  /**
+   * Executor entry: claim the dispatch @mention before any LLM turn.
+   * Missing ids mean the room never received the handoff — start must break.
+   */
+  async claimHandoff(chatId: string | null | undefined, messageId: string | null | undefined): Promise<BandMessage> {
+    if (!chatId?.trim() || !messageId?.trim()) {
+      throw new ValidationError(
+        'A BAND room message must be claimed before work starts. Missing chat or message id means dispatch never posted an @mention.',
+        { chatId: chatId ?? null, messageId: messageId ?? null },
+      );
+    }
+    return this.markMessageProcessing(chatId, messageId);
   }
 
   async markMessageProcessing(chatId: string, messageId: string): Promise<BandMessage> {
@@ -361,7 +445,7 @@ export class BandAdapter extends ProviderAdapter {
         path: `/agent/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/processing`,
         operation: 'agent.chats.messages.mark_processing',
       },
-      BandMessage,
+      bandResource(BandMessage),
     );
     return response.body;
   }
@@ -374,7 +458,7 @@ export class BandAdapter extends ProviderAdapter {
         path: `/agent/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/processed`,
         operation: 'agent.chats.messages.mark_processed',
       },
-      BandMessage,
+      bandResource(BandMessage),
     );
     return response.body;
   }
@@ -388,7 +472,7 @@ export class BandAdapter extends ProviderAdapter {
         operation: 'agent.chats.messages.mark_failed',
         body: reason ? { reason } : {},
       },
-      BandMessage,
+      bandResource(BandMessage),
     );
     return response.body;
   }
@@ -408,7 +492,7 @@ export class BandAdapter extends ProviderAdapter {
         operation: 'agent.chats.events.post',
         body: { kind: input.kind, ...(input.payload ? { payload: input.payload } : {}) },
       },
-      BandEvent,
+      bandResource(BandEvent),
     );
     return response.body;
   }
@@ -438,7 +522,7 @@ export class BandAdapter extends ProviderAdapter {
         operation: 'agent.chats.participants.add',
         body: { handle },
       },
-      BandParticipant,
+      bandResource(BandParticipant),
     );
     return response.body;
   }
@@ -464,7 +548,7 @@ export class BandAdapter extends ProviderAdapter {
     this.assertActivated();
     const response = await this.#client().request(
       { method: 'GET', path: `/agent/chats/${encodeURIComponent(chatId)}/context`, operation: 'agent.chats.context' },
-      BandChatContext,
+      bandResource(BandChatContext),
     );
     return response.body;
   }
@@ -500,7 +584,7 @@ export class BandAdapter extends ProviderAdapter {
         operation: 'agent.chats.tasks.create',
         body: { title: input.title, ...(input.metadata ? { metadata: input.metadata } : {}) },
       },
-      BandTask,
+      bandResource(BandTask),
     );
     return response.body;
   }
@@ -518,7 +602,7 @@ export class BandAdapter extends ProviderAdapter {
           ...(input.metadata ? { metadata: input.metadata } : {}),
         },
       },
-      BandTask,
+      bandResource(BandTask),
     );
     return response.body;
   }
@@ -540,7 +624,7 @@ export class BandAdapter extends ProviderAdapter {
     this.assertActivated();
     const response = await this.#client().request(
       { method: 'GET', path: `/agent/chats/${encodeURIComponent(chatId)}/board`, operation: 'agent.chats.board' },
-      BandTaskBoard,
+      bandResource(BandTaskBoard),
     );
     return response.body;
   }
@@ -561,7 +645,7 @@ export class BandAdapter extends ProviderAdapter {
     if (input.content.trim().length === 0) throw new ValidationError('createMemory requires non-empty content');
     const response = await this.#client().request(
       { method: 'POST', path: '/agent/memories', operation: 'agent.memories.create', body: { content: input.content } },
-      BandMemory,
+      bandResource(BandMemory),
     );
     return response.body;
   }
@@ -576,7 +660,7 @@ export class BandAdapter extends ProviderAdapter {
         operation: 'agent.memories.supersede',
         body: { content: input.content },
       },
-      BandMemory,
+      bandResource(BandMemory),
     );
     return response.body;
   }

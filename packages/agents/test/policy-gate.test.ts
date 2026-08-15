@@ -16,11 +16,19 @@ import {
   CapabilityRegistry,
   PolicyDeniedError,
   SecretStore,
+  roleByKey,
   type Capability,
 } from '@foundry/core';
 import { Repositories, createPool, type DbPool } from '@foundry/db';
-import { ALL_MANIFESTS, ProviderRegistry } from '@foundry/providers';
-import { OrgDispatcher, PolicyGate, ToolRegistry, defineTool, executeToolCall } from '@foundry/agents';
+import {
+  AgentExecutor,
+  OrgDispatcher,
+  PolicyGate,
+  ToolRegistry,
+  defineTool,
+  executeToolCall,
+} from '@foundry/agents';
+import { ALL_MANIFESTS, ProviderRegistry, type AnthropicAdapter, type BandAdapter } from '@foundry/providers';
 import { z } from 'zod';
 
 const TEST_DB = `foundry_agents_${Date.now()}`;
@@ -477,7 +485,7 @@ describe('tool registry validation', () => {
 
 describe('org dispatch chain of command', () => {
   maybe('a manager may dispatch its own specialist', async () => {
-    const dispatcher = new OrgDispatcher(repos, fakeQueues());
+    const dispatcher = new OrgDispatcher(repos, fakeQueues(), stubBand());
     const result = await dispatcher.dispatch({
       companyId, fromRoleKey: 'research_manager', toRoleKey: 'community_researcher',
       objective: 'collect evidence on X', traceId: 't',
@@ -507,7 +515,7 @@ describe('org dispatch chain of command', () => {
   });
 
   maybe('the CEO may dispatch managers but not specialists directly', async () => {
-    const dispatcher = new OrgDispatcher(repos, fakeQueues());
+    const dispatcher = new OrgDispatcher(repos, fakeQueues(), stubBand());
     await expect(
       dispatcher.dispatch({ companyId, fromRoleKey: 'ceo', toRoleKey: 'research_manager', objective: 'find opportunities', traceId: 't' }),
     ).resolves.toBeDefined();
@@ -515,13 +523,239 @@ describe('org dispatch chain of command', () => {
       dispatcher.dispatch({ companyId, fromRoleKey: 'ceo', toRoleKey: 'community_researcher', objective: 'collect', traceId: 't' }),
     ).rejects.toThrow(PolicyDeniedError);
   });
+
+  maybe('dispatch refuses when BAND is not wired and never enqueues', async () => {
+    const tracked = trackingQueues();
+    const dispatcher = new OrgDispatcher(repos, tracked.queues);
+    await expect(
+      dispatcher.dispatch({
+        companyId, fromRoleKey: 'research_manager', toRoleKey: 'community_researcher',
+        objective: 'collect evidence on X', traceId: 't',
+      }),
+    ).rejects.toThrow(/BAND/);
+    expect(tracked.calls, 'enqueue must not run without a BAND room').toHaveLength(0);
+  });
+
+  maybe('enqueueSystem also refuses when BAND is not wired', async () => {
+    const tracked = trackingQueues();
+    const dispatcher = new OrgDispatcher(repos, tracked.queues);
+    await expect(
+      dispatcher.enqueueSystem({
+        companyId, toRoleKey: 'ceo', objective: 'start the loop', traceId: 't',
+      }),
+    ).rejects.toThrow(/BAND/);
+    expect(tracked.calls).toHaveLength(0);
+  });
+
+  maybe('removing the room (sendMessage fails) breaks dispatch and does not enqueue', async () => {
+    const tracked = trackingQueues();
+    const objective = `band-room-gone-${Date.now()}`;
+    const band = {
+      getMe: async () => ({ id: 'agt_test', handle: 'foundry-dispatch' }),
+      createChat: async () => ({ id: 'chat_test' }),
+      sendMessage: async () => {
+        throw new Error('BAND room gone');
+      },
+    } as unknown as BandAdapter;
+    const dispatcher = new OrgDispatcher(repos, tracked.queues, { band });
+    await expect(
+      dispatcher.dispatch({
+        companyId, fromRoleKey: 'research_manager', toRoleKey: 'community_researcher',
+        objective, traceId: 't',
+      }),
+    ).rejects.toThrow(/room gone/);
+    expect(tracked.calls).toHaveLength(0);
+    const leftover = (await repos.agents.runs.listActive(companyId)).filter((r) => r.objective === objective);
+    expect(leftover, 'failed handoff must not leave a queued run').toHaveLength(0);
+  });
+
+  maybe('@mention is posted before enqueue and the run stores the BAND assignment', async () => {
+    const events: string[] = [];
+    const tracked = trackingQueues(events);
+    let sent: { recipients: readonly string[]; body: string } | undefined;
+    const band = {
+      getMe: async () => ({ id: 'agt_test', handle: 'foundry-dispatch' }),
+      createChat: async () => {
+        events.push('createChat');
+        return { id: 'chat_test' };
+      },
+      sendMessage: async (_chatId: string, input: { recipients: readonly string[]; body: string }) => {
+        events.push('sendMessage');
+        sent = input;
+        return { id: 'msg_test' };
+      },
+    } as unknown as BandAdapter;
+    const dispatcher = new OrgDispatcher(repos, tracked.queues, { band });
+    const result = await dispatcher.dispatch({
+      companyId, fromRoleKey: 'research_manager', toRoleKey: 'community_researcher',
+      objective: 'handoff-before-enqueue', traceId: 't',
+    });
+    expect(sent?.recipients).toEqual(['foundry-dispatch']);
+    expect(sent?.body).toContain('DISPATCH');
+    expect(events.indexOf('sendMessage')).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf('sendMessage')).toBeLessThan(events.indexOf('enqueue'));
+    const run = await repos.agents.runs.byId(result.runId);
+    expect(run.coordination_room_id).toBe('chat_test');
+    expect(run.input_refs['bandChatId']).toBe('chat_test');
+    expect(run.input_refs['bandMessageId']).toBe('msg_test');
+  });
+});
+
+describe('BAND handoff drives start', () => {
+  maybe('start without a BAND assignment throws and never calls the LLM', async () => {
+    let llmCalls = 0;
+    let claims = 0;
+    const tools = toolsForRole('community_researcher');
+    const band = {
+      markMessageProcessing: async () => {
+        claims += 1;
+        return { id: 'msg_test' };
+      },
+    } as unknown as BandAdapter;
+    const llm = {
+      runToolLoop: async () => {
+        llmCalls += 1;
+        throw new Error('LLM must not run before a BAND claim');
+      },
+    } as unknown as AnthropicAdapter;
+
+    const run = await repos.agents.runs.create({
+      companyId,
+      roleKey: 'community_researcher',
+      objective: 'start-without-room',
+    });
+    const executor = new AgentExecutor({ repos, llm, tools, gate, band });
+    await expect(
+      executor.run({
+        runId: run.id,
+        companyId,
+        roleKey: 'community_researcher',
+        objective: 'start-without-room',
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/BAND/);
+    expect(llmCalls, 'LLM must not run when the room assignment is missing').toBe(0);
+    expect(claims, 'nothing to claim without a message id').toBe(0);
+  });
+
+  maybe('executor claims the BAND message before the LLM runs', async () => {
+    const events: string[] = [];
+    const tracked = trackingQueues(events);
+    const band = {
+      getMe: async () => ({ id: 'agt_test', handle: 'foundry-dispatch' }),
+      createChat: async () => ({ id: 'chat_test' }),
+      sendMessage: async () => {
+        events.push('sendMessage');
+        return { id: 'msg_test' };
+      },
+      markMessageProcessing: async () => {
+        events.push('claim');
+        return { id: 'msg_test' };
+      },
+      markMessageProcessed: async () => {
+        events.push('processed');
+        return { id: 'msg_test' };
+      },
+      markMessageFailed: async () => {
+        events.push('failed');
+        return { id: 'msg_test' };
+      },
+    } as unknown as BandAdapter;
+    const dispatcher = new OrgDispatcher(repos, tracked.queues, { band });
+    const dispatched = await dispatcher.dispatch({
+      companyId, fromRoleKey: 'research_manager', toRoleKey: 'community_researcher',
+      objective: 'claim-before-llm', traceId: 't',
+    });
+
+    const llm = {
+      runToolLoop: async () => {
+        events.push('llm');
+        return {
+          finalText: 'claimed then ran',
+          stopReason: 'end_turn',
+          refusal: null,
+          iterations: 1,
+          usage: {
+            inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, costMinorUsd: 0,
+          },
+          messages: [],
+        };
+      },
+    } as unknown as AnthropicAdapter;
+
+    const executor = new AgentExecutor({
+      repos, llm, tools: toolsForRole('community_researcher'), gate, band,
+    });
+    const outcome = await executor.run({
+      runId: dispatched.runId,
+      companyId,
+      roleKey: 'community_researcher',
+      objective: 'claim-before-llm',
+      signal: new AbortController().signal,
+    });
+    expect(outcome.status).toBe('succeeded');
+    expect(events.indexOf('sendMessage')).toBeLessThan(events.indexOf('enqueue'));
+    expect(events.indexOf('claim')).toBeGreaterThan(events.indexOf('enqueue'));
+    expect(events.indexOf('claim')).toBeLessThan(events.indexOf('llm'));
+  });
 });
 
 /* -------------------------------------------------------------------------- */
 
 /** Minimal queue stand-in: dispatch is tested for its rules, not its transport. */
 function fakeQueues(): { enqueue: (...args: unknown[]) => Promise<string> } & Record<string, unknown> {
-  return { enqueue: async () => 'job_1' } as never;
+  return trackingQueues().queues;
+}
+
+function trackingQueues(events?: string[]): {
+  queues: { enqueue: (...args: unknown[]) => Promise<string> } & Record<string, unknown>;
+  calls: unknown[][];
+} {
+  const calls: unknown[][] = [];
+  return {
+    calls,
+    queues: {
+      enqueue: async (...args: unknown[]) => {
+        calls.push(args);
+        events?.push('enqueue');
+        return 'job_1';
+      },
+    } as never,
+  };
+}
+
+/** BAND room is the handoff. Successful dispatch tests must post into a room. */
+function stubBand(): { band: BandAdapter } {
+  return {
+    band: {
+      getMe: async () => ({ id: 'agt_test', handle: 'foundry-dispatch' }),
+      createChat: async () => ({ id: 'chat_test' }),
+      sendMessage: async () => ({ id: 'msg_test' }),
+      markMessageProcessing: async () => ({ id: 'msg_test' }),
+      markMessageProcessed: async () => ({ id: 'msg_test' }),
+      markMessageFailed: async () => ({ id: 'msg_test' }),
+    } as unknown as BandAdapter,
+  };
+}
+
+function toolsForRole(roleKey: string): ToolRegistry {
+  const registry = new ToolRegistry();
+  const role = roleByKey(roleKey);
+  if (!role) throw new Error(`unknown role ${roleKey}`);
+  for (const name of role.tools) {
+    registry.register(
+      defineTool({
+        name,
+        description: `Stub ${name}. Call only in BAND handoff tests.`,
+        inputSchema: z.object({}),
+        authority: 'research.collect',
+        consequential: false,
+        describeAction: () => name,
+        execute: async () => ({ ok: true }),
+      }),
+    );
+  }
+  return registry;
 }
 
 function minimalConfig(): unknown {

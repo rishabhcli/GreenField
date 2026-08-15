@@ -27,24 +27,45 @@ export type LinqPhoneNumberStatus = z.infer<typeof LinqPhoneNumberStatus>;
 export const LinqPhoneNumberReputation = z.enum(['HEALTHY', 'AT_RISK', 'CRITICAL']);
 export type LinqPhoneNumberReputation = z.infer<typeof LinqPhoneNumberReputation>;
 
-export const LinqPhoneNumber = z.object({
-  id: z.string().min(1),
-  number: z.string().min(1),
-  status: LinqPhoneNumberStatus,
-  reputation: LinqPhoneNumberReputation,
-  forwarding_number: z.string().nullable().optional(),
-});
+/** Live 2026-08-15: `{ phone_numbers: [{ id, phone_number, reputation:{status}, forwarding_number }] }`. */
+export const LinqPhoneNumber = z
+  .object({
+    id: z.string().min(1),
+    phone_number: z.string().min(1).optional(),
+    number: z.string().min(1).optional(),
+    status: z.string().optional(),
+    reputation: z.unknown().optional(),
+    forwarding_number: z.string().nullable().optional(),
+  })
+  .passthrough();
 export type LinqPhoneNumber = z.infer<typeof LinqPhoneNumber>;
 
-/** The endpoint's exact envelope (flat array vs `{data:[]}`) is unconfirmed; both are accepted. */
 export const LinqPhoneNumberList = z.union([
   z.array(LinqPhoneNumber),
-  z.object({ data: z.array(LinqPhoneNumber), next_cursor: z.string().nullable().optional() }),
+  z.object({ data: z.array(LinqPhoneNumber), next_cursor: z.string().nullable().optional() }).passthrough(),
+  z.object({ phone_numbers: z.array(LinqPhoneNumber) }).passthrough(),
 ]);
 export type LinqPhoneNumberList = z.infer<typeof LinqPhoneNumberList>;
 
 export function phoneNumbersOf(list: LinqPhoneNumberList): readonly LinqPhoneNumber[] {
-  return Array.isArray(list) ? list : list.data;
+  if (Array.isArray(list)) return list;
+  if ('phone_numbers' in list && Array.isArray(list.phone_numbers)) return list.phone_numbers;
+  if ('data' in list && Array.isArray(list.data)) return list.data;
+  return [];
+}
+
+export function e164Of(n: LinqPhoneNumber): string | undefined {
+  return n.phone_number ?? n.number;
+}
+
+export function reputationStatusOf(n: LinqPhoneNumber): string | undefined {
+  if (typeof n.status === 'string') return n.status;
+  const rep = n.reputation;
+  if (typeof rep === 'string') return rep;
+  if (rep && typeof rep === 'object' && 'status' in rep && typeof (rep as { status: unknown }).status === 'string') {
+    return (rep as { status: string }).status;
+  }
+  return undefined;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -68,58 +89,108 @@ export const LinqMessagePartInput = z.object({
     .object({
       caption: z.string().optional(),
       subcaption: z.string().optional(),
+      trailing_caption: z.string().optional(),
+      trailing_subcaption: z.string().optional(),
+      image_url: z.string().optional(),
     })
     .optional(),
 });
 export type LinqMessagePartInput = z.infer<typeof LinqMessagePartInput>;
 
-/** `POST /v3/messages` response — 202 Accepted. Fields quoted verbatim from the research doc. */
-export const LinqSendMessageResponse = z.object({
-  chat_id: z.string().min(1),
-  message_ids: z.array(z.string()),
-  from_selection: z.object({ from: z.string(), reason: z.string() }),
-  created_chat: z.boolean(),
-  trace_id: z.string(),
-});
+/**
+ * `POST /v3/messages` and `POST /v3/chats/{id}/messages` 202 bodies.
+ * Live 2026-08-15: `{ chat_id, created_new_chat, from, from_selection:{reason}, message:{id} }`
+ * on auto-select send; chat-path send is `{ chat_id, message:{id} }` only. The
+ * research-doc `message_ids` / `created_chat` / `trace_id` fields are optional.
+ */
+export const LinqSendMessageResponse = z
+  .object({
+    chat_id: z.string().min(1),
+    message_ids: z.array(z.string()).optional(),
+    message: z.object({ id: z.string().min(1) }).passthrough().optional(),
+    from: z.string().optional(),
+    from_selection: z
+      .object({
+        from: z.string().optional(),
+        reason: z.string().optional(),
+        reused_existing_chat: z.boolean().optional(),
+      })
+      .passthrough()
+      .optional(),
+    created_chat: z.boolean().optional(),
+    created_new_chat: z.boolean().optional(),
+    trace_id: z.string().optional(),
+  })
+  .passthrough();
 export type LinqSendMessageResponse = z.infer<typeof LinqSendMessageResponse>;
 
 /* -------------------------------------------------------------------------- */
 /* Chats & messages — best-documented reading, see file header                */
 /* -------------------------------------------------------------------------- */
 
-export const LinqMessage = z.object({
-  id: z.string().min(1),
-  chat_id: z.string().nullable().optional(),
-  from: z.string().nullable().optional(),
-  to: z.array(z.string()).nullable().optional(),
-  parts: z.array(LinqMessagePartInput).nullable().optional(),
-  /** Which transport actually carried it — reported, per the research doc, in `from_selection` on send; assumed mirrored here on read. */
-  service: z.string().nullable().optional(),
-  status: z.string().nullable().optional(),
-  created_at: z.string().nullable().optional(),
-});
+export const LinqMessage = z
+  .object({
+    id: z.string().min(1),
+    chat_id: z.string().nullable().optional(),
+    from: z.string().nullable().optional(),
+    to: z.array(z.string()).nullable().optional(),
+    parts: z.array(LinqMessagePartInput).nullable().optional(),
+    service: z.string().nullable().optional(),
+    status: z.string().nullable().optional(),
+    delivery_status: z.string().nullable().optional(),
+    created_at: z.string().nullable().optional(),
+  })
+  .passthrough();
 export type LinqMessage = z.infer<typeof LinqMessage>;
 
-export const LinqMessageList = z.object({
-  data: z.array(LinqMessage),
-  next_cursor: z.string().nullable().optional(),
-});
+/** Live 2026-08-15: `{ messages, next_cursor }`. Also accept `{ data }` from the research reading. */
+export const LinqMessageList = z.union([
+  z.array(LinqMessage),
+  z.object({ data: z.array(LinqMessage), next_cursor: z.string().nullable().optional() }).passthrough(),
+  z.object({ messages: z.array(LinqMessage), next_cursor: z.string().nullable().optional() }).passthrough(),
+]);
 export type LinqMessageList = z.infer<typeof LinqMessageList>;
 
-export const LinqChat = z.object({
-  id: z.string().min(1),
-  participants: z.array(z.string()).nullable().optional(),
-  /** Only `"OPTED_OUT"` is documented; every other value is passed through as-is. */
-  health_status: z.string().nullable().optional(),
-  created_at: z.string().nullable().optional(),
-});
+export function messagesOf(list: LinqMessageList): readonly LinqMessage[] {
+  if (Array.isArray(list)) return list;
+  if ('messages' in list && Array.isArray(list.messages)) return list.messages;
+  if ('data' in list && Array.isArray(list.data)) return list.data;
+  return [];
+}
+
+export const LinqChat = z
+  .object({
+    id: z.string().min(1),
+    participants: z.array(z.string()).nullable().optional(),
+    handles: z.unknown().optional(),
+    /** Live: `{ status, doc_url, updated_at }`. Older reading was a string (`OPTED_OUT`). */
+    health_status: z.unknown().optional(),
+    service: z.string().nullable().optional(),
+    created_at: z.string().nullable().optional(),
+  })
+  .passthrough();
 export type LinqChat = z.infer<typeof LinqChat>;
 
-export const LinqChatList = z.object({
-  data: z.array(LinqChat),
-  next_cursor: z.string().nullable().optional(),
-});
+/** Live 2026-08-15: `{ chats, next_cursor }`. */
+export const LinqChatList = z.union([
+  z.array(LinqChat),
+  z.object({ data: z.array(LinqChat), next_cursor: z.string().nullable().optional() }).passthrough(),
+  z.object({ chats: z.array(LinqChat), next_cursor: z.string().nullable().optional() }).passthrough(),
+]);
 export type LinqChatList = z.infer<typeof LinqChatList>;
+
+export function chatsOf(list: LinqChatList): readonly LinqChat[] {
+  if (Array.isArray(list)) return list;
+  if ('chats' in list && Array.isArray(list.chats)) return list.chats;
+  if ('data' in list && Array.isArray(list.data)) return list.data;
+  return [];
+}
+
+export function nextCursorOf(list: LinqChatList | LinqMessageList): string | null | undefined {
+  if (Array.isArray(list)) return undefined;
+  if ('next_cursor' in list) return list.next_cursor ?? null;
+  return undefined;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Blocked handles — GET/POST /v3/blocked_handles, DELETE .../{handle}         */
@@ -204,6 +275,32 @@ export const LinqExperienceInvocation = z.object({
 });
 export type LinqExperienceInvocation = z.infer<typeof LinqExperienceInvocation>;
 
+/** `GET /v3/experiences` — live 2026-08-15 catalog (agentcard, agentpay, link, plus account extras). */
+export const LinqExperienceList = z
+  .object({
+    experiences: z.array(
+      z
+        .object({
+          experience: z.string().min(1),
+          display_name: z.string().optional(),
+          actions: z
+            .array(
+              z
+                .object({
+                  name: z.string(),
+                  summary: z.string().optional(),
+                  fields: z.record(z.string(), z.unknown()).optional(),
+                })
+                .passthrough(),
+            )
+            .optional(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+export type LinqExperienceList = z.infer<typeof LinqExperienceList>;
+
 export const LinqIMessageAppPart = z.object({
   type: z.literal('imessage_app'),
   app: z.object({
@@ -217,6 +314,9 @@ export const LinqIMessageAppPart = z.object({
     .object({
       caption: z.string().optional(),
       subcaption: z.string().optional(),
+      trailing_caption: z.string().optional(),
+      trailing_subcaption: z.string().optional(),
+      image_url: z.string().optional(),
     })
     .optional(),
 });
