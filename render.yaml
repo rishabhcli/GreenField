@@ -338,6 +338,22 @@ services:
     publishPath: apps/site
     autoDeployTrigger: commit
     pullRequestPreviewsEnabled: false
+    # The operator console used to call this origin for /readiness/* and /api/*.
+    # Rewrite those paths to foundry-api so a cached/old console.js still works
+    # without ?api= (and without a same-origin 404 from the static host).
+    routes:
+      - type: rewrite
+        source: /readiness/*
+        destination: https://foundry-api-8ih0.onrender.com/readiness/*
+      - type: rewrite
+        source: /api/*
+        destination: https://foundry-api-8ih0.onrender.com/api/*
+      - type: rewrite
+        source: /ready
+        destination: https://foundry-api-8ih0.onrender.com/ready
+      - type: rewrite
+        source: /health
+        destination: https://foundry-api-8ih0.onrender.com/health
 
 # -----------------------------------------------------------------------------
 # Environment groups.
@@ -358,7 +374,7 @@ envVarGroups:
       # of PUBLIC_BASE_URL is always allowed. Production refuses unknown origins,
       # so a storefront on a different host must be listed here.
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
+        value: https://foundry-site-ye1g.onrender.com
       - key: OWNER_EMAIL
         sync: false
       - key: ALERT_WEBHOOK_URL

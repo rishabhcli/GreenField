@@ -28,26 +28,60 @@
 
   /**
    * API base resolution, most explicit wins:
-   *   1. ?api=https://…            (also persisted, so a bookmark keeps working)
-   *   2. localStorage
+   *   1. ?api=https://…            (persisted only if allowlisted)
+   *   2. localStorage              (ignored unless allowlisted)
    *   3. window.YELLOFIELD_API_BASE from console-config.js
-   *   4. the page's own origin, when served from something other than a file
-   *   5. localhost:3000
+   *   4. <html data-api="…">
+   *   5. DEFAULT_API_BASE below
+   *   6. localhost:3000 when opened from file:// or a localhost page
    *
-   * Step 3 exists because on Render the site and the API are separate services,
-   * so the site's own origin is the wrong default in the one environment that
-   * matters. See assets/console-config.js.
+   * The site and API are different Render services. Falling back to the page
+   * origin fetches `/readiness/company` from the static host (HTTP 404).
+   * Untrusted `?api=` values are not stored and not used — a shared URL must
+   * not redirect the operator token to another host.
    */
+  var DEFAULT_API_BASE = 'https://foundry-api-8ih0.onrender.com';
+  var ALLOWED_API_ORIGINS = [DEFAULT_API_BASE];
+
+  function stripTrailingSlash(value) {
+    return String(value).replace(/\/+$/, '');
+  }
+
+  function originOf(value) {
+    try {
+      return new URL(value).origin;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function isAllowedApiBase(value) {
+    if (!value) return false;
+    var origin = originOf(value);
+    if (!origin || stripTrailingSlash(value) !== origin) return false;
+    for (var i = 0; i < ALLOWED_API_ORIGINS.length; i++) {
+      if (origin === ALLOWED_API_ORIGINS[i]) return true;
+    }
+    return false;
+  }
+
+  function isLocalPage() {
+    if (window.location.protocol === 'file:') return true;
+    var host = window.location.hostname;
+    return host === 'localhost' || host === '127.0.0.1';
+  }
+
   function resolveApiBase() {
     var qs = new URLSearchParams(window.location.search);
     var fromQuery = qs.get('api');
-    if (fromQuery) {
+    if (fromQuery && isAllowedApiBase(fromQuery)) {
+      var allowedQuery = stripTrailingSlash(fromQuery);
       try {
-        localStorage.setItem('yf.apiBase', fromQuery);
+        localStorage.setItem('yf.apiBase', allowedQuery);
       } catch (e) {
         /* private mode — the query param still applies for this page load */
       }
-      return fromQuery.replace(/\/+$/, '');
+      return allowedQuery;
     }
     var stored = null;
     try {
@@ -55,10 +89,17 @@
     } catch (e) {
       /* ignore */
     }
-    if (stored) return stored.replace(/\/+$/, '');
-    if (window.YELLOFIELD_API_BASE) return String(window.YELLOFIELD_API_BASE).replace(/\/+$/, '');
-    if (window.location.protocol === 'file:') return 'http://localhost:3000';
-    return window.location.origin;
+    if (stored && isAllowedApiBase(stored)) return stripTrailingSlash(stored);
+    if (window.YELLOFIELD_API_BASE && isAllowedApiBase(window.YELLOFIELD_API_BASE)) {
+      return stripTrailingSlash(window.YELLOFIELD_API_BASE);
+    }
+    var fromDom =
+      document.documentElement && document.documentElement.getAttribute
+        ? document.documentElement.getAttribute('data-api')
+        : '';
+    if (fromDom && isAllowedApiBase(fromDom)) return stripTrailingSlash(fromDom);
+    if (isLocalPage()) return 'http://localhost:3000';
+    return DEFAULT_API_BASE;
   }
 
   var API = resolveApiBase();
@@ -189,7 +230,7 @@
     var opts = options || {};
     var headers = { Accept: 'application/json' };
     if (opts.body) headers['Content-Type'] = 'application/json';
-    if (opts.auth && auth.token) headers.Authorization = 'Bearer ' + auth.token;
+    if (auth.token) headers.Authorization = 'Bearer ' + auth.token;
 
     var controller = new AbortController();
     var timer = setTimeout(function () {
@@ -687,6 +728,14 @@
     return '';
   }
 
+  /** Square class for a provider activation state. blocked_* is not "wired". */
+  function providerSquare(state) {
+    if (state === 'live_verified') return 'sq-live';
+    if (state === 'verification_failed') return 'sq-fail';
+    if (typeof state === 'string' && state.indexOf('blocked_') === 0) return 'sq-blocked';
+    return 'sq-wired';
+  }
+
   function renderProviders(res) {
     var body = $('providerBody');
     if (!res.ok) {
@@ -747,7 +796,7 @@
         esc(p.displayName || p.id) +
         '</span>' +
         '<span class="sq ' +
-        (p.state === 'live_verified' ? 'sq-live' : 'sq-wired') +
+        providerSquare(p.state) +
         '" aria-hidden="true"></span>' +
         '</div>' +
         '<span class="cnsl-provider-state">' +

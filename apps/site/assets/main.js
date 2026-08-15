@@ -708,4 +708,60 @@
   if (year) {
     year.textContent = String(new Date().getFullYear());
   }
+
+  /* -------------------------------------------------------------------------
+     Fixed-price checkout. Backer/Operator SKUs POST to the API so Stripe
+     charges the catalogue amount. Founding access keeps the submitted
+     Payment Link (pinned to $99). The customer never types an amount.
+  ------------------------------------------------------------------------- */
+  var apiRoot = document.documentElement;
+  var apiBase = (
+    (apiRoot && apiRoot.getAttribute ? apiRoot.getAttribute("data-api") : "") ||
+    "https://foundry-api-8ih0.onrender.com"
+  ).replace(/\/$/, "");
+
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (!target || !target.closest) return;
+    var btn = target.closest("[data-sku]");
+    if (!btn) return;
+    var sku = btn.getAttribute("data-sku");
+    if (!sku || sku === "zhc-founding") return;
+    event.preventDefault();
+    var origin = window.location.origin;
+    btn.setAttribute("aria-busy", "true");
+    fetch(apiBase + "/api/checkout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        items: [{ sku: sku, quantity: 1 }],
+        successUrl: origin + "/?paid=1",
+        cancelUrl: origin + "/#pricing",
+        attribution: { tier: btn.getAttribute("data-tier") || sku },
+      }),
+    })
+      .then(function (res) {
+        return res.json().then(function (body) {
+          return { ok: res.ok, body: body };
+        });
+      })
+      .then(function (result) {
+        if (result.body && result.body.checkoutUrl) {
+          window.location.href = result.body.checkoutUrl;
+          return;
+        }
+        throw new Error(
+          (result.body && result.body.error && result.body.error.message) ||
+            "Checkout did not return a URL",
+        );
+      })
+      .catch(function (err) {
+        btn.removeAttribute("aria-busy");
+        window.alert(
+          "Checkout is not ready: " +
+            (err && err.message ? err.message : String(err)) +
+            ". Catalogue prices stay fixed; we will not open a customer-typed amount.",
+        );
+      });
+  });
 })();

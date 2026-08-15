@@ -71,11 +71,21 @@ describe('landing page', () => {
   });
 
   it('keeps the honest-status claims intact', () => {
-    expect(html).toContain('356');
-    expect(html).toContain('probe verified');
-    expect(html).toContain('surface built');
     expect(html).toContain('NOT COMPLETE');
     expect(html).toContain('Illustrative operating view');
+    expect(html).toContain('Illustrative');
+    expect(html).toContain('probe verified');
+    expect(html).toContain('surface built');
+    expect(html).toContain('awaiting quotes');
+    expect(html).not.toContain('aria-label="Verified status"');
+    expect(html).not.toContain('3 suppliers quoted');
+    expect(html).not.toContain('data-count="356"');
+    expect(html).not.toMatch(/11<\/span>\s*integrations probe-verified/);
+    expect(html).toContain('illustrative snapshot dated 2026-08-15');
+    expect(html).toContain('Open the console for live state');
+    expect(html).toContain('>15</span>');
+    expect(html).toContain('phases, one closed circuit');
+    expect(html).not.toContain('>20</span>');
   });
 
   /**
@@ -89,16 +99,17 @@ describe('landing page', () => {
       (m) => m[1] ?? '',
     );
 
-    it('reaches the submitted Payment Link and never mints a second one', () => {
-      expect(checkoutHrefs.length).toBeGreaterThanOrEqual(3);
+    it('reaches the submitted Payment Link for founding access and never mints a second one', () => {
+      expect(checkoutHrefs.length).toBeGreaterThanOrEqual(1);
       for (const href of checkoutHrefs) {
         expect(href.startsWith(`${PAYMENT_LINK}?`) || href === PAYMENT_LINK).toBe(true);
       }
     });
 
-    it('tags every checkout link with a tier for webhook attribution', () => {
+    it('tags founding checkout with a tier for webhook attribution', () => {
       const tiers = checkoutHrefs.map((href) => new URL(href).searchParams.get('client_reference_id'));
-      expect(new Set(tiers)).toEqual(new Set(['tier_backer', 'tier_founding', 'tier_operator']));
+      expect(tiers).toContain('tier_founding');
+      expect(tiers).not.toContain(null);
     });
 
     it('opens checkout without leaking window.opener', () => {
@@ -107,10 +118,20 @@ describe('landing page', () => {
       }
     });
 
-    it('states the price and the refund promise in the copy', () => {
+    it('states fixed catalogue prices and the refund promise', () => {
       expect(html).toContain('$99');
-      expect(html).toContain('customer-chooses-price');
+      expect(html).toContain('Fixed');
+      expect(html).toContain('zhc-backer');
+      expect(html).toContain('zhc-operator');
+      expect(html).not.toContain('customer-chooses-price');
       expect(html).toContain('you get');
+    });
+
+    it('posts Backer/Operator checkout to the deployed API origin', () => {
+      expect(html).toContain('data-api="https://foundry-api-8ih0.onrender.com"');
+      expect(js).toContain('https://foundry-api-8ih0.onrender.com');
+      expect(js).toContain('/api/checkout');
+      expect(js).not.toContain('customer-chooses-price');
     });
   });
 

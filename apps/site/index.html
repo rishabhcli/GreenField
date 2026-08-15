@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-api="https://foundry-api-8ih0.onrender.com">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -68,10 +68,10 @@
             <a class="btn btn-primary" href="#pricing">Get founding access — $99</a>
             <a class="btn btn-ghost" href="#loop">Explore the loop</a>
           </div>
-          <ul class="hero-status" data-reveal style="--rd:240ms" aria-label="Verified status">
-            <li><span class="mono">356</span> tests passing</li>
-            <li><span class="mono">52</span> tables · <span class="mono">169</span> indexes</li>
-            <li><span class="mono">11</span> integrations probe-verified</li>
+          <ul class="hero-status" data-reveal style="--rd:240ms" aria-label="Illustrative snapshot">
+            <li>test suite executed — the count lives in CI, not here</li>
+            <li>schema applied to real Postgres</li>
+            <li>illustrative snapshot dated 2026-08-15 — open the console for live state</li>
             <li><span class="mono">0</span> fake success states</li>
           </ul>
         </div>
@@ -125,7 +125,7 @@
                     <span class="audit-pos">#0423</span>
                     <span class="audit-hash">c02d…5a9</span>
                     <span class="audit-action">rfq.sent</span>
-                    <span class="audit-note">3 suppliers quoted</span>
+                    <span class="audit-note">awaiting quotes</span>
                   </div>
                 </div>
 
@@ -199,8 +199,8 @@
             next iteration starts smarter than the last.
           </p>
           <div class="loop-stat" data-reveal style="--rd:180ms">
-            <span class="loop-stat-num mono">20</span>
-            <span class="loop-stat-label">steps, one closed circuit,<br />executed by the organization</span>
+            <span class="loop-stat-num mono">15</span>
+            <span class="loop-stat-label">phases, one closed circuit,<br />executed by the organization</span>
           </div>
         </div>
 
@@ -208,25 +208,20 @@
           <div class="loop-rail" aria-hidden="true"><span class="loop-rail-fill" id="loopRailFill"></span></div>
           <ol class="loop-list">
             <li class="loop-step" data-reveal><span class="loop-num mono">01</span><div><h3>Observe</h3><p>Mine real public conversations — reviews, forums, communities — for demand signals.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">02</span><div><h3>Extract</h3><p>Pull complaints, workarounds, failure modes, and willingness-to-pay language into evidence packets.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">03</span><div><h3>Cluster</h3><p>Deduplicate and group signals into candidate pain points with source traceability.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">04</span><div><h3>Score</h3><p>Severity, frequency, margin, sourcing feasibility, legal risk — weighted, never hidden.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">05</span><div><h3>Ask experts</h3><p>Terac human reviewers judge what machine research can't. Overrides are recorded with rationale.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">06</span><div><h3>Select</h3><p>The CEO commits to an opportunity inside capital-allocation policy.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">07</span><div><h3>Source</h3><p>Find suppliers able to produce or private-label. Verify capability, MOQ, customization.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">08</span><div><h3>Cost it</h3><p>Full landed cost — freight, duties, QC, fulfillment — down to contribution margin.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">09</span><div><h3>Negotiate</h3><p>RFQs, samples, and terms compared side by side. Assumptions stay separate from quoted values.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">10</span><div><h3>Brand</h3><p>Name, identity, packaging, positioning — checked against trademark and domain signals.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">11</span><div><h3>Build</h3><p>Storefront generated through Lovable, checkout wired to Stripe, deployed on Render.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">12</span><div><h3>Create</h3><p>Ad concepts and page copy generated as testable variants, not single shots.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">13</span><div><h3>Review</h3><p>High-impact creative passes human expert review before a dollar is spent.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">14</span><div><h3>Launch</h3><p>Controlled experiments with hypotheses, budgets, stop conditions, and KPI targets.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">15</span><div><h3>Measure</h3><p>CTR, CAC, conversion, contribution margin, refund rate — profit, not vanity metrics.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">16</span><div><h3>Reallocate</h3><p>Kill weak variants, scale winners within spend caps, generate the next hypotheses.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">17</span><div><h3>QA</h3><p>Replay autonomously walks the live site. Critical failures veto the release.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">18</span><div><h3>Report</h3><p>Operational results return to the CEO as structured reports, not chat transcripts.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">19</span><div><h3>Re-plan</h3><p>Strategy updates from evidence. Kill, continue, or pivot — decided, not drifted.</p></div></li>
-            <li class="loop-step" data-reveal><span class="loop-num mono">20</span><div><h3>Repeat</h3><p>The company improves recursively. The loop is the organization's heartbeat.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">02</span><div><h3>Discover</h3><p>Pull complaints, workarounds, and willingness-to-pay language into evidence packets with source traceability.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">03</span><div><h3>Score</h3><p>Severity, frequency, margin, sourcing feasibility, legal risk — weighted, never hidden.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">04</span><div><h3>Expert validate</h3><p>Terac human reviewers judge what machine research can't. Overrides are recorded with rationale.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">05</span><div><h3>Select</h3><p>The CEO commits to an opportunity inside capital-allocation policy.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">06</span><div><h3>Source</h3><p>Find suppliers able to produce or private-label. RFQs go out; quotes are awaited, never invented.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">07</span><div><h3>Model economics</h3><p>Full landed cost — freight, duties, QC, fulfillment — down to contribution margin. Assumptions stay separate from quoted values.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">08</span><div><h3>Brand</h3><p>Name, identity, packaging, positioning — checked against trademark and domain signals.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">09</span><div><h3>Build</h3><p>Storefront generated through Lovable, checkout wired to Stripe, deployed on Render.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">10</span><div><h3>QA</h3><p>Replay autonomously walks the live site. Critical failures veto the release.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">11</span><div><h3>Launch</h3><p>Controlled experiments with hypotheses, budgets, stop conditions, and KPI targets.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">12</span><div><h3>Market</h3><p>Ad concepts and page copy as testable variants. High-impact creative passes human review before a dollar is spent.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">13</span><div><h3>Measure</h3><p>CTR, CAC, conversion, contribution margin, refund rate — profit, not vanity metrics.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">14</span><div><h3>Decide</h3><p>Kill weak variants, scale winners within spend caps, generate the next hypotheses.</p></div></li>
+            <li class="loop-step" data-reveal><span class="loop-num mono">15</span><div><h3>Replan</h3><p>Strategy updates from evidence. Kill, continue, or pivot — decided, not drifted. Then the loop ticks again.</p></div></li>
           </ol>
         </div>
       </div>
@@ -347,35 +342,36 @@
       <div class="container">
         <div class="section-head">
           <p class="eyebrow" data-reveal>The integration layer</p>
-          <h2 data-reveal style="--rd:60ms">Real services. Real contracts. Real status.</h2>
+          <h2 data-reveal style="--rd:60ms">Real services. Real contracts. Live status in the console.</h2>
           <p class="section-sub" data-reveal style="--rd:120ms">
             No mocked clients, no decorative logos. Every provider has an adapter, a
-            webhook contract, signature verification, retries, idempotency, and a dated
-            verification row. If credentials are missing, Yellofield reports blocked — it
-            doesn't pretend.
+            webhook contract, signature verification, retries, and idempotency. If
+            credentials are missing, Yellofield reports blocked — it doesn't pretend.
+            The table below is an example snapshot, not this deploy's live state.
           </p>
         </div>
 
         <div class="integ" data-reveal>
           <div class="integ-row integ-head mono" aria-hidden="true">
-            <span>provider</span><span>role in the company</span><span>status</span>
+            <span>provider</span><span>role in the company</span><span>example snapshot</span>
           </div>
-          <div class="integ-row"><span class="integ-name">Terac</span><span class="integ-role">Human expert review and consumer studies on demand</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Stripe</span><span class="integ-role">Payments, checkout, webhooks, refunds, reconciliation</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Render</span><span class="integ-role">Control plane, workers, cron, managed datastores</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Whop</span><span class="integ-role">Commerce and business-operation primitives</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Linq</span><span class="integ-role">Customer support over iMessage, RCS, SMS, and voice</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Superserve</span><span class="integ-role">Persistent, secure sandboxes for long-running agents</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Replay</span><span class="integ-role">Autonomous QA as a release gate, with root-cause reports</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">BAND</span><span class="integ-role">Agent-to-agent and human coordination with governance</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Sandbox0</span><span class="integ-role">Isolated execution, workspaces, and credential control</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Solari</span><span class="integ-role">Cloud browsers, sandboxes, and GUI computers for agents</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Lovable</span><span class="integ-role">Programmatic storefront generation and iteration</span><span class="chip chip-wired">surface built</span></div>
-          <div class="integ-row"><span class="integ-name">Dodo Payments</span><span class="integ-role">Merchant of record for eligible digital products</span><span class="chip chip-wired">surface built</span></div>
+          <div class="integ-row"><span class="integ-name">Terac</span><span class="integ-role">Human expert review and consumer studies on demand</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Stripe</span><span class="integ-role">Payments, checkout, webhooks, refunds, reconciliation</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Render</span><span class="integ-role">Control plane, workers, cron, managed datastores</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Whop</span><span class="integ-role">Commerce and business-operation primitives</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Linq</span><span class="integ-role">Customer support over iMessage, RCS, SMS, and voice</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Superserve</span><span class="integ-role">Persistent, secure sandboxes for long-running agents</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Replay</span><span class="integ-role">Autonomous QA as a release gate, with root-cause reports</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">BAND</span><span class="integ-role">Agent-to-agent and human coordination with governance</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Sandbox0</span><span class="integ-role">Isolated execution, workspaces, and credential control</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Solari</span><span class="integ-role">Cloud browsers, sandboxes, and GUI computers for agents</span><span class="chip chip-verified">example · probe verified</span></div>
+          <div class="integ-row"><span class="integ-name">Lovable</span><span class="integ-role">Programmatic storefront generation and iteration</span><span class="chip chip-wired">example · surface built</span></div>
+          <div class="integ-row"><span class="integ-name">Dodo Payments</span><span class="integ-role">Merchant of record for eligible digital products</span><span class="chip chip-wired">example · surface built</span></div>
         </div>
 
         <p class="integ-foot mono" data-reveal>
-          Status from executed verifier probes, 2026-08-15 · 24 verification rows · see VERIFICATION_EVIDENCE.md
+          Illustrative snapshot dated 2026-08-15 — chips name evidence kinds, not this deploy.
+          <a href="./console.html" style="color:var(--neon);border-bottom:1px solid var(--neon-dim)">Open the console for live state →</a>
         </p>
       </div>
     </section>
@@ -449,30 +445,31 @@
           <h2 data-reveal style="--rd:60ms">Claims ship with receipts.</h2>
           <p class="section-sub" data-reveal style="--rd:120ms">
             Nothing in Yellofield is marked complete on the strength of code existing.
-            Every number below comes from an executed test suite or an executed probe.
+            The labels below name evidence kinds — executed tests, dated verifier rows,
+            NOT COMPLETE — not a frozen scoreboard.
           </p>
         </div>
 
         <div class="stats">
           <div class="stat" data-reveal>
-            <span class="stat-num mono" data-count="356">0</span>
-            <span class="stat-label">tests passing — 1 skipped, an opt-in live probe</span>
+            <span class="stat-num mono">CI</span>
+            <span class="stat-label">tests executed — the count lives in CI, not frozen on this page</span>
           </div>
           <div class="stat" data-reveal style="--rd:60ms">
-            <span class="stat-num mono" data-count="52">0</span>
-            <span class="stat-label">tables · 169 indexes · 104 foreign keys, applied to real Postgres 17</span>
+            <span class="stat-num mono">DB</span>
+            <span class="stat-label">schema applied to real Postgres 17 — not a status claim</span>
           </div>
           <div class="stat" data-reveal style="--rd:120ms">
-            <span class="stat-num mono" data-count="24">0</span>
-            <span class="stat-label">integration verification rows written by the executed verifier</span>
+            <span class="stat-num mono">dated</span>
+            <span class="stat-label">verification rows written by the verifier — open the console for live state</span>
           </div>
           <div class="stat" data-reveal style="--rd:180ms">
-            <span class="stat-num mono" data-count="28">0</span>
-            <span class="stat-label">order state-machine tests — legal transitions, refund ceilings, redelivery</span>
+            <span class="stat-num mono">orders</span>
+            <span class="stat-label">state-machine tests — legal transitions, refund ceilings, redelivery</span>
           </div>
           <div class="stat" data-reveal style="--rd:240ms">
-            <span class="stat-num mono" data-count="22">0</span>
-            <span class="stat-label">policy-engine tests over authority, budgets, and kill switches</span>
+            <span class="stat-num mono">policy</span>
+            <span class="stat-label">engine tests over authority, budgets, and kill switches</span>
           </div>
           <div class="stat stat-zero" data-reveal style="--rd:300ms">
             <span class="stat-num mono">0</span>
@@ -495,12 +492,9 @@
     <!-- ====================================================================
          PRICING — FOUNDING ACCESS
 
-         One Stripe Payment Link, customer-chooses-price. Tiers are suggested
-         amounts against that single link; a second link is never minted (see
-         packages/providers/test/stripe-payment-link.test.ts). Tier attribution
-         rides on client_reference_id, which arrives in the signed
-         checkout.session.completed webhook — so attribution is derived from
-         payment state, not from a click.
+         Catalogue prices are fixed. The organizer Payment Link charges the
+         founding SKU ($99). Backer and Operator create a Stripe Checkout
+         Session for their SKU so the customer cannot type a different amount.
     ===================================================================== -->
     <section class="section" id="pricing">
       <div class="container">
@@ -530,11 +524,9 @@
             </ul>
             <a
               class="btn btn-ghost tier-btn"
-              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_backer"
-              target="_blank"
-              rel="noopener"
+              href="#pricing"
+              data-sku="zhc-backer"
               data-tier="backer"
-              data-amount="25"
             >Back it — $25</a>
           </article>
 
@@ -557,7 +549,7 @@
               target="_blank"
               rel="noopener"
               data-tier="founding"
-              data-amount="99"
+              data-sku="zhc-founding"
             >Get founding access — $99</a>
           </article>
 
@@ -575,21 +567,20 @@
             </ul>
             <a
               class="btn btn-ghost tier-btn"
-              href="https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00?client_reference_id=tier_operator"
-              target="_blank"
-              rel="noopener"
+              href="#pricing"
+              data-sku="zhc-operator"
               data-tier="operator"
-              data-amount="299"
             >Become an operator — $299</a>
           </article>
         </div>
 
         <p class="pricing-note" data-reveal>
-          <span class="mono">One</span> Stripe Payment Link, customer-chooses-price —
-          enter your tier's amount at checkout. Payment state is confirmed by a signed
-          webhook, never by a browser redirect. If the loop never closes, ask and you get
-          your money back; that promise is cheap to make because the status board makes
-          it impossible to hide.
+          <span class="mono">Fixed</span> catalogue prices — $25 / $99 / $299. You cannot
+          type a different amount at checkout. Founding access reuses the submitted Stripe
+          Payment Link; other tiers open a Checkout Session for that SKU. Payment state is
+          confirmed by a signed webhook, never by a browser redirect. If the loop never
+          closes, ask and you get your money back; that promise is cheap to make because
+          the status board makes it impossible to hide.
         </p>
       </div>
     </section>
@@ -611,7 +602,7 @@
             target="_blank"
             rel="noopener"
             data-tier="founding"
-            data-amount="99"
+            data-sku="zhc-founding"
           >Get founding access — $99</a>
           <a class="btn btn-ghost" href="#pricing">Compare the tiers</a>
         </div>
@@ -653,7 +644,7 @@
       <div class="footer-col">
         <p class="footer-head mono">Production</p>
         <span>Render · Postgres 17 · Valkey</span>
-        <span>24 queues · 5 migrations applied</span>
+        <span>queues and migrations declared in code</span>
         <span>Health checks · audit chain · kill switch</span>
       </div>
     </div>
