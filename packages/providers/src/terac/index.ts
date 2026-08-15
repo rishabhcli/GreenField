@@ -43,6 +43,7 @@ import {
   type TeracPage,
 } from './schemas.js';
 import { TeracWebhookEnvelope, interpretTeracWebhookEvent, type TeracWebhookResult } from './events.js';
+import { TERAC_MCP_URL, TeracMcpClient, type TeracMcpTool, type TeracMcpToolResult } from './mcp.js';
 
 /**
  * UNVERIFIED path segment. The research pass confirmed a `getFeasibilityRequest`
@@ -388,6 +389,38 @@ export class TeracAdapter extends ProviderAdapter {
       eventId: verification.eventId,
       result: interpretTeracWebhookEvent(parsed.data),
     };
+  }
+
+  /* --- MCP (hackathon submission path) ----------------------------------- */
+
+  mcpClient(): TeracMcpClient {
+    const secret = this.requireSecret(SECRETS.teracApiKey);
+    return new TeracMcpClient(TERAC_MCP_URL, secret.reveal());
+  }
+
+  async mcpCall(tool: TeracMcpTool | string, args: Record<string, unknown> = {}): Promise<TeracMcpToolResult> {
+    this.assertActivated();
+    return this.mcpClient().callTool(tool, args);
+  }
+
+  /**
+   * Launch a General Population study through the MCP tools Terac documents
+   * for agents. REST `createOpportunity` remains available; this is the
+   * submission-required path.
+   */
+  async launchGeneralPopulationStudy(input: {
+    readonly role: string;
+    readonly task: string;
+    readonly count: number;
+  }): Promise<{ readonly tool: string; readonly content: unknown }> {
+    this.assertActivated();
+    const mcp = this.mcpClient();
+    const feasibility = await mcp.callTool('terac_request_feasibility', {
+      role: input.role,
+      task: `${input.task}\n\nAudience: General Population (hackathon targeting — do not restrict to a specialist niche unless the task itself requires one).`,
+      count: input.count,
+    });
+    return { tool: 'terac_request_feasibility', content: feasibility.content };
   }
 }
 
@@ -890,6 +923,7 @@ export function buildReviewRubric(subject: ExpertReviewSubject): TeracReviewRubr
   }
 }
 
+export { TERAC_MCP_URL, TeracMcpClient, TERAC_MCP_TOOLS } from './mcp.js';
 export { CredentialsMissingError };
 export * from './schemas.js';
 export * from './events.js';

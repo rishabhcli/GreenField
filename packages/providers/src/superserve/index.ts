@@ -20,12 +20,7 @@
  */
 
 import { z } from 'zod';
-import {
-  ConflictError,
-  Secret,
-  ValidationError,
-  type AdapterContext as CoreAdapterContext,
-} from '@foundry/core';
+import { ConflictError, Secret, ValidationError } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/adapter.js';
 import { apiKeyHeaderAuth, noAuth, ProviderHttpClient } from '../http/client.js';
@@ -43,13 +38,13 @@ import {
   previewPortsOf,
   sandboxesOf,
   type SuperserveFileEntry,
-  type SuperservePreviewPort,
 } from './schemas.js';
+import { SuperservePreviewPort } from './schemas.js';
 
 // Re-exported so `CoreAdapterContext` is actually referenced (keeps this file
 // honest about depending on the shared context shape without a second,
 // diverging local definition).
-export type { CoreAdapterContext };
+export type { AdapterContext as CoreAdapterContext };
 
 /* -------------------------------------------------------------------------- */
 /* Inputs                                                                      */

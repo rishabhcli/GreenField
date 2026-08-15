@@ -236,6 +236,17 @@ services:
       - fromGroup: foundry-provider-secrets
 
   # ---------------------------------------------------------------------------
+  # Render Workflows (public beta).
+  #
+  # Blueprints cannot create or manage workflow services yet
+  # (https://render.com/docs/workflows). The task definitions live in
+  # apps/workflows (`task()` from `@renderinc/sdk/workflows`). Create the
+  # workflow service in the Dashboard from that entrypoint, then set
+  # RENDER_WORKFLOW_SLUG. foundry-loop-tick triggers `tickCompanyLoop` via
+  # POST /v1/task-runs when that slug is present.
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
   # Cron: capability verification sweep.
   #
   # Runs the non-destructive probe for every provider and writes the result to
@@ -344,6 +355,10 @@ envVarGroups:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: PIONEER_API_KEY
+        sync: false
+      - key: EGOIST_API_KEY
+        sync: false
 
       # --- Payments --------------------------------------------------------
       - key: STRIPE_SECRET_KEY
@@ -351,6 +366,8 @@ envVarGroups:
       - key: STRIPE_PUBLISHABLE_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_HACKATHON_PAYMENT_LINK_URL
         sync: false
       - key: DODO_API_KEY
         sync: false
@@ -383,6 +400,8 @@ envVarGroups:
       - key: RENDER_OWNER_ID
         sync: false
       - key: RENDER_STOREFRONT_SERVICE_ID
+        sync: false
+      - key: RENDER_WORKFLOW_SLUG
         sync: false
       - key: LOVABLE_OAUTH_ACCESS_TOKEN
         sync: false
@@ -433,4 +452,12 @@ envVarGroups:
       - key: ALIBABA_APP_SECRET
         sync: false
       - key: SHIPPO_API_TOKEN
+        sync: false
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: REDDIT_USER_AGENT
         sync: false

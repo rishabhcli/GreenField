@@ -146,6 +146,15 @@ export function limiterFor(provider: string): TokenBucketLimiter | undefined {
       // Documented burst: 30 messages per 60 s per sender-recipient pair. This
       // is a coarse account-level guard on top of that.
       return new TokenBucketLimiter({ name: 'linq', capacity: 10, refillPerSecond: 2 });
+    case 'brave_search':
+      return new TokenBucketLimiter({ name: 'brave_search', capacity: 10, refillPerSecond: 20 });
+    case 'reddit':
+      // Documented: 60 requests/min for OAuth apps.
+      return new TokenBucketLimiter({ name: 'reddit', capacity: 10, refillPerSecond: 1 });
+    case 'lovable':
+      return new TokenBucketLimiter({ name: 'lovable', capacity: 4, refillPerSecond: 0.5 });
+    case 'pioneer':
+      return new TokenBucketLimiter({ name: 'pioneer', capacity: 10, refillPerSecond: 2 });
     case 'render':
     case 'replay':
     case 'band':

@@ -56,6 +56,20 @@ export const LinqMessagePartInput = z.object({
   value: z.string().optional(),
   url: z.string().optional(),
   attachment_id: z.string().optional(),
+  fallback_text: z.string().optional(),
+  app: z
+    .object({
+      name: z.string(),
+      team_id: z.string(),
+      bundle_id: z.string(),
+    })
+    .optional(),
+  layout: z
+    .object({
+      caption: z.string().optional(),
+      subcaption: z.string().optional(),
+    })
+    .optional(),
 });
 export type LinqMessagePartInput = z.infer<typeof LinqMessagePartInput>;
 
@@ -165,6 +179,48 @@ export const LinqCallResponse = z
   })
   .passthrough();
 export type LinqCallResponse = z.infer<typeof LinqCallResponse>;
+
+/* -------------------------------------------------------------------------- */
+/* Payment requests & experiences                                             */
+/* -------------------------------------------------------------------------- */
+
+export const LinqPaymentRequest = z
+  .object({
+    id: z.string().min(1),
+    checkout_url: z.string().min(1),
+    status: z.string(),
+    amount: z.number().optional(),
+    currency: z.string().optional(),
+    expires_at: z.string().nullable().optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+export type LinqPaymentRequest = z.infer<typeof LinqPaymentRequest>;
+
+export const LinqExperienceInvocation = z.object({
+  name: z.enum(['agentpay', 'agentcard', 'link']),
+  action: z.string().min(1),
+  params: z.record(z.string(), z.unknown()).optional(),
+});
+export type LinqExperienceInvocation = z.infer<typeof LinqExperienceInvocation>;
+
+export const LinqIMessageAppPart = z.object({
+  type: z.literal('imessage_app'),
+  app: z.object({
+    name: z.string(),
+    team_id: z.string(),
+    bundle_id: z.string(),
+  }),
+  url: z.string().url(),
+  fallback_text: z.string().optional(),
+  layout: z
+    .object({
+      caption: z.string().optional(),
+      subcaption: z.string().optional(),
+    })
+    .optional(),
+});
+export type LinqIMessageAppPart = z.infer<typeof LinqIMessageAppPart>;
 
 /* -------------------------------------------------------------------------- */
 /* Error envelope                                                              */

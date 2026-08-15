@@ -163,6 +163,15 @@ export class BandAdapter extends ProviderAdapter {
     };
   }
 
+  async getMe(): Promise<BandAgentIdentity> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      { method: 'GET', path: '/agent/me', operation: 'agent.me' },
+      BandAgentIdentity,
+    );
+    return response.body;
+  }
+
   /* --- Peers ---------------------------------------------------------------- */
 
   async listPeers(): Promise<readonly BandPeer[]> {

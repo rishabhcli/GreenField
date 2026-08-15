@@ -22,7 +22,9 @@ import {
   type RoleDefinition,
 } from './deps.js';
 import type { Repositories } from '@foundry/db';
+import { companyConfig } from '@foundry/db';
 import type { QueueSet } from '@foundry/queue';
+import type { BandAdapter } from '@foundry/providers';
 import { getLogger } from '@foundry/obs';
 
 export interface DispatchRequest {
@@ -50,6 +52,7 @@ export class OrgDispatcher {
   constructor(
     private readonly repos: Repositories,
     private readonly queues: QueueSet,
+    private readonly coordination?: { readonly band: BandAdapter },
   ) {}
 
   /**
@@ -84,13 +87,40 @@ export class OrgDispatcher {
       );
     }
 
+    return this.#enqueueRun(request, to.key);
+  }
+
+  /**
+   * System-origin enqueue for the CEO (and any role the loop must start
+   * without a chain-of-command parent). The CEO cannot dispatch itself
+   * through `dispatch()` because `ceo.reportsTo` is null.
+   */
+  async enqueueSystem(
+    request: Omit<DispatchRequest, 'fromRoleKey'> & { readonly fromRoleKey?: string },
+  ): Promise<DispatchResult> {
+    const to = roleByKey(request.toRoleKey);
+    if (!to) throw new ValidationError(`Unknown target role "${request.toRoleKey}"`);
+    return this.#enqueueRun(
+      {
+        ...request,
+        fromRoleKey: request.fromRoleKey ?? 'system',
+      },
+      to.key,
+    );
+  }
+
+  async #enqueueRun(request: DispatchRequest, toRoleKey: string): Promise<DispatchResult> {
     const run = await this.repos.agents.runs.create({
       companyId: request.companyId,
-      roleKey: to.key,
+      roleKey: toRoleKey,
       objective: request.objective,
       inputRefs: request.inputRefs ?? {},
       parentRunId: request.parentRunId ?? null,
     });
+
+    if (this.coordination?.band) {
+      await this.#postBandAssignment(request, run.id, toRoleKey);
+    }
 
     await this.queues.enqueue(
       'agent.run',
@@ -98,11 +128,9 @@ export class OrgDispatcher {
         companyId: request.companyId,
         traceId: request.traceId,
         originRunId: request.parentRunId ?? null,
-        // The run id is the natural idempotency key: re-enqueueing the same
-        // dispatch collapses to one job rather than running the role twice.
         idempotencyKey: run.id,
         runId: run.id,
-        roleKey: to.key,
+        roleKey: toRoleKey,
         objective: request.objective,
         inputRefs: request.inputRefs ?? {},
         parentRunId: request.parentRunId ?? null,
@@ -112,14 +140,15 @@ export class OrgDispatcher {
     );
 
     getLogger().info(
-      { from: from.key, to: to.key, runId: run.id },
+      { from: request.fromRoleKey, to: toRoleKey, runId: run.id },
       'dispatched agent run',
     );
 
+    const role = roleByKey(toRoleKey);
     return {
       runId: run.id,
-      roleKey: to.key,
-      model: MODEL_BY_TIER[to.tier],
+      roleKey: toRoleKey,
+      model: MODEL_BY_TIER[role?.tier ?? 'specialist'],
       queuedAt: run.created_at.toISOString(),
     };
   }
@@ -184,6 +213,48 @@ export class OrgDispatcher {
       getLogger().warn({ runId: run.id, roleKey: run.role_key }, 'reaped overdue agent run');
     }
     return overdue.length;
+  }
+
+  /**
+   * Posts the assignment into BAND before the queue job is visible. Taking
+   * BAND out of this path means the dispatch throws and the specialist never
+   * runs — the room is the handoff, not a display.
+   */
+  async #postBandAssignment(request: DispatchRequest, runId: string, toRoleKey: string): Promise<void> {
+    const band = this.coordination!.band;
+    const me = await band.getMe();
+    const handle = me.handle ?? me.id;
+    const chatId = await this.#ensureCompanyChat(request.companyId, band);
+    const message = await band.sendMessage(chatId, {
+      recipients: [handle],
+      body:
+        `DISPATCH role=${toRoleKey} run=${runId}\n` +
+        `${request.objective}\n` +
+        `A specialist must not start this work except by acknowledging this message.`,
+      taskId: runId,
+    });
+    await this.repos.agents.runs.attachRoom(runId, chatId);
+    await this.repos.agents.runs.mergeInputRefs(runId, {
+      bandChatId: chatId,
+      bandMessageId: message.id,
+      bandHandle: handle,
+    });
+  }
+
+  async #ensureCompanyChat(companyId: string, band: BandAdapter): Promise<string> {
+    const company = await this.repos.companies.byId(companyId);
+    const config = companyConfig(company);
+    const existing = config.integrations?.bandChatId;
+    if (existing) return existing;
+    const chat = await band.createChat({
+      name: `${company.name} coordination`,
+      taskId: companyId,
+    });
+    await this.repos.companies.updateConfig(companyId, {
+      ...config,
+      integrations: { ...config.integrations, bandChatId: chat.id },
+    });
+    return chat.id;
   }
 }
 

@@ -154,6 +154,13 @@ export class AgentRunRepository {
     await exec(this.db, `UPDATE agent_runs SET coordination_room_id=$2 WHERE id=$1`, [id, roomId]);
   }
 
+  async mergeInputRefs(id: string, patch: Record<string, unknown>): Promise<void> {
+    await exec(this.db, `UPDATE agent_runs SET input_refs = input_refs || $2::jsonb WHERE id=$1`, [
+      id,
+      JSON.stringify(patch),
+    ]);
+  }
+
   async byId(id: string): Promise<AgentRunRow> {
     return qOne(this.db, `SELECT ${RUN_COLUMNS} FROM agent_runs WHERE id=$1`, [id], RunRow, 'agent_run', id);
   }

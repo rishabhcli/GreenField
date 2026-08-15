@@ -21,7 +21,7 @@ import {
   type RoleDefinition,
 } from './deps.js';
 import type { Repositories } from '@foundry/db';
-import type { AnthropicAdapter, MessageParam, ToolDefinition } from '@foundry/providers';
+import type { AnthropicAdapter, BandAdapter, MessageParam, ToolDefinition } from '@foundry/providers';
 import { effortForTier } from '@foundry/providers';
 import { getLogger, metrics, withContext } from '@foundry/obs';
 import { executeToolCall, type ToolContext, type ToolRegistry } from './tool-registry.js';
@@ -32,6 +32,8 @@ export interface ExecutorDeps {
   readonly llm: AnthropicAdapter;
   readonly tools: ToolRegistry;
   readonly gate: PolicyGate;
+  /** When set, a run with a BAND assignment cannot start until the room message is marked processing. */
+  readonly band?: BandAdapter;
 }
 
 export interface RunRequest {
@@ -95,6 +97,7 @@ export class AgentExecutor {
     const model = MODEL_BY_TIER[role.tier];
 
     await repos.agents.runs.markStarted(request.runId);
+    await this.#claimBandAssignment(request);
     let sequence = await repos.agents.messages.nextSequence(request.runId);
 
     await repos.agents.messages.append({
@@ -277,6 +280,43 @@ export class AgentExecutor {
         costMinorUsd: 0,
         blockedReason: String(detail['message'] ?? 'run failed'),
       };
+    } finally {
+      await this.#releaseBandAssignment(request);
+    }
+  }
+
+  async #claimBandAssignment(request: RunRequest): Promise<void> {
+    const band = this.deps.band;
+    if (!band) return;
+    const run = await this.deps.repos.agents.runs.byId(request.runId);
+    const chatId =
+      stringRef(run.input_refs['bandChatId']) ?? run.coordination_room_id ?? undefined;
+    const messageId = stringRef(run.input_refs['bandMessageId']);
+    if (!chatId || !messageId) {
+      throw new ValidationError(
+        `BAND is configured, so run ${request.runId} cannot start without a BAND assignment. Dispatch must post an @mention first.`,
+        { runId: request.runId },
+      );
+    }
+    await band.markMessageProcessing(chatId, messageId);
+  }
+
+  async #releaseBandAssignment(request: RunRequest): Promise<void> {
+    const band = this.deps.band;
+    if (!band) return;
+    try {
+      const run = await this.deps.repos.agents.runs.byId(request.runId);
+      const chatId =
+        stringRef(run.input_refs['bandChatId']) ?? run.coordination_room_id ?? undefined;
+      const messageId = stringRef(run.input_refs['bandMessageId']);
+      if (!chatId || !messageId) return;
+      if (run.status === 'succeeded') {
+        await band.markMessageProcessed(chatId, messageId);
+      } else if (run.status === 'failed' || run.status === 'timed_out' || run.status === 'cancelled') {
+        await band.markMessageFailed(chatId, messageId, run.error ?? run.status);
+      }
+    } catch (error) {
+      getLogger().warn({ err: error, runId: request.runId }, 'BAND assignment release failed');
     }
   }
 
@@ -395,4 +435,8 @@ function renderObjective(request: RunRequest): string {
     '\nBegin. Use your tools to gather what you need rather than assuming. When you are done, write your report.',
   );
   return parts.join('\n');
+}
+
+function stringRef(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }

@@ -45,15 +45,13 @@ import { VendorApprovalRequiredError, type ProviderId } from '@foundry/core';
 import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/adapter.js';
 import { ALIBABA_MANIFEST } from '../manifests.js';
 import type {
-  QuoteRetrievalQuery,
-  QuoteRetrievalResult,
+  QuoteResult,
   RfqSubmissionInput,
   RfqSubmissionResult,
-  SupplierDetail,
-  SupplierSearchQuery,
-  SupplierSearchResult,
+  SourcedSupplierProfile,
+  SourcingMethod,
   SupplierSourcingProvider,
-} from './types.js';
+} from './interface.js';
 
 const VERIFICATION_NOTE =
   'Verified 2026-08-15: openapi.alibaba.com/doc/doc.htm renders no usable content to automated fetch (JS app ' +
@@ -79,6 +77,10 @@ export class AlibabaSourcingAdapter extends ProviderAdapter implements SupplierS
     super(ctx);
   }
 
+  supports(_method: SourcingMethod): boolean {
+    return false;
+  }
+
   /**
    * No confirmed non-destructive read exists to probe (see the header note),
    * so this reports the honest "unverifiable" result rather than guessing at
@@ -96,11 +98,11 @@ export class AlibabaSourcingAdapter extends ProviderAdapter implements SupplierS
     };
   }
 
-  async searchSuppliers(_query: SupplierSearchQuery): Promise<SupplierSearchResult> {
+  async searchSuppliers(_query: { readonly query: string; readonly limit?: number }): Promise<readonly SourcedSupplierProfile[]> {
     throw vendorApprovalError('sourcing.supplier_search');
   }
 
-  async getSupplierDetail(_externalId: string): Promise<SupplierDetail> {
+  async getSupplierDetail(_externalId: string): Promise<SourcedSupplierProfile> {
     throw vendorApprovalError('sourcing.supplier_profile');
   }
 
@@ -115,7 +117,7 @@ export class AlibabaSourcingAdapter extends ProviderAdapter implements SupplierS
     throw vendorApprovalError('sourcing.rfq_submit');
   }
 
-  async retrieveQuotes(_query: QuoteRetrievalQuery): Promise<QuoteRetrievalResult> {
+  async retrieveQuotes(_query: { readonly rfqExternalRef: string }): Promise<QuoteResult> {
     throw vendorApprovalError('sourcing.quote_retrieve');
   }
 }

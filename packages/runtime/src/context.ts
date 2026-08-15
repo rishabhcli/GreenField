@@ -20,18 +20,28 @@ import {
   AlibabaSourcingAdapter,
   AnthropicAdapter,
   BandAdapter,
+  BraveSearchAdapter,
   CloudflareAdapter,
+  DodoAdapter,
+  EgoistAdapter,
   GoogleAdsAdapter,
   ImageGenerationAdapter,
   LinqAdapter,
+  LovableAdapter,
   MetaAdsAdapter,
+  PioneerAdapter,
   ProviderRegistry,
+  RedditAdapter,
   RenderAdapter,
   ReplayAdapter,
   ResendAdapter,
+  Sandbox0Adapter,
   ShippoAdapter,
+  SolariAdapter,
   StripeAdapter,
+  SuperserveAdapter,
   TeracAdapter,
+  WhopAdapter,
   allSecretSpecs,
   type AdapterContext,
   type AdapterFactory,
@@ -79,15 +89,25 @@ function adapterFactories(): Partial<Record<string, AdapterFactory>> {
 
     // Payments
     stripe: (ctx: AdapterContext) => new StripeAdapter(ctx),
+    dodo: (ctx: AdapterContext) => new DodoAdapter(ctx),
+    whop: (ctx: AdapterContext) => new WhopAdapter(ctx),
 
     // Research and expert review
     terac: (ctx: AdapterContext) => new TeracAdapter(ctx),
     band: (ctx: AdapterContext) => new BandAdapter(ctx),
+    pioneer: (ctx: AdapterContext) => new PioneerAdapter(ctx),
+    egoist: (ctx: AdapterContext) => new EgoistAdapter(ctx),
+    brave_search: (ctx: AdapterContext) => new BraveSearchAdapter(ctx),
+    reddit: (ctx: AdapterContext) => new RedditAdapter(ctx),
 
-    // Build, host, QA
+    // Build, host, QA, isolated execution
     render: (ctx: AdapterContext) => new RenderAdapter(ctx),
     replay: (ctx: AdapterContext) => new ReplayAdapter(ctx),
     cloudflare_dns: (ctx: AdapterContext) => new CloudflareAdapter(ctx),
+    superserve: (ctx: AdapterContext) => new SuperserveAdapter(ctx),
+    solari: (ctx: AdapterContext) => new SolariAdapter(ctx),
+    sandbox0: (ctx: AdapterContext) => new Sandbox0Adapter(ctx),
+    lovable: (ctx: AdapterContext) => new LovableAdapter(ctx),
 
     // Marketing and support
     meta_ads: (ctx: AdapterContext) => new MetaAdsAdapter(ctx),
@@ -169,8 +189,9 @@ export async function buildContext(options: BuildOptions): Promise<AppContext> {
   const gate = new PolicyGate(repos, providers, { approvalThresholdsMinor: DEFAULT_APPROVAL_THRESHOLDS });
   const tools = new ToolRegistry();
   const llm = providers.adapter('anthropic') as AnthropicAdapter;
-  const executor = new AgentExecutor({ repos, llm, tools, gate });
-  const dispatcher = new OrgDispatcher(repos, queues);
+  const band = configuredAdapter<BandAdapter>(providers, 'band');
+  const executor = new AgentExecutor({ repos, llm, tools, gate, band });
+  const dispatcher = new OrgDispatcher(repos, queues, band ? { band } : undefined);
 
   const health = new HealthRegistry(config.releaseSha);
   health.register(databaseHealthCheck(pool));
@@ -212,4 +233,13 @@ export async function buildContext(options: BuildOptions): Promise<AppContext> {
       await pool.end().catch((e) => log.error({ err: e }, 'pool end failed'));
     },
   };
+}
+
+function configuredAdapter<T extends { readonly isConfigured: boolean }>(
+  providers: ProviderRegistry,
+  id: 'band',
+): T | undefined {
+  const adapter = providers.adapter(id);
+  if (!adapter?.isConfigured) return undefined;
+  return adapter as unknown as T;
 }

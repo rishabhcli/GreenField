@@ -259,6 +259,17 @@ export class SiteRepository {
     await exec(this.pool, `UPDATE sites SET status=$2 WHERE id=$1`, [id, status]);
   }
 
+  async updateSpec(id: string, spec: SiteSpec): Promise<SiteRow> {
+    return qOne(
+      this.pool,
+      `UPDATE sites SET spec=$2::jsonb WHERE id=$1 RETURNING ${SITE_COLUMNS}`,
+      [id, JSON.stringify(spec)],
+      SiteRow,
+      'site',
+      id,
+    );
+  }
+
   async setGenerator(id: string, provider: string, projectId: string, repositoryUrl?: string | null): Promise<void> {
     await exec(
       this.pool,

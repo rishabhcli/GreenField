@@ -229,6 +229,14 @@ export class RfqRepository {
     );
   }
 
+  async markPending(id: string): Promise<void> {
+    await exec(
+      this.db,
+      `UPDATE rfqs SET status='pending_approval' WHERE id=$1 AND status IN ('draft','pending_approval')`,
+      [id],
+    );
+  }
+
   async attachApproval(id: string, approvalId: string): Promise<void> {
     await exec(this.db, `UPDATE rfqs SET approval_id=$2, status='approved' WHERE id=$1 AND status IN ('draft','pending_approval')`, [id, approvalId]);
   }
@@ -284,6 +292,11 @@ export class RfqRepository {
 
 export class QuoteRepository {
   constructor(private readonly db: Queryable) {}
+
+  /** Persists a supplier-stated quote. Alias of `record`. */
+  async create(input: Parameters<QuoteRepository['record']>[0]): Promise<QuoteRow> {
+    return this.record(input);
+  }
 
   async record(input: {
     companyId: string;
@@ -444,7 +457,7 @@ export class LandedCostRepository {
       `SELECT ${COST_COLUMNS} FROM landed_cost_models
         WHERE company_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [companyId, limit],
-      LandedCostRow,
+      CostRow,
     );
   }
 

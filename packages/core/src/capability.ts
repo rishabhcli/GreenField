@@ -35,6 +35,8 @@ export const PROVIDER_IDS = [
   'dodo',
   'sandbox0',
   'solari',
+  'pioneer',
+  'egoist',
   // Non-sponsor externals required by the business loop
   'anthropic',
   'meta_ads',
@@ -44,6 +46,9 @@ export const PROVIDER_IDS = [
   'shippo',
   'alibaba',
   'openai_images',
+  // Required business capabilities no sponsor covers
+  'brave_search',
+  'reddit',
 ] as const;
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
@@ -72,6 +77,9 @@ export const CAPABILITIES = [
   // Reasoning
   'llm.reasoning',
   'llm.structured_output',
+  'llm.open_weight',
+  'compliance.pii_scan',
+  'compliance.prompt_guard',
   // Sourcing
   'sourcing.supplier_search',
   'sourcing.supplier_profile',
@@ -92,6 +100,8 @@ export const CAPABILITIES = [
   'payments.refund',
   'payments.dispute',
   'payments.tax_calculation',
+  'payments.payment_link',
+  'payments.imessage_checkout',
   'commerce.catalog',
   'commerce.membership',
   'fulfilment.rate_quote',
@@ -108,6 +118,9 @@ export const CAPABILITIES = [
   'messaging.rcs',
   'messaging.voice',
   'messaging.inbound_webhook',
+  'messaging.imessage_app',
+  // Personalisation
+  'personalization.passport',
   // Execution planes
   'compute.persistent_sandbox',
   'compute.isolated_execution',
@@ -122,6 +135,7 @@ export const CAPABILITIES = [
   'platform.hosting',
   'platform.deploy_control',
   'platform.log_read',
+  'platform.workflows',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

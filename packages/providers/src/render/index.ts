@@ -14,6 +14,7 @@
 
 import { z } from 'zod';
 import {
+  CredentialsMissingError,
   ProviderAuthError,
   ProviderContractError,
   RateLimitError,
@@ -107,6 +108,16 @@ const LogsResponse = z.object({
   nextStartTime: z.string().nullish(),
   nextEndTime: z.string().nullish(),
 });
+
+const RenderTaskRun = z
+  .object({
+    id: z.string().optional(),
+    task: z.string().optional(),
+    status: z.string().optional(),
+    results: z.unknown().optional(),
+  })
+  .passthrough();
+export type RenderTaskRun = z.infer<typeof RenderTaskRun>;
 
 /* -------------------------------------------------------------------------- */
 /* Adapter                                                                     */
@@ -373,6 +384,48 @@ export class RenderAdapter extends ProviderAdapter {
       LogsResponse,
     );
     return { logs: response.body.logs, hasMore: response.body.hasMore ?? false };
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Workflows (public beta)                                                 */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Triggers a run of a task defined in `apps/workflows` via
+   * `POST /v1/task-runs`. Blueprints cannot create the workflow service;
+   * `RENDER_WORKFLOW_SLUG` is the slug of the Dashboard-created service.
+   */
+  async startTaskRun(taskName: string, args: readonly unknown[] = []): Promise<RenderTaskRun> {
+    this.assertActivated();
+    const slugSecret = this.optionalSecret(SECRETS.renderWorkflowSlug);
+    if (!slugSecret) {
+      throw new CredentialsMissingError(
+        'render',
+        ['RENDER_WORKFLOW_SLUG'],
+        SECRETS.renderWorkflowSlug.obtainFrom,
+      );
+    }
+    const task = `${slugSecret.reveal()}/${taskName}`;
+    const response = await this.#client().request(
+      {
+        method: 'POST',
+        path: '/task-runs',
+        operation: 'taskRuns.start',
+        body: { task, input: args },
+      },
+      RenderTaskRun,
+    );
+    getLogger().info({ task, runId: response.body.id }, 'render workflow task started');
+    return response.body;
+  }
+
+  async getTaskRun(runId: string): Promise<RenderTaskRun> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      { method: 'GET', path: `/task-runs/${encodeURIComponent(runId)}`, operation: 'taskRuns.get' },
+      RenderTaskRun,
+    );
+    return response.body;
   }
 
   /* ---------------------------------------------------------------------- */

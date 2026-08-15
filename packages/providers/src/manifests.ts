@@ -313,6 +313,62 @@ export const SECRETS = {
     required: true,
     obtainFrom: 'https://platform.openai.com/api-keys',
   },
+
+  braveSearchApiKey: {
+    env: 'BRAVE_SEARCH_API_KEY',
+    description:
+      'Brave Search API subscription token. No sponsor provides a web-search API; this is the production search substrate for evidence collection.',
+    required: true,
+    obtainFrom: 'https://api-dashboard.search.brave.com → API Keys',
+  },
+  redditClientId: {
+    env: 'REDDIT_CLIENT_ID',
+    description: 'Reddit OAuth client id for script/web app access to public listings',
+    required: true,
+    obtainFrom: 'https://www.reddit.com/prefs/apps → create an app',
+  },
+  redditClientSecret: {
+    env: 'REDDIT_CLIENT_SECRET',
+    description: 'Reddit OAuth client secret',
+    required: true,
+    obtainFrom: 'https://www.reddit.com/prefs/apps',
+  },
+  redditUserAgent: {
+    env: 'REDDIT_USER_AGENT',
+    description:
+      'Reddit-required User-Agent identifying this business (platform:app-id:version (by /u/username))',
+    required: true,
+    obtainFrom: 'Compose from the Reddit app name and a contact handle; Reddit rejects generic agents',
+  },
+
+  pioneerApiKey: {
+    env: 'PIONEER_API_KEY',
+    description: 'Pioneer by Fastino Labs API key (X-API-Key) for open-weight inference, GLiNER2/GLiGuard, and fine-tuning',
+    required: true,
+    obtainFrom: 'https://agent.pioneer.ai → API keys (hackathon promo ZeroHumanHack0826)',
+  },
+  stripeHackathonPaymentLinkUrl: {
+    env: 'STRIPE_HACKATHON_PAYMENT_LINK_URL',
+    description:
+      'The single Stripe Payment Link submitted to hackathon organizers. Every in-event collection must reuse this URL; creating a second link mid-event drops revenue from tracking.',
+    required: false,
+    obtainFrom: 'Stripe Dashboard → Payment links; submit the URL with the read-only rk_ key to organizers',
+    publicSafe: true,
+  },
+  renderWorkflowSlug: {
+    env: 'RENDER_WORKFLOW_SLUG',
+    description:
+      'Slug of the Render Workflow service (e.g. foundry-workflows). Blueprints cannot create workflow services during the public beta; create it in the Dashboard from apps/workflows, then set this.',
+    required: false,
+    obtainFrom: 'Render Dashboard → New Workflow, or `render workflows` CLI',
+  },
+  egoistApiKey: {
+    env: 'EGOIST_API_KEY',
+    description:
+      'Reserved for Egoist Machines AI Passport if/when a public developer API is granted. ego.ist/developers is currently a request-access form, not a REST spec.',
+    required: false,
+    obtainFrom: 'https://ego.ist/developers — request access; do not invent an endpoint',
+  },
 } as const satisfies Record<string, SecretSpec>;
 
 /* -------------------------------------------------------------------------- */
@@ -332,7 +388,7 @@ export const TERAC_MANIFEST: ProviderManifest = {
     { url: 'https://terac.com/docs/developers/guides/authentication', verifiedOn: VERIFIED },
     { url: 'https://terac.com/docs/developers/guides/webhooks', verifiedOn: VERIFIED },
     { url: 'https://terac.com/docs/developers/guides/errors', verifiedOn: VERIFIED },
-    { url: 'https://terac.com/mcp', verifiedOn: VERIFIED, note: 'MCP tool names' },
+    { url: 'https://terac.com/mcp', verifiedOn: VERIFIED, note: 'MCP server https://terac.com/api/mcp — required for hackathon submission' },
   ],
   authMethod: 'bearer_token',
   secrets: [SECRETS.teracApiKey, SECRETS.teracWebhookSecret, SECRETS.teracProjectId],
@@ -341,7 +397,11 @@ export const TERAC_MANIFEST: ProviderManifest = {
     {
       capability: 'expert.source_and_hire',
       priority: 1,
-      evidence: { kind: 'documented_api', detail: 'POST /opportunities creates a paid expert engagement' },
+      evidence: {
+        kind: 'documented_mcp_tool',
+        detail:
+          'MCP terac_request_feasibility / terac_launch_draft_opportunity at https://terac.com/api/mcp, and REST POST /opportunities. Studies are launched against General Population.',
+      },
     },
     {
       capability: 'expert.structured_review',
@@ -397,10 +457,10 @@ export const STRIPE_MANIFEST: ProviderManifest = {
     { url: 'https://docs.stripe.com/webhooks', verifiedOn: VERIFIED },
     { url: 'https://docs.stripe.com/api/refunds', verifiedOn: VERIFIED },
     { url: 'https://docs.stripe.com/api/disputes', verifiedOn: VERIFIED },
-    { url: 'https://docs.stripe.com/keys', verifiedOn: VERIFIED },
+    { url: 'https://docs.stripe.com/api/payment-link/create', verifiedOn: VERIFIED },
   ],
   authMethod: 'bearer_token',
-  secrets: [SECRETS.stripeSecretKey, SECRETS.stripeWebhookSecret, SECRETS.stripePublishableKey],
+  secrets: [SECRETS.stripeSecretKey, SECRETS.stripeWebhookSecret, SECRETS.stripePublishableKey, SECRETS.stripeHackathonPaymentLinkUrl],
   baseUrls: { production: 'https://api.stripe.com', test: 'https://api.stripe.com' },
   capabilities: [
     {
@@ -423,6 +483,14 @@ export const STRIPE_MANIFEST: ProviderManifest = {
       },
     },
     { capability: 'commerce.catalog', priority: 2, evidence: { kind: 'documented_api', detail: 'Products and Prices API' } },
+    {
+      capability: 'payments.payment_link',
+      priority: 1,
+      evidence: {
+        kind: 'documented_api',
+        detail: 'POST /v1/payment_links; hackathon collection reuses STRIPE_HACKATHON_PAYMENT_LINK_URL rather than minting a second link',
+      },
+    },
   ],
   webhooks: [
     {
@@ -605,15 +673,27 @@ export const RENDER_MANIFEST: ProviderManifest = {
     { url: 'https://render.com/docs/health-checks', verifiedOn: VERIFIED },
     { url: 'https://render.com/docs/key-value', verifiedOn: VERIFIED },
     { url: 'https://api-docs.render.com/reference/authentication', verifiedOn: VERIFIED },
+    { url: 'https://render.com/docs/workflows', verifiedOn: '2026-08-15', note: 'public beta; Blueprints cannot create workflow services' },
+    { url: 'https://render.com/docs/workflows-defining', verifiedOn: '2026-08-15' },
+    { url: 'https://render.com/docs/workflows-running', verifiedOn: '2026-08-15' },
     { url: 'https://render.com/docs/node-version', verifiedOn: VERIFIED },
   ],
   authMethod: 'bearer_token',
-  secrets: [SECRETS.renderApiKey, SECRETS.renderOwnerId, SECRETS.renderStorefrontServiceId],
+  secrets: [SECRETS.renderApiKey, SECRETS.renderOwnerId, SECRETS.renderStorefrontServiceId, SECRETS.renderWorkflowSlug],
   baseUrls: { production: 'https://api.render.com/v1' },
   capabilities: [
     { capability: 'platform.hosting', priority: 1, evidence: { kind: 'documented_api', detail: 'render.yaml blueprint: web, pserv, worker, cron, keyvalue, Postgres' } },
     { capability: 'platform.deploy_control', priority: 1, evidence: { kind: 'documented_api', detail: 'POST /services/{id}/deploys, rollback-deploy' } },
     { capability: 'platform.log_read', priority: 1, evidence: { kind: 'documented_api', detail: 'GET /logs, GET /events' } },
+    {
+      capability: 'platform.workflows',
+      priority: 1,
+      evidence: {
+        kind: 'documented_api',
+        detail:
+          'POST /v1/task-runs with task slug `{workflow}/{taskName}`. Tasks are defined with task() from @renderinc/sdk/workflows in apps/workflows. Blueprint YAML cannot declare type: workflow during the public beta — the service is created in the Dashboard from that entrypoint.',
+      },
+    },
   ],
   rateLimit: { requestsPerWindow: 300, windowMs: 60_000, note: 'no published limit; conservative self-imposed ceiling' },
   liveProbe: { description: 'GET /v1/services?limit=1 — read-only listing', mutatesState: false },
@@ -635,7 +715,9 @@ export const LINQ_MANIFEST: ProviderManifest = {
     { url: 'https://docs.linqapp.com/getting-started/authentication/', verifiedOn: VERIFIED },
     { url: 'https://docs.linqapp.com/guides/webhooks/events/', verifiedOn: VERIFIED },
     { url: 'https://docs.linqapp.com/guides/phone-numbers/', verifiedOn: VERIFIED },
-    { url: 'https://cdn.linqapp.com/openapi/linq-api-v3.yaml', verifiedOn: VERIFIED, note: 'OpenAPI spec; Calls section truncated on fetch' },
+    { url: 'https://docs.linqapp.com/guides/payments/', verifiedOn: '2026-08-15' },
+    { url: 'https://docs.linqapp.com/guides/messaging/experiences/', verifiedOn: '2026-08-15' },
+    { url: 'https://docs.linqapp.com/guides/messaging/imessage-apps/', verifiedOn: '2026-08-15' },
   ],
   authMethod: 'bearer_token',
   secrets: [SECRETS.linqApiKey, SECRETS.linqWebhookSecret, SECRETS.linqFromNumber],
@@ -655,6 +737,24 @@ export const LINQ_MANIFEST: ProviderManifest = {
       },
     },
     { capability: 'messaging.inbound_webhook', priority: 1, evidence: { kind: 'documented_api', detail: 'POST /v3/webhook-subscriptions, Standard Webhooks signing' } },
+    {
+      capability: 'messaging.imessage_app',
+      priority: 1,
+      evidence: {
+        kind: 'documented_api',
+        detail:
+          'message.experience (Linq-hosted iMessage app cards: agentpay, agentcard, link) or parts type imessage_app when we ship our own Messages extension. Experience XOR parts; iMessage only.',
+      },
+    },
+    {
+      capability: 'payments.imessage_checkout',
+      priority: 1,
+      evidence: {
+        kind: 'documented_api',
+        detail:
+          'POST /v3/payment_requests then agentpay request_payment with that checkout_url. Funds settle to the connected Stripe account. A Stripe Payment Link is a separate organizer-tracking path and is not a valid agentpay checkout_url.',
+      },
+    },
   ],
   webhooks: [
     {
@@ -677,6 +777,9 @@ export const LINQ_MANIFEST: ProviderManifest = {
         'call.answered',
         'call.ended',
         'call.failed',
+        'payment.succeeded',
+        'payment.canceled',
+        'payment.expired',
         'call.declined',
         'call.no_answer',
       ],
@@ -1197,6 +1300,60 @@ export const ALIBABA_MANIFEST: ProviderManifest = {
   idempotency: 'Search is read-only. RFQ submission is guarded by the local idempotency ledger.',
 };
 
+export const BRAVE_SEARCH_MANIFEST: ProviderManifest = {
+  id: 'brave_search',
+  displayName: 'Brave Search',
+  tier: 'external',
+  summary:
+    'Independent web search index used to collect retrievable URLs for the research pipeline. No sponsor offers a search API; this is the production substrate for research.web_search.',
+  docs: [
+    { url: 'https://api-dashboard.search.brave.com/documentation/guides/authentication', verifiedOn: '2026-08-15' },
+    { url: 'https://api-dashboard.search.brave.com/api-reference/web/search/get', verifiedOn: '2026-08-15' },
+  ],
+  authMethod: 'api_key_header',
+  secrets: [SECRETS.braveSearchApiKey],
+  baseUrls: { production: 'https://api.search.brave.com/res/v1' },
+  capabilities: [
+    {
+      capability: 'research.web_search',
+      priority: 1,
+      evidence: { kind: 'documented_api', detail: 'GET /web/search with X-Subscription-Token; returns url, title, description' },
+    },
+  ],
+  rateLimit: { requestsPerWindow: 50, windowMs: 1000, note: 'plan-dependent; honour Retry-After on 429' },
+  liveProbe: { description: 'GET /web/search?q=foundry&count=1 — smallest billed search; still a real index hit', mutatesState: false },
+  failureBehaviour: '429 is retried with Retry-After; 401/403 are terminal credential problems.',
+  retryStrategy: 'Standard policy on 429/5xx. Search is read-only so retries are safe.',
+  idempotency: 'GET with identical query is naturally idempotent; results are stored as evidence, not as "the search happened".',
+};
+
+export const REDDIT_MANIFEST: ProviderManifest = {
+  id: 'reddit',
+  displayName: 'Reddit',
+  tier: 'external',
+  summary:
+    'Public community discussions via the official OAuth API. Used as a first-class evidence source for pain-point discovery. Browser scraping of Reddit is not a substitute for this adapter.',
+  docs: [
+    { url: 'https://www.reddit.com/dev/api', verifiedOn: '2026-08-15' },
+    { url: 'https://github.com/reddit-archive/reddit/wiki/OAuth2', verifiedOn: '2026-08-15' },
+  ],
+  authMethod: 'oauth2_client_credentials',
+  secrets: [SECRETS.redditClientId, SECRETS.redditClientSecret, SECRETS.redditUserAgent],
+  baseUrls: { production: 'https://oauth.reddit.com' },
+  capabilities: [
+    {
+      capability: 'research.web_search',
+      priority: 2,
+      evidence: { kind: 'documented_api', detail: 'GET /search and GET /r/{subreddit}/search over oauth.reddit.com' },
+    },
+  ],
+  rateLimit: { requestsPerWindow: 60, windowMs: 60_000, note: 'OAuth apps: 60 requests/min; 429 includes x-ratelimit-* headers' },
+  liveProbe: { description: 'GET /api/v1/me — identity of the authenticated app; falls back to GET /api/v1/me/karma for client-credentials apps', mutatesState: false },
+  failureBehaviour: '401 after token expiry triggers a single re-auth then retry; 403/404 on a subreddit are terminal for that query.',
+  retryStrategy: 'Standard policy honouring x-ratelimit-reset.',
+  idempotency: 'Reads only. Evidence insert de-duplicates on content hash so a repeated collection does not inflate support counts.',
+};
+
 export const OPENAI_IMAGES_MANIFEST: ProviderManifest = {
   id: 'openai_images',
   displayName: 'Image Generation',
@@ -1213,6 +1370,102 @@ export const OPENAI_IMAGES_MANIFEST: ProviderManifest = {
   failureBehaviour: 'Content-policy rejections are terminal and are reported back to the creative agent as a prompt problem, not retried.',
   retryStrategy: 'Standard policy on 429/5xx only.',
   idempotency: 'Generation requests carry a deterministic seed and our asset id so a retry is detectable.',
+};
+
+export const PIONEER_MANIFEST: ProviderManifest = {
+  id: 'pioneer',
+  displayName: 'Pioneer by Fastino Labs',
+  tier: 'sponsor',
+  summary:
+    'Open-weight inference, GLiNER2/GLiGuard structured extraction, and LoRA fine-tuning. Used for PII redaction on support and legal text, prompt-injection screening, and specialist-tier generation on Fastino/Nemotron models — not as a silent Claude proxy.',
+  docs: [
+    { url: 'https://docs.pioneer.ai/api-reference/inference/pioneer', verifiedOn: '2026-08-15' },
+    { url: 'https://docs.pioneer.ai/api-reference/inference/openai-compatible', verifiedOn: '2026-08-15' },
+    { url: 'https://docs.pioneer.ai/concepts/models', verifiedOn: '2026-08-15' },
+    { url: 'https://docs.pioneer.ai/guides/fine-tune-llm', verifiedOn: '2026-08-15' },
+  ],
+  authMethod: 'api_key_header',
+  secrets: [SECRETS.pioneerApiKey],
+  baseUrls: { production: 'https://api.pioneer.ai' },
+  capabilities: [
+    {
+      capability: 'llm.open_weight',
+      priority: 1,
+      evidence: {
+        kind: 'documented_api',
+        detail: 'POST /v1/chat/completions with X-API-Key against Fastino/Nemotron open-weight model ids from GET /base-models?supports_inference=true',
+      },
+    },
+    {
+      capability: 'llm.reasoning',
+      priority: 2,
+      evidence: {
+        kind: 'documented_api',
+        detail: 'Same chat-completions path; Anthropic remains priority 1 for the CEO/manager loop so Pioneer is the open-weight specialist path, not a substitute that hides missing Anthropic keys',
+      },
+    },
+    {
+      capability: 'compliance.pii_scan',
+      priority: 1,
+      evidence: {
+        kind: 'documented_api',
+        detail: 'POST /inference model_id=fastino/gliner2-privacy-filter-PII-multi (GLiNER2-PII)',
+      },
+    },
+    {
+      capability: 'compliance.prompt_guard',
+      priority: 1,
+      evidence: {
+        kind: 'documented_api',
+        detail: 'POST /inference model_id=fastino/gliguard-LLMGuardrails-300M (GLiGuard)',
+      },
+    },
+  ],
+  rateLimit: { requestsPerWindow: 60, windowMs: 60_000, note: 'no published numeric limit; conservative self-imposed ceiling' },
+  liveProbe: {
+    description: 'GET /base-models?supports_inference=true — read-only catalog; proves the key is accepted',
+    mutatesState: false,
+  },
+  failureBehaviour: '401 is a bad key and terminal. An unknown model_id is a contract/validation error, not a stubbed success.',
+  retryStrategy: 'Standard policy on 429/5xx only. Fine-tune job creation is never blindly retried.',
+  idempotency: 'Chat completions are stateless. Training jobs are keyed on our local idempotency ledger so a retried worker cannot start a second billed job.',
+};
+
+export const EGOIST_MANIFEST: ProviderManifest = {
+  id: 'egoist',
+  displayName: 'Egoist Machines',
+  tier: 'sponsor',
+  summary:
+    'AI Passport — a user-owned context layer advertised at ego.ist. As of 2026-08-15 the developer page is a request-access form, not a public REST or MCP spec. This adapter exists so the capability is visible and blocked honestly; it does not invent Passport reads.',
+  docs: [
+    { url: 'https://ego.ist/', verifiedOn: '2026-08-15' },
+    { url: 'https://ego.ist/developers', verifiedOn: '2026-08-15', note: 'request-access form; no endpoint list, no auth scheme, no OpenAPI' },
+  ],
+  authMethod: 'none',
+  secrets: [SECRETS.egoistApiKey],
+  baseUrls: {},
+  capabilities: [
+    {
+      capability: 'personalization.passport',
+      priority: 1,
+      evidence: {
+        kind: 'marketing_claim_only',
+        detail:
+          'The site describes permissioned user context for developers. No public API reference, SDK, or MCP server was published. Passes are described as per-app grants. Until Egoist documents an endpoint, this capability stays unverifiable_no_public_api.',
+      },
+    },
+  ],
+  vendorApproval: {
+    required: true,
+    how: 'Request developer access at https://ego.ist/developers. Do not call an invented URL. When they grant a real API, replace this marketing_claim_only binding with documented_api.',
+  },
+  liveProbe: {
+    description: 'No documented non-destructive probe exists. probe() raises VendorApprovalRequiredError rather than hitting a guessed host.',
+    mutatesState: false,
+  },
+  failureBehaviour: 'Every method refuses until a public API exists. A configured EGOIST_API_KEY does not change that.',
+  retryStrategy: 'Not applicable — there is no live call to retry.',
+  idempotency: 'Not applicable.',
 };
 
 /* -------------------------------------------------------------------------- */
@@ -1232,6 +1485,8 @@ export const ALL_MANIFESTS: readonly ProviderManifest[] = [
   DODO_MANIFEST,
   SANDBOX0_MANIFEST,
   SOLARI_MANIFEST,
+  PIONEER_MANIFEST,
+  EGOIST_MANIFEST,
   ANTHROPIC_MANIFEST,
   META_ADS_MANIFEST,
   GOOGLE_ADS_MANIFEST,
@@ -1240,6 +1495,8 @@ export const ALL_MANIFESTS: readonly ProviderManifest[] = [
   SHIPPO_MANIFEST,
   ALIBABA_MANIFEST,
   OPENAI_IMAGES_MANIFEST,
+  BRAVE_SEARCH_MANIFEST,
+  REDDIT_MANIFEST,
 ];
 
 export const SPONSOR_MANIFESTS: readonly ProviderManifest[] = ALL_MANIFESTS.filter((m) => m.tier === 'sponsor');

@@ -259,7 +259,7 @@ export async function registerCommerceRoutes(app: FastifyInstance, ctx: AppConte
       intentConfidence: 0,
     });
 
-    await ctx.repos.growth.support.recordMessage({
+    const supportMessageId = await ctx.repos.growth.support.recordMessage({
       companyId: row.id,
       ticketId: ticket.id,
       customerId: customer.id,
@@ -276,8 +276,8 @@ export async function registerCommerceRoutes(app: FastifyInstance, ctx: AppConte
       companyId: row.id,
       traceId: ticket.id,
       originRunId: null,
-      idempotencyKey: `support:${ticket.id}:${Date.now()}`,
-      supportMessageId: ticket.id,
+      idempotencyKey: `support:${ticket.id}:${supportMessageId}`,
+      supportMessageId,
     });
 
     return reply.send({ ticketId: ticket.id, isNew, message: 'Received. We will reply by email.' });

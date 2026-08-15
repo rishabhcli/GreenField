@@ -8,3 +8,4 @@ coverage/
 .DS_Store
 *.log
 .vitest/
+hackathon-sponsor-credentials.md

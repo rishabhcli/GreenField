@@ -81,7 +81,7 @@ export const JOB_SCHEMAS = {
     weightProfile: z.string().default('commercial_impact'),
   }),
   'expert.poll': withEnvelope({
-    expertReviewId: z.string().min(1),
+    expertReviewId: z.string().min(1).nullable().default(null),
     attempt: z.number().int().nonnegative().default(0),
   }),
   'sourcing.scan': withEnvelope({
@@ -95,7 +95,7 @@ export const JOB_SCHEMAS = {
     approvalId: z.string().min(1),
   }),
   'sourcing.quote_poll': withEnvelope({
-    rfqId: z.string().min(1),
+    rfqId: z.string().min(1).nullable().default(null),
     attempt: z.number().int().nonnegative().default(0),
   }),
   'brand.asset_generate': withEnvelope({
@@ -128,20 +128,20 @@ export const JOB_SCHEMAS = {
     provider: z.string().min(1),
   }),
   'commerce.reconcile': withEnvelope({
-    sinceIso: z.string().datetime(),
-    provider: z.string().min(1),
+    sinceIso: z.string().datetime().nullable().default(null),
+    provider: z.string().min(1).default('stripe'),
   }),
   'fulfilment.sync': withEnvelope({
     /** One order, or null to sweep tracking for every in-flight shipment. */
     orderId: z.string().min(1).nullable().default(null),
   }),
   'marketing.metrics_collect': withEnvelope({
-    experimentId: z.string().min(1),
-    windowStartIso: z.string().datetime(),
-    windowEndIso: z.string().datetime(),
+    experimentId: z.string().min(1).nullable().default(null),
+    windowStartIso: z.string().datetime().nullable().default(null),
+    windowEndIso: z.string().datetime().nullable().default(null),
   }),
   'marketing.decide': withEnvelope({
-    experimentId: z.string().min(1),
+    experimentId: z.string().min(1).nullable().default(null),
   }),
   'support.inbound': withEnvelope({
     supportMessageId: z.string().min(1),

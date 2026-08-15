@@ -11,6 +11,14 @@
 
 import { z } from 'zod';
 
+export const StripePaymentLink = z.object({
+  id: z.string(),
+  object: z.literal('payment_link').optional(),
+  url: z.string(),
+  active: z.boolean().nullish(),
+});
+export type StripePaymentLink = z.infer<typeof StripePaymentLink>;
+
 export const StripeBalance = z.object({
   object: z.literal('balance'),
   livemode: z.boolean(),

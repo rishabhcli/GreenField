@@ -30,17 +30,21 @@ import {
 import type { OrderStatus } from '@foundry/core';
 import { getLogger, metrics } from '@foundry/obs';
 import {
+  mapDodoEventToOrderTransition,
+  mapLinqEventToSupportUpdate,
   mapStripeEventToOrderTransition,
+  mapWhopEventToOrderTransition,
   type MappingResult,
   type OrderTransitionIntent,
 } from '@foundry/providers';
 import type { ServiceDeps } from '../deps.js';
+import { SupportInboxService } from '../support/inbox.js';
 
 /** Providers whose events this processor knows how to interpret. */
 export type WebhookProvider = 'stripe' | 'whop' | 'dodo' | 'linq' | 'terac' | 'lovable' | 'sandbox0' | 'replay' | 'solari';
 
 export interface ProcessResult {
-  readonly outcome: 'applied' | 'duplicate' | 'stale' | 'ignored' | 'unhandled' | 'escalated';
+  readonly outcome: 'applied' | 'duplicate' | 'stale' | 'ignored' | 'unhandled' | 'escalated' | 'ingested';
   readonly orderId?: string;
   readonly fromStatus?: OrderStatus;
   readonly toStatus?: OrderStatus;
@@ -76,6 +80,11 @@ export class WebhookProcessorService {
       return { outcome: 'duplicate', reason: 'already processed' };
     }
 
+    if (event.provider === 'linq') {
+      const linq = await this.#processLinq(webhookEventId, event.event_type, event.payload, event.company_id);
+      if (linq) return linq;
+    }
+
     const mapping = this.#map(event.provider, event.event_type, event.payload);
 
     if (mapping.action === 'ignore') {
@@ -99,6 +108,84 @@ export class WebhookProcessorService {
     return this.#applyTransition(webhookEventId, event.provider, event.event_type, mapping.intent);
   }
 
+  /**
+   * Linq events are support and Agent Pay, not Stripe-shaped money objects.
+   * Inbound messages become tickets. Payment events try to locate an order
+   * via metadata; if none exists they stay unhandled rather than inventing one.
+   */
+  async #processLinq(
+    webhookEventId: string,
+    eventType: string,
+    payload: unknown,
+    companyId: string | null,
+  ): Promise<ProcessResult | undefined> {
+    const data = readPath(payload, ['data']) ?? payload;
+    if (eventType.startsWith('payment.')) {
+      const ids: Record<string, string> = {};
+      const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+      for (const key of ['id', 'payment_request_id', 'order_id', 'orderId']) {
+        const value = rec[key];
+        if (typeof value === 'string' && value.length > 0) ids[key] = value;
+      }
+      const metadata = rec['metadata'];
+      if (metadata && typeof metadata === 'object') {
+        const orderId = (metadata as Record<string, unknown>)['order_id'] ?? (metadata as Record<string, unknown>)['orderId'];
+        if (typeof orderId === 'string') ids['order_id'] = orderId;
+      }
+      if (eventType === 'payment.succeeded') {
+        return this.#applyTransition(webhookEventId, 'linq', eventType, {
+          orderStatus: 'PAID',
+          kind: 'payment_webhook_received',
+          externalIds: ids,
+          detail: { provider: 'linq', eventType },
+        });
+      }
+      if (eventType === 'payment.canceled' || eventType === 'payment.expired') {
+        return this.#applyTransition(webhookEventId, 'linq', eventType, {
+          orderStatus: 'PAYMENT_FAILED',
+          kind: 'payment_failed',
+          externalIds: ids,
+          detail: { provider: 'linq', eventType },
+        });
+      }
+    }
+
+    const update = mapLinqEventToSupportUpdate(eventType, data);
+    if (update.kind === 'unhandled') return undefined;
+    if (update.kind !== 'inbound_message') {
+      await this.deps.repos.webhooks.markIgnored(webhookEventId, `linq ${update.kind} recorded without a support ticket`);
+      return { outcome: 'ignored', reason: `linq ${update.kind}` };
+    }
+
+    const company = companyId
+      ? await this.deps.repos.companies.byId(companyId)
+      : await this.deps.repos.companies.first();
+    if (!company) {
+      await this.deps.repos.webhooks.markFailed(webhookEventId, 'no company row to attach inbound Linq message');
+      return { outcome: 'escalated', reason: 'no company configured for inbound Linq message' };
+    }
+    if (!update.externalChatId || !update.fromHandle) {
+      await this.deps.repos.webhooks.markFailed(webhookEventId, 'Linq inbound message missing chat id or handle');
+      return { outcome: 'unhandled', reason: 'Linq inbound message missing chat id or handle' };
+    }
+
+    const support = new SupportInboxService(this.deps);
+    const ingested = await support.ingestInbound({
+      companyId: company.id,
+      channel: update.channel,
+      externalChatId: update.externalChatId,
+      body: update.body,
+      customerHandle: update.fromHandle,
+    });
+    await this.deps.repos.webhooks.markProcessed(webhookEventId, company.id);
+    return {
+      outcome: 'ingested',
+      reason: ingested.data
+        ? `ticket ${ingested.data.ticketId} intent ${ingested.data.intent}`
+        : ingested.blockedOn?.reason ?? 'inbound ingested',
+    };
+  }
+
   /* ------------------------------------------------------------------ */
   /* Mapping                                                             */
   /* ------------------------------------------------------------------ */
@@ -116,10 +203,10 @@ export class WebhookProcessorService {
         }
         return mapStripeEventToOrderTransition(eventType, dataObject);
       }
-
-      // Providers whose adapters are not wired into this deployment. Returning
-      // `unhandled` (rather than `ignore`) is the honest answer: the event is
-      // real, we simply cannot interpret it yet, and it must stay visible.
+      case 'dodo':
+        return mapDodoEventToOrderTransition(eventType, payload);
+      case 'whop':
+        return mapWhopEventToOrderTransition(eventType, payload);
       default:
         return {
           action: 'unhandled',

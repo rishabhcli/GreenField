@@ -42,6 +42,7 @@ import {
   StripeDispute,
   StripeEventEnvelope,
   StripePaymentIntent,
+  StripePaymentLink,
   StripeRefund,
   refId,
 } from './schemas.js';
@@ -501,6 +502,40 @@ export class StripeAdapter extends ProviderAdapter {
       'stripe charge pagination hit the page cap; reconciliation may be incomplete',
     );
     return out;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Payment Links (hackathon organizer-tracked collection)                  */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Returns the submitted hackathon Payment Link URL. Creating a second link
+   * mid-event drops organizer revenue tracking, so this never mints one
+   * implicitly.
+   */
+  hackathonPaymentLinkUrl(): string | undefined {
+    return this.optionalSecret(SECRETS.stripeHackathonPaymentLinkUrl)?.reveal();
+  }
+
+  async retrievePaymentLink(id: string): Promise<StripePaymentLink> {
+    this.assertActivated();
+    const raw = await this.#call('paymentLinks.retrieve', () => this.#stripe().paymentLinks.retrieve(id));
+    return StripePaymentLink.parse(raw);
+  }
+
+  async createPaymentLink(input: {
+    readonly priceId: string;
+    readonly quantity?: number;
+    readonly idempotencyKey: string;
+  }): Promise<StripePaymentLink> {
+    this.assertActivated();
+    const raw = await this.#call('paymentLinks.create', () =>
+      this.#stripe().paymentLinks.create(
+        { line_items: [{ price: input.priceId, quantity: input.quantity ?? 1 }] },
+        { idempotencyKey: input.idempotencyKey },
+      ),
+    );
+    return StripePaymentLink.parse(raw);
   }
 
   /* ---------------------------------------------------------------------- */

@@ -1,0 +1,56 @@
+import type { ServiceDeps } from '../deps.js';
+import type { BrandAssetService } from '../brand/assets.js';
+import type { BrandIdentityService } from '../brand/identity.js';
+import type { CollectPaymentService } from '../commerce/collect.js';
+import type { FulfilmentService } from '../commerce/fulfilment.js';
+import type { RefundService } from '../commerce/refunds.js';
+import type { WebhookProcessorService } from '../commerce/webhook-processor.js';
+import type { ComplianceScanService } from '../compliance/scan.js';
+import type { LedgerService } from '../finance/ledger.js';
+import type { ReconciliationService } from '../finance/reconciliation.js';
+import type { LegalDocumentService } from '../legal/documents.js';
+import type { LoopOrchestrator } from '../loop/orchestrator.js';
+import type { MarketingCreativeService } from '../marketing/creative.js';
+import type { MarketingExperimentService } from '../marketing/experiments.js';
+import type { QaOrchestrationService } from '../qa/orchestration.js';
+import type { ResearchClusterService } from '../research/cluster.js';
+import type { ResearchCollectService } from '../research/collect.js';
+import type { ExpertReviewService } from '../research/expert.js';
+import type { OpportunityScoreService } from '../research/score.js';
+import type { SiteBuildService } from '../site/build.js';
+import type { SiteDeployService } from '../site/deploy.js';
+import type { LandedCostService } from '../sourcing/economics.js';
+import type { SourcingQuoteService } from '../sourcing/quotes.js';
+import type { RfqService } from '../sourcing/rfq.js';
+import type { SourcingSearchService } from '../sourcing/search.js';
+import type { SupportInboxService } from '../support/inbox.js';
+
+/** Service bag the org-chart tools execute against. */
+export interface CompanyToolHost {
+  readonly deps: ServiceDeps;
+  readonly loop: LoopOrchestrator;
+  readonly research: ResearchCollectService;
+  readonly cluster: ResearchClusterService;
+  readonly score: OpportunityScoreService;
+  readonly experts: ExpertReviewService;
+  readonly sourcing: SourcingSearchService;
+  readonly rfq: RfqService;
+  readonly quotes: SourcingQuoteService;
+  readonly economics: LandedCostService;
+  readonly brand: BrandIdentityService;
+  readonly assets: BrandAssetService;
+  readonly site: SiteBuildService;
+  readonly deploy: SiteDeployService;
+  readonly qa: QaOrchestrationService;
+  readonly creative: MarketingCreativeService;
+  readonly experiments: MarketingExperimentService;
+  readonly support: SupportInboxService;
+  readonly legal: LegalDocumentService;
+  readonly fulfilment: FulfilmentService;
+  readonly refunds: RefundService;
+  readonly ledger: LedgerService;
+  readonly reconciliation: ReconciliationService;
+  readonly collect: CollectPaymentService;
+  readonly compliance: ComplianceScanService;
+  readonly webhooks: WebhookProcessorService;
+}

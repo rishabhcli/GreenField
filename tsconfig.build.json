@@ -33,6 +33,9 @@
     },
     {
       "path": "./apps/verifier"
+    },
+    {
+      "path": "./apps/workflows"
     }
   ]
 }

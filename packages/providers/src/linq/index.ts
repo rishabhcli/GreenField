@@ -40,8 +40,11 @@ import {
   LinqCapabilityCheckResponse,
   LinqChat,
   LinqChatList,
+  LinqExperienceInvocation,
+  LinqIMessageAppPart,
   LinqMessageList,
   LinqMessagePartInput,
+  LinqPaymentRequest,
   LinqPhoneNumber,
   LinqPhoneNumberList,
   LinqSendMessageResponse,
@@ -248,6 +251,144 @@ export class LinqAdapter extends ProviderAdapter {
       }
       throw error;
     }
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* iMessage experiences, apps, and Agent Pay                               */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Invokes a Linq-hosted iMessage card. `experience` occupies the whole
+   * message — it cannot be combined with `parts`. Cards are iMessage-only.
+   */
+  async sendExperience(input: {
+    readonly to: readonly string[];
+    readonly from?: string;
+    readonly experience: LinqExperienceInvocation;
+    readonly chatId?: string;
+    readonly idempotencyKey: string;
+  }): Promise<LinqSendMessageResult> {
+    if (input.to.length !== 1) {
+      throw new ValidationError('Linq experience cards go to exactly one recipient');
+    }
+    this.assertActivated();
+    for (const handle of input.to) {
+      if (await this.#optOutState.isOptedOut(handle)) {
+        throw new LinqOptOutError(handle, 'recipient is recorded as opted out in local state; never overridden automatically');
+      }
+    }
+    const path = input.chatId ? `/v3/chats/${encodeURIComponent(input.chatId)}/messages` : '/v3/messages';
+    const body = input.chatId
+      ? { message: { experience: input.experience, idempotency_key: input.idempotencyKey } }
+      : {
+          to: input.to,
+          ...(input.from ? { from: input.from } : {}),
+          message: { experience: input.experience, idempotency_key: input.idempotencyKey },
+        };
+    const res = await this.#httpClient().request(
+      { method: 'POST', path, operation: 'messages.sendExperience', body, idempotencyKey: input.idempotencyKey },
+      LinqSendMessageResponse,
+    );
+    return toSendResult(res.body);
+  }
+
+  /**
+   * Partner-owned Messages extension card. Requires a real team_id + bundle_id
+   * of an installed iMessage app. Without one, use `sendExperience` instead.
+   */
+  async sendIMessageApp(input: {
+    readonly to: readonly string[];
+    readonly from?: string;
+    readonly part: LinqIMessageAppPart;
+    readonly idempotencyKey: string;
+  }): Promise<LinqSendMessageResult> {
+    return this.sendMessage({
+      to: input.to,
+      from: input.from,
+      parts: [input.part],
+      preferredService: 'iMessage',
+      idempotencyKey: input.idempotencyKey,
+    });
+  }
+
+  async updateMessageCard(messageId: string, experience: LinqExperienceInvocation): Promise<void> {
+    this.assertActivated();
+    await this.#httpClient().raw({
+      method: 'POST',
+      path: `/v3/messages/${encodeURIComponent(messageId)}/update`,
+      operation: 'messages.update',
+      body: { experience },
+    });
+  }
+
+  async createPaymentRequest(input: {
+    readonly amountMinor: number;
+    readonly currency: string;
+    readonly description: string;
+    readonly metadata?: Readonly<Record<string, string>>;
+    readonly customerId?: string;
+    readonly rail?: 'stripe' | 'natural';
+  }): Promise<LinqPaymentRequest> {
+    if (!Number.isInteger(input.amountMinor) || input.amountMinor < 50) {
+      throw new ValidationError('Linq payment requests have a 50-cent minimum in minor units', {
+        amountMinor: input.amountMinor,
+      });
+    }
+    this.assertActivated();
+    const res = await this.#httpClient().request(
+      {
+        method: 'POST',
+        path: '/v3/payment_requests',
+        operation: 'payment_requests.create',
+        body: {
+          amount: input.amountMinor,
+          currency: input.currency.toLowerCase(),
+          description: input.description,
+          ...(input.metadata ? { metadata: input.metadata } : {}),
+          ...(input.customerId ? { customer_id: input.customerId } : {}),
+          ...(input.rail ? { rail: input.rail } : {}),
+        },
+      },
+      LinqPaymentRequest,
+    );
+    return res.body;
+  }
+
+  async getPaymentRequest(id: string): Promise<LinqPaymentRequest> {
+    this.assertActivated();
+    const res = await this.#httpClient().request(
+      {
+        method: 'GET',
+        path: `/v3/payment_requests/${encodeURIComponent(id)}`,
+        operation: 'payment_requests.get',
+      },
+      LinqPaymentRequest,
+    );
+    return res.body;
+  }
+
+  /**
+   * Agent Pay card in iMessage. `checkout_url` must be from our own
+   * `createPaymentRequest` — a Stripe Payment Link is rejected by Linq.
+   */
+  async sendAgentPay(input: {
+    readonly to: string;
+    readonly checkoutUrl: string;
+    readonly chatId?: string;
+    readonly from?: string;
+    readonly idempotencyKey: string;
+  }): Promise<LinqSendMessageResult> {
+    return this.sendExperience({
+      to: [input.to],
+      from: input.from,
+      chatId: input.chatId,
+      idempotencyKey: input.idempotencyKey,
+      experience: {
+        name: 'agentpay',
+        action: 'request_payment',
+        params: { checkout_url: input.checkoutUrl },
+      },
+    });
   }
 
   /* ---------------------------------------------------------------------- */

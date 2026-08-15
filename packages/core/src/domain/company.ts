@@ -86,6 +86,13 @@ export const CompanyConfig = z.object({
     maxSupplierPurchaseWithoutHumanMinor: z.number().int().nonnegative(),
     maxDailyAdSpendMinor: z.number().int().nonnegative(),
   }),
+  /** Optional live-provider ids written after the first successful create-or-lookup. */
+  integrations: z
+    .object({
+      bandChatId: z.string().nullable().optional(),
+      linqChatId: z.string().nullable().optional(),
+    })
+    .optional(),
 });
 export type CompanyConfig = z.infer<typeof CompanyConfig>;
 

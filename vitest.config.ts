@@ -25,6 +25,8 @@ export default defineConfig({
       '@foundry/db': new URL('./packages/db/src/index.ts', import.meta.url).pathname,
       '@foundry/queue': new URL('./packages/queue/src/index.ts', import.meta.url).pathname,
       '@foundry/agents': new URL('./packages/agents/src/index.ts', import.meta.url).pathname,
+      '@foundry/services': new URL('./packages/services/src/index.ts', import.meta.url).pathname,
+      '@foundry/runtime': new URL('./packages/runtime/src/index.ts', import.meta.url).pathname,
     },
   },
 });

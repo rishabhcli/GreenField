@@ -19,7 +19,7 @@
 import { describeError } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { QUEUE_NAMES, WorkerSet, type HandlerMap, type QueueName } from '@foundry/queue';
-import { buildContext, buildServices } from '@foundry/runtime';
+import { buildContext, wireRuntime } from '@foundry/runtime';
 import { buildHandlers, unhandledQueues } from './handlers.js';
 
 /** Kept in sync with `packages/db/src/migrations`; the schema health check reads it. */
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   });
   const log = getLogger();
 
-  const services = buildServices(ctx);
+  const services = wireRuntime(ctx);
   const all = buildHandlers(ctx, services);
   const handlers = filterByRole(all, role);
 

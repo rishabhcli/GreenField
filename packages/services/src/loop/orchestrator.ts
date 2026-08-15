@@ -20,9 +20,12 @@
  *     pretend the phase succeeded.
  */
 
-import { LOOP_PHASE_ORDER, type Capability, type LoopPhase } from '@foundry/core';
+import { LOOP_PHASE_ORDER, DEFAULT_SELECTION_GATES, ValidationError, type Capability, type LoopPhase } from '@foundry/core';
+import { companyConfig } from '@foundry/db';
 import { getLogger } from '@foundry/obs';
 import type { ServiceDeps } from '../deps.js';
+import { ExpertReviewService } from '../research/expert.js';
+import { LandedCostService } from '../sourcing/economics.js';
 
 export interface TickResult {
   readonly cycleId: string;
@@ -317,7 +320,7 @@ export class LoopOrchestrator {
 
   async #assessEconomics(companyId: string): Promise<PhaseAssessment> {
     const models = await this.deps.repos.sourcing.landedCosts.listForCompany(companyId);
-    const viable = models.filter((m) => m.passes_margin_gate === true);
+    const viable = models.filter((m) => m.grounded_ratio >= DEFAULT_SELECTION_GATES.minGroundedWeightRatio);
     if (models.length === 0) {
       return { complete: false, detail: 'no landed-cost model has been built yet' };
     }
@@ -517,7 +520,7 @@ export class LoopOrchestrator {
             'Select the opportunity to pursue from the scored candidates, or reject them all and say why. ' +
             'Cite the composite score, the grounded-evidence ratio, and the commercial reasoning.',
           phase,
-        });
+        }, { system: true });
 
       case 'decide':
         return this.#dispatch(companyId, cycleId, 'ceo', {
@@ -525,7 +528,7 @@ export class LoopOrchestrator {
             'Decide this cycle: scale, hold, pivot or stop. Cite the metric snapshots and the ledger ' +
             'position behind the decision. If the data is insufficient, say so and hold.',
           phase,
-        });
+        }, { system: true });
 
       case 'source':
         return this.#dispatch(companyId, cycleId, 'sourcing_manager', {
@@ -573,6 +576,21 @@ export class LoopOrchestrator {
       }
 
       case 'expert_validate': {
+        const experts = new ExpertReviewService(this.deps);
+        const scored = await this.deps.repos.research.opportunities.list(companyId, ['scored']);
+        let requested = 0;
+        for (const opportunity of scored.slice(0, 8)) {
+          const result = await experts.request({
+            companyId,
+            subjectRefId: opportunity.id,
+            subject: 'opportunity_validity',
+            question:
+              `General Population feasibility review for opportunity "${opportunity.title}": ${opportunity.concept}. ` +
+              `Would you buy this, at what price, and what would stop you?`,
+            participantsRequested: 5,
+          });
+          if (result.reviewId) requested += 1;
+        }
         const open = await this.deps.repos.research.expertReviews.listOpen(companyId);
         for (const review of open) {
           await this.deps.queues.enqueue('expert.poll', {
@@ -582,7 +600,7 @@ export class LoopOrchestrator {
             attempt: 0,
           });
         }
-        return open.length > 0;
+        return requested > 0 || open.length > 0;
       }
 
       case 'build': {
@@ -616,7 +634,7 @@ export class LoopOrchestrator {
           siteId: company.active_site_id,
           deploymentId: deployment.id,
           targetUrl: deployment.url,
-          kinds: ['exploration', 'critical_flow'],
+          kinds: ['autonomous_exploration', 'payment_state', 'data_integrity'],
           blockingForRelease: true,
         });
         return true;
@@ -658,8 +676,41 @@ export class LoopOrchestrator {
         return running.length > 0;
       }
 
-      // `observe`, `model_economics` and `replan` complete synchronously in
-      // their assessment, so there is nothing to drive.
+      case 'model_economics': {
+        const economics = new LandedCostService(this.deps);
+        const opportunityId = company.selected_opportunity_id;
+        if (!opportunityId) return false;
+        let destination = 'US';
+        try {
+          destination = companyConfig(company).commerce.shipsFrom[0] ?? 'US';
+        } catch {
+          destination = 'US';
+        }
+        const quotes = await this.deps.repos.sourcing.quotes.forOpportunity(opportunityId);
+        let built = 0;
+        for (const quote of quotes) {
+          try {
+            await economics.build({
+              companyId,
+              opportunityId,
+              quoteId: quote.id,
+              orderQuantity: quote.moq,
+              destinationCountry: destination,
+              sellingPriceMinor: null,
+            });
+            built += 1;
+          } catch (error) {
+            if (error instanceof ValidationError) {
+              getLogger().warn({ quoteId: quote.id, err: error.message }, 'landed-cost model refused this quote');
+              continue;
+            }
+            throw error;
+          }
+        }
+        return built > 0;
+      }
+
+      // `observe` and `replan` complete synchronously in their assessment.
       default:
         return false;
     }
@@ -671,16 +722,27 @@ export class LoopOrchestrator {
     cycleId: string,
     roleKey: string,
     input: { objective: string; phase: LoopPhase } & Record<string, unknown>,
+    options: { readonly system?: boolean } = {},
   ): Promise<boolean> {
     const { objective, ...inputRefs } = input;
-    await this.deps.dispatcher.dispatch({
-      companyId,
-      fromRoleKey: 'ceo',
-      toRoleKey: roleKey,
-      objective,
-      traceId: cycleId,
-      inputRefs: { cycleId, ...inputRefs },
-    });
+    if (options.system || roleKey === 'ceo') {
+      await this.deps.dispatcher.enqueueSystem({
+        companyId,
+        toRoleKey: roleKey,
+        objective,
+        traceId: cycleId,
+        inputRefs: { cycleId, ...inputRefs },
+      });
+    } else {
+      await this.deps.dispatcher.dispatch({
+        companyId,
+        fromRoleKey: 'ceo',
+        toRoleKey: roleKey,
+        objective,
+        traceId: cycleId,
+        inputRefs: { cycleId, ...inputRefs },
+      });
+    }
     return true;
   }
 

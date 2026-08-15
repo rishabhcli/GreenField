@@ -43,7 +43,9 @@ const PROVIDER_WEBHOOKS: Record<
   dodo: {
     scheme: 'standard_webhooks',
     secretEnv: 'dodoWebhookSecret',
-    eventIdPath: ['business_id'],
+    // business_id is the merchant, not the delivery. Standard Webhooks
+    // `webhook-id` is the unique delivery id; fall back to data.payment_id.
+    eventIdPath: ['data', 'payment_id'],
     eventTypePath: ['type'],
   },
   linq: {

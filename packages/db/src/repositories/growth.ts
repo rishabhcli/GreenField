@@ -709,6 +709,35 @@ export class SupportRepository {
     );
   }
 
+  async messageById(id: string): Promise<
+    | {
+        id: string;
+        company_id: string;
+        ticket_id: string | null;
+        channel: string;
+        body: string;
+        from_handle: string;
+        external_chat_id: string | null;
+      }
+    | undefined
+  > {
+    return qMaybe(
+      this.pool,
+      `SELECT id, company_id, ticket_id, channel, body, from_handle, external_chat_id
+         FROM support_messages WHERE id=$1`,
+      [id],
+      z.object({
+        id: z.string(),
+        company_id: z.string(),
+        ticket_id: z.string().nullable(),
+        channel: z.string(),
+        body: z.string(),
+        from_handle: z.string(),
+        external_chat_id: z.string().nullable(),
+      }),
+    );
+  }
+
   async conversation(ticketId: string): Promise<readonly Record<string, unknown>[]> {
     return q(
       this.pool,

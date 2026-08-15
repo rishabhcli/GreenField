@@ -16,11 +16,12 @@ import sensible from '@fastify/sensible';
 import rateLimit from '@fastify/rate-limit';
 import { describeError, isFoundryError } from '@foundry/core';
 import { getLogger, metrics, withContext } from '@foundry/obs';
-import { buildContext, type AppContext } from '@foundry/runtime';
+import { buildContext, wireRuntime, type AppContext } from '@foundry/runtime';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 import { registerReadinessRoutes } from './routes/readiness.js';
 import { registerGovernanceRoutes } from './routes/governance.js';
 import { registerCommerceRoutes } from './routes/commerce.js';
+import { registerCompanyRoutes } from './routes/company.js';
 
 /** Kept in sync with `packages/db/src/migrations`; the schema check reads it. */
 const EXPECTED_MIGRATIONS = 5;
@@ -31,6 +32,7 @@ async function main(): Promise<void> {
     expectedMigrations: EXPECTED_MIGRATIONS,
     installSchedules: false,
   });
+  const services = wireRuntime(ctx);
   const log = getLogger();
 
   const app = Fastify({
@@ -123,6 +125,7 @@ async function main(): Promise<void> {
   await registerWebhookRoutes(app, ctx);
   await registerGovernanceRoutes(app, ctx);
   await registerCommerceRoutes(app, ctx);
+  await registerCompanyRoutes(app, ctx, services);
 
   app.get('/', async () => ({
     service: 'foundry-api',
@@ -134,6 +137,8 @@ async function main(): Promise<void> {
       capabilities: '/readiness/capabilities',
       providers: '/readiness/providers',
       company: '/readiness/company',
+      companies: '/api/companies',
+      prizeTracks: '/api/prize-tracks',
       metrics: '/metrics',
     },
   }));
