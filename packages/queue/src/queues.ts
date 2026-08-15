@@ -17,14 +17,28 @@ import {
 
 /**
  * Namespaced so staging and production can share a Key Value instance safely.
- * BullMQ ≥5 rejects `:` in queue names (`Queue name cannot contain :`).
+ * BullMQ ≥5 rejects `:` in queue names (`Queue name cannot contain :`) and in
+ * custom job ids (`Custom Id cannot contain :`).
  */
-export function queueKey(environment: string, name: QueueName): string {
-  const key = `${environment}.${name}`;
-  if (key.includes(':')) {
-    throw new Error(`BullMQ queue name cannot contain ':': got ${JSON.stringify(key)}`);
+export function assertBullmqId(id: string, kind = 'custom id'): string {
+  if (id.includes(':')) {
+    throw new Error(`BullMQ ${kind} cannot contain ':': got ${JSON.stringify(id)}`);
   }
-  return key;
+  return id;
+}
+
+/** Replace `:` with `.`, then refuse anything that still contains a colon. */
+export function bullmqId(value: string, kind = 'custom id'): string {
+  return assertBullmqId(value.replaceAll(':', '.'), kind);
+}
+
+export function queueKey(environment: string, name: QueueName): string {
+  return bullmqId(`${environment}.${name}`, 'queue name');
+}
+
+/** Idempotency-derived custom job id. `loop.tick` + `loop:start:co_abc` → `loop.tick.loop.start.co_abc`. */
+export function jobKey(name: QueueName, idempotencyKey: string): string {
+  return bullmqId(`${name}.${idempotencyKey}`);
 }
 
 export interface QueueSetOptions {
@@ -69,7 +83,8 @@ export class QueueSet {
   /**
    * Enqueue with payload validation at the boundary. A `jobId` derived from the
    * payload's idempotency key makes duplicate enqueues collapse to one job —
-   * BullMQ ignores an add() for an existing job id.
+   * BullMQ ignores an add() for an existing job id. Colons are replaced with
+   * dots; BullMQ 5 rejects `:` in custom ids.
    */
   async enqueue<Q extends QueueName>(
     name: Q,
@@ -84,9 +99,11 @@ export class QueueSet {
         issues: parsed.error.issues,
       });
     }
-    const jobId =
-      options.jobId ??
-      (payload.idempotencyKey ? `${name}:${payload.idempotencyKey}` : undefined);
+    const jobId = options.jobId
+      ? bullmqId(options.jobId)
+      : payload.idempotencyKey
+        ? jobKey(name, payload.idempotencyKey)
+        : undefined;
 
     const job = await this.get(name).add(name, parsed.data, { ...options, ...(jobId ? { jobId } : {}) });
     getLogger().debug({ queue: name, jobId: job.id, traceId: payload.traceId }, 'job enqueued');

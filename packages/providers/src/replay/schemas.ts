@@ -119,6 +119,11 @@ export const ReplayProjectStatus = z
     status: z.string().nullish(),
     finished_at: z.string().nullish(),
     started_at: z.string().nullish(),
+    project: z.unknown().optional(),
+    bugs: z.unknown().optional(),
+    journeys: z.unknown().optional(),
+    test_runs: z.unknown().optional(),
+    explorations: z.unknown().optional(),
   })
   .passthrough();
 export type ReplayProjectStatus = z.infer<typeof ReplayProjectStatus>;
@@ -218,6 +223,7 @@ export const ReplayExploration = z
     bug_ids: z.array(z.string()).nullish(),
     started_at: z.string().nullish(),
     finished_at: z.string().nullish(),
+    completed_at: z.string().nullish(),
     created_at: z.string().nullish(),
   })
   .passthrough();

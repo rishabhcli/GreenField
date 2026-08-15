@@ -25,14 +25,17 @@ import { companyConfig } from '@foundry/db';
 import { defineTool, type AgentTool, type ToolContext } from '@foundry/agents';
 import {
   BandAdapter,
+  LinqAdapter,
   RenderAdapter,
   ReplayAdapter,
   Sandbox0Adapter,
   SolariAdapter,
   StripeAdapter,
   SuperserveAdapter,
+  TeracAdapter,
 } from '@foundry/providers';
 import { optionalCapability as optCap } from '../deps.js';
+import { prizeTrackSnapshot } from '../org/prize-tracks.js';
 import type { CompanyToolHost } from './host.js';
 
 interface ToolSpec<T extends z.ZodTypeAny> {
@@ -62,6 +65,15 @@ function tool<T extends z.ZodTypeAny>(spec: ToolSpec<T>, s: CompanyToolHost): Ag
 const Empty = z.object({});
 const Id = z.string().min(1);
 const Text = z.string().min(1);
+
+function blocked(capability: Capability, reason: string) {
+  return { ok: false as const, blockedOn: { capability, reason } };
+}
+
+function blockedFrom(capability: Capability, error: unknown) {
+  const reason = error instanceof Error ? error.message : String(error);
+  return blocked(capability, reason);
+}
 
 export function buildCompanyTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
   const tools: AgentTool<never, unknown>[] = [
@@ -99,6 +111,7 @@ export function buildCompanyTools(s: CompanyToolHost): AgentTool<never, unknown>
               ceoDecision: cycle.ceo_decision,
             },
             capabilities: s.deps.capabilities.summary(),
+            prizeTracks: prizeTrackSnapshot(s.deps.capabilities),
             engagedKillSwitches: killed,
           };
         },
@@ -213,20 +226,39 @@ export function buildCompanyTools(s: CompanyToolHost): AgentTool<never, unknown>
         execute: async (input, ctx) => {
           const band = optCap<BandAdapter>(s.deps, 'coordination.agent_mesh');
           if (!band) {
-            return { posted: false, reason: 'BAND is not usable; coordination.agent_mesh is blocked.' };
+            return blocked(
+              'coordination.agent_mesh',
+              'BAND is not usable; coordination.agent_mesh is blocked.',
+            );
           }
           const company = await s.deps.repos.companies.byId(ctx.companyId);
           const config = companyConfig(company);
-          const chatId = config.integrations?.bandChatId;
+          let chatId = config.integrations?.bandChatId ?? null;
           if (!chatId) {
-            return { posted: false, reason: 'No BAND chat id on company config; dispatch a run so the room is created first.' };
+            try {
+              const chat = await band.createChat({
+                name: `${company.name} coordination`,
+                taskId: ctx.companyId,
+              });
+              chatId = chat.id;
+              await s.deps.repos.companies.updateConfig(ctx.companyId, {
+                ...config,
+                integrations: { ...config.integrations, bandChatId: chatId },
+              });
+            } catch (error) {
+              return blockedFrom('coordination.agent_mesh', error);
+            }
           }
-          const message = await band.sendMessage(chatId, {
-            recipients: input.recipients,
-            body: input.body,
-            taskId: ctx.runId,
-          });
-          return { posted: true, messageId: message.id, chatId };
+          try {
+            const message = await band.sendMessage(chatId, {
+              recipients: input.recipients,
+              body: input.body,
+              taskId: ctx.runId,
+            });
+            return { posted: true, messageId: message.id, chatId };
+          } catch (error) {
+            return blockedFrom('coordination.agent_mesh', error);
+          }
         },
       },
       s,
@@ -780,7 +812,13 @@ export function buildCompanyTools(s: CompanyToolHost): AgentTool<never, unknown>
     ),
   ];
 
-  tools.push(...sourcingTools(s), ...brandSiteTools(s), ...growthSupportTools(s), ...platformTools(s));
+  tools.push(
+    ...sourcingTools(s),
+    ...brandSiteTools(s),
+    ...growthSupportTools(s),
+    ...platformTools(s),
+    ...prizeTrackTools(s),
+  );
 
   const have = new Set(tools.map((t) => t.name));
   const missing = allReferencedTools().filter((name) => !have.has(name));
@@ -1326,12 +1364,39 @@ function brandSiteTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
         consequential: false,
         input: Empty,
         execute: async () => {
-          const stripe = optCap<StripeAdapter>(s.deps, 'payments.checkout.physical');
+          const stripe =
+            optCap<StripeAdapter>(s.deps, 'payments.payment_link') ??
+            optCap<StripeAdapter>(s.deps, 'payments.checkout.physical');
+          const stripeCheckout = s.deps.capabilities.resolveCapability('payments.checkout.physical');
+          const paymentLinkCap = s.deps.capabilities.resolveCapability('payments.payment_link');
+          const linqPay = s.deps.capabilities.resolveCapability('payments.imessage_checkout');
+          const linqLink = s.deps.capabilities.resolveCapability('messaging.imessage_app');
+          let liveLink: { id: string; url: string; active: boolean | null } | null = null;
+          let paymentLinkBlocked: string | null = null;
+          if (stripe) {
+            try {
+              const link = await stripe.resolveHackathonPaymentLink();
+              liveLink = { id: link.id, url: link.url, active: link.active ?? null };
+            } catch (error) {
+              paymentLinkBlocked = error instanceof Error ? error.message : String(error);
+            }
+          } else {
+            paymentLinkBlocked = paymentLinkCap.remediation ?? `payments.payment_link is ${paymentLinkCap.state}`;
+          }
           return {
-            stripeCheckout: Boolean(stripe),
-            hackathonPaymentLink: stripe?.hackathonPaymentLinkUrl() ?? null,
-            linqAgentPay: s.deps.capabilities.resolveCapability('payments.imessage_checkout').usable,
-            note: 'Physical goods settle on Stripe. Dodo/Whop refuse physical goods. The hackathon Payment Link must stay the submitted URL.',
+            stripeCheckout: stripeCheckout.usable,
+            hackathonPaymentLink: stripe?.hackathonPaymentLinkUrl() ?? liveLink?.url ?? null,
+            hackathonPaymentLinkLive: liveLink,
+            hackathonPaymentLinkBlocked: paymentLinkBlocked,
+            linqAgentPay: linqPay.usable,
+            linqAgentPayState: linqPay.state,
+            linqAgentPayRemediation: linqPay.remediation ?? null,
+            linqLinkExperience: linqLink.usable,
+            linqLinkExperienceState: linqLink.state,
+            note:
+              'Physical goods settle on Stripe. Dodo/Whop refuse physical goods. ' +
+              'The hackathon Payment Link must stay the submitted URL. ' +
+              'Linq Agent Pay (2011: no connected Stripe) is not a Payment Link send; use linq.send_link for that.',
           };
         },
       },
@@ -1350,16 +1415,47 @@ function brandSiteTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
           currency: z.string().length(3),
           description: Text,
         }),
-        execute: async (input, ctx) =>
-          s.collect.collect({
-            companyId: ctx.companyId,
-            orderId: input.orderId,
-            toHandle: input.toHandle,
-            amountMinor: input.amountMinor,
-            currency: input.currency,
-            description: input.description,
-            idempotencyKey: `collect:${input.orderId}:${ctx.runId}`,
-          }),
+        execute: async (input, ctx) => {
+          const stripe =
+            optCap<StripeAdapter>(s.deps, 'payments.payment_link') ??
+            optCap<StripeAdapter>(s.deps, 'payments.checkout.physical');
+          const stripeUrl = stripe?.hackathonPaymentLinkUrl() ?? null;
+          const idempotencyKey = `collect:${input.orderId}:${ctx.runId}`;
+
+          try {
+            const collected = await s.collect.collect({
+              companyId: ctx.companyId,
+              orderId: input.orderId,
+              toHandle: input.toHandle,
+              amountMinor: input.amountMinor,
+              currency: input.currency,
+              description: input.description,
+              idempotencyKey,
+            });
+            if (collected.ok) return collected;
+            return sendStripeLinkViaLinq(s, {
+              toHandle: input.toHandle,
+              stripeUrl,
+              description: input.description,
+              idempotencyKey: `${idempotencyKey}:link`,
+              agentPayBlocked: collected.blockedOn ?? {
+                capability: 'payments.imessage_checkout',
+                reason: 'Linq Agent Pay did not succeed',
+              },
+            });
+          } catch (error) {
+            return sendStripeLinkViaLinq(s, {
+              toHandle: input.toHandle,
+              stripeUrl,
+              description: input.description,
+              idempotencyKey: `${idempotencyKey}:link`,
+              agentPayBlocked: {
+                capability: 'payments.imessage_checkout',
+                reason: error instanceof Error ? error.message : String(error),
+              },
+            });
+          }
+        },
       },
       s,
     ),
@@ -1875,12 +1971,18 @@ function growthSupportTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
     tool(
       {
         name: 'compliance.scan_pii',
-        description: 'Scan text with Pioneer GLiNER2-PII. Missing Pioneer key returns blocked.',
+        description: 'Scan text with Pioneer GLiNER2-PII. Missing Pioneer key or inference billing returns blockedOn.',
         authority: 'legal.publish_policy',
         capability: 'compliance.pii_scan',
         consequential: true,
         input: z.object({ text: Text }),
-        execute: async (input) => s.compliance.scanPii(input.text),
+        execute: async (input) => {
+          try {
+            return await s.compliance.scanPii(input.text);
+          } catch (error) {
+            return blockedFrom('compliance.pii_scan', error);
+          }
+        },
       },
       s,
     ),
@@ -1892,7 +1994,13 @@ function growthSupportTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
         capability: 'compliance.prompt_guard',
         consequential: true,
         input: z.object({ text: Text }),
-        execute: async (input) => s.compliance.guardPrompt(input.text),
+        execute: async (input) => {
+          try {
+            return await s.compliance.guardPrompt(input.text);
+          } catch (error) {
+            return blockedFrom('compliance.prompt_guard', error);
+          }
+        },
       },
       s,
     ),
@@ -2024,7 +2132,13 @@ function platformTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
         authority: 'infrastructure.provision',
         consequential: true,
         input: z.object({ text: Text }),
-        execute: async (input) => s.compliance.scanPii(input.text),
+        execute: async (input) => {
+          try {
+            return await s.compliance.scanPii(input.text);
+          } catch (error) {
+            return blockedFrom('compliance.pii_scan', error);
+          }
+        },
       },
       s,
     ),
@@ -2362,3 +2476,227 @@ function platformTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
     ),
   ];
 }
+
+function prizeTrackTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
+  return [
+    tool(
+      {
+        name: 'linq.send_link',
+        description:
+          'Send the submitted Stripe Payment Link via Linq-hosted `link` experience. Not Agent Pay; a Stripe URL is invalid as agentpay checkout_url.',
+        authority: 'payments.configure',
+        capability: 'messaging.imessage_app',
+        consequential: true,
+        input: z.object({
+          toHandle: Text,
+          title: z.string().default('Pay Zero Human Co'),
+          description: Text,
+        }),
+        execute: async (input, ctx) => {
+          const stripe =
+            optCap<StripeAdapter>(s.deps, 'payments.payment_link') ??
+            optCap<StripeAdapter>(s.deps, 'payments.checkout.physical');
+          const stripeUrl = stripe?.hackathonPaymentLinkUrl() ?? null;
+          return sendStripeLinkViaLinq(s, {
+            toHandle: input.toHandle,
+            stripeUrl,
+            description: input.description,
+            title: input.title,
+            idempotencyKey: `linq-link:${ctx.companyId}:${ctx.runId}`,
+            agentPayBlocked: {
+              capability: 'payments.imessage_checkout',
+              reason: 'linq.send_link does not use Agent Pay',
+            },
+          });
+        },
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'linq.list_experiences',
+        description: 'List Linq-hosted iMessage experiences (agentpay, agentcard, link). Empty/blocked is not a fake catalog.',
+        authority: 'messaging.send_customer',
+        capability: 'messaging.imessage_app',
+        consequential: false,
+        input: Empty,
+        execute: async () => {
+          const linq =
+            optCap<LinqAdapter>(s.deps, 'messaging.imessage_app') ??
+            optCap<LinqAdapter>(s.deps, 'messaging.imessage');
+          if (!linq) {
+            const status = s.deps.capabilities.resolveCapability('messaging.imessage_app');
+            return blocked('messaging.imessage_app', status.remediation ?? `messaging.imessage_app is ${status.state}`);
+          }
+          try {
+            return await linq.listExperiences();
+          } catch (error) {
+            return blockedFrom('messaging.imessage_app', error);
+          }
+        },
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'stripe.get_hackathon_payment_link',
+        description: 'Retrieve the submitted organizer Payment Link. Never mints a second URL.',
+        authority: 'payments.configure',
+        capability: 'payments.payment_link',
+        consequential: false,
+        input: Empty,
+        execute: async () => {
+          const stripe =
+            optCap<StripeAdapter>(s.deps, 'payments.payment_link') ??
+            optCap<StripeAdapter>(s.deps, 'payments.checkout.physical');
+          if (!stripe) {
+            const status = s.deps.capabilities.resolveCapability('payments.payment_link');
+            return blocked('payments.payment_link', status.remediation ?? `payments.payment_link is ${status.state}`);
+          }
+          try {
+            const link = await stripe.resolveHackathonPaymentLink();
+            return { ok: true, id: link.id, url: link.url, active: link.active ?? null };
+          } catch (error) {
+            return blockedFrom('payments.payment_link', error);
+          }
+        },
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'band.ensure_room',
+        description: 'Create or reuse the company BAND coordination room. Missing Band is blockedOn.',
+        authority: 'research.collect',
+        capability: 'coordination.agent_mesh',
+        consequential: true,
+        input: Empty,
+        execute: async (_i, ctx) => {
+          const band = optCap<BandAdapter>(s.deps, 'coordination.agent_mesh');
+          if (!band) {
+            const status = s.deps.capabilities.resolveCapability('coordination.agent_mesh');
+            return blocked('coordination.agent_mesh', status.remediation ?? `coordination.agent_mesh is ${status.state}`);
+          }
+          const company = await s.deps.repos.companies.byId(ctx.companyId);
+          const config = companyConfig(company);
+          if (config.integrations?.bandChatId) {
+            return { ok: true, created: false, chatId: config.integrations.bandChatId };
+          }
+          try {
+            const chat = await band.createChat({
+              name: `${company.name} coordination`,
+              taskId: ctx.companyId,
+            });
+            await s.deps.repos.companies.updateConfig(ctx.companyId, {
+              ...config,
+              integrations: { ...config.integrations, bandChatId: chat.id },
+            });
+            return { ok: true, created: true, chatId: chat.id };
+          } catch (error) {
+            return blockedFrom('coordination.agent_mesh', error);
+          }
+        },
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'terac.list_projects',
+        description: 'List Terac projects. Does not invent a study or mark an unfunded draft as launched.',
+        authority: 'expert.engage_paid',
+        capability: 'expert.structured_review',
+        consequential: false,
+        input: Empty,
+        execute: async () => {
+          const terac = optCap<TeracAdapter>(s.deps, 'expert.structured_review');
+          if (!terac) {
+            const status = s.deps.capabilities.resolveCapability('expert.structured_review');
+            return blocked('expert.structured_review', status.remediation ?? `expert.structured_review is ${status.state}`);
+          }
+          try {
+            const page = await terac.listProjects({ limit: 20 });
+            return {
+              ok: true,
+              projects: page.data.map((project) => ({ id: project.id, name: project.name ?? null })),
+            };
+          } catch (error) {
+            return blockedFrom('expert.structured_review', error);
+          }
+        },
+      },
+      s,
+    ),
+  ];
+}
+
+async function sendStripeLinkViaLinq(
+  s: CompanyToolHost,
+  input: {
+    readonly toHandle: string;
+    readonly stripeUrl: string | null;
+    readonly description: string;
+    readonly title?: string;
+    readonly idempotencyKey: string;
+    readonly agentPayBlocked: { capability: Capability; reason: string };
+  },
+): Promise<unknown> {
+  if (!input.stripeUrl) {
+    const status = s.deps.capabilities.resolveCapability('payments.payment_link');
+    return {
+      ok: false,
+      blockedOn: input.agentPayBlocked,
+      stripeBlockedOn: {
+        capability: 'payments.payment_link' as const,
+        reason: status.remediation ?? `payments.payment_link is ${status.state}`,
+      },
+    };
+  }
+  const linq =
+    optCap<LinqAdapter>(s.deps, 'messaging.imessage_app') ??
+    optCap<LinqAdapter>(s.deps, 'messaging.imessage');
+  if (!linq) {
+    const status = s.deps.capabilities.resolveCapability('messaging.imessage_app');
+    return {
+      ok: false,
+      agentPay: false,
+      stripePaymentLinkUrl: input.stripeUrl,
+      blockedOn: {
+        capability: 'messaging.imessage_app' as const,
+        reason: status.remediation ?? `messaging.imessage_app is ${status.state}`,
+      },
+      agentPayBlocked: input.agentPayBlocked,
+      note: 'Share the submitted Stripe Payment Link out of band. Agent Pay did not succeed; Linq link experience is not usable.',
+    };
+  }
+  try {
+    const sent = await linq.sendLink({
+      to: input.toHandle,
+      url: input.stripeUrl,
+      title: input.title ?? 'Pay Zero Human Co',
+      subtitle: input.description,
+      button: 'Pay',
+      idempotencyKey: input.idempotencyKey,
+    });
+    return {
+      ok: true,
+      agentPay: false,
+      linqLinkExperience: true,
+      stripePaymentLinkUrl: input.stripeUrl,
+      linqMessageIds: sent.messageIds,
+      agentPayBlocked: input.agentPayBlocked,
+      note: 'Agent Pay was not used. Sent the submitted Stripe Payment Link via Linq link experience.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      agentPay: false,
+      stripePaymentLinkUrl: input.stripeUrl,
+      blockedOn: {
+        capability: 'messaging.imessage_app' as const,
+        reason: error instanceof Error ? error.message : String(error),
+      },
+      agentPayBlocked: input.agentPayBlocked,
+    };
+  }
+}
+

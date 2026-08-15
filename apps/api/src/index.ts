@@ -16,7 +16,7 @@ import sensible from '@fastify/sensible';
 import rateLimit from '@fastify/rate-limit';
 import { describeError, isFoundryError } from '@foundry/core';
 import { getLogger, metrics, withContext } from '@foundry/obs';
-import { buildContext, wireRuntime, type AppContext } from '@foundry/runtime';
+import { buildContext, bootstrapOperatingCompany, wireRuntime, type AppContext } from '@foundry/runtime';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 import { registerReadinessRoutes } from './routes/readiness.js';
 import { registerGovernanceRoutes } from './routes/governance.js';
@@ -33,7 +33,20 @@ async function main(): Promise<void> {
     installSchedules: false,
   });
   const services = wireRuntime(ctx);
+  const boot = await bootstrapOperatingCompany(ctx);
   const log = getLogger();
+  log.info(
+    {
+      companyId: boot.companyId,
+      created: boot.created,
+      cycleId: boot.cycleId,
+      actorsSeeded: boot.actorsSeeded,
+      loopJobId: boot.loopJobId,
+      bandChatId: boot.bandRoom.chatId,
+      bandBlocked: boot.bandRoom.blockedOn,
+    },
+    'operating company ready',
+  );
 
   const app = Fastify({
     logger: false, // pino is configured centrally in @foundry/obs

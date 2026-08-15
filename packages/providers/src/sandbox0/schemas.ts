@@ -18,6 +18,7 @@ export const Sandbox0Sandbox = z
   .object({
     id: z.string(),
     status: z.string().optional(),
+    paused: z.boolean().optional(),
     ttl: z.number().optional(),
     metadata: UnknownRecord.optional(),
     sandbox_id: z.string().optional(),
@@ -129,6 +130,31 @@ export const Sandbox0Refresh = z
   .passthrough();
 export type Sandbox0Refresh = z.infer<typeof Sandbox0Refresh>;
 export const Sandbox0RefreshEnvelope = z.object({ data: Sandbox0Refresh }).passthrough();
+
+/**
+ * `POST /api/v1/sandboxes/{id}/pause` live 200 (2026-08-15): `paused: false`
+ * and `status: running`. HTTP 200 is not `paused: true`.
+ */
+export const Sandbox0Pause = z
+  .object({
+    sandbox_id: z.string().optional(),
+    paused: z.boolean().optional(),
+    status: z.string().optional(),
+  })
+  .passthrough();
+export type Sandbox0Pause = z.infer<typeof Sandbox0Pause>;
+export const Sandbox0PauseEnvelope = z.object({ data: Sandbox0Pause }).passthrough();
+
+/** `POST /api/v1/sandboxes/{id}/resume` live 200 (2026-08-15). */
+export const Sandbox0Resume = z
+  .object({
+    sandbox_id: z.string().optional(),
+    resumed: z.boolean().optional(),
+    status: z.string().optional(),
+  })
+  .passthrough();
+export type Sandbox0Resume = z.infer<typeof Sandbox0Resume>;
+export const Sandbox0ResumeEnvelope = z.object({ data: Sandbox0Resume }).passthrough();
 
 export const Sandbox0WebhookEvent = z.unknown();
 export type Sandbox0WebhookEvent = z.infer<typeof Sandbox0WebhookEvent>;

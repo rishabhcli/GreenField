@@ -58,14 +58,26 @@ describe('BAND handoff primitives', () => {
 
 const live = process.env['LIVE_PROBES'] === '1' && Boolean(process.env['BAND_AGENT_API_KEY']);
 
+function liveBand(): BandAdapter {
+  return new BandAdapter({
+    secrets: new SecretStore(),
+    environment: 'production',
+    publicBaseUrl: 'https://example.test',
+  });
+}
+
 describe.skipIf(!live)('BAND live foundry-dispatch', () => {
   it('GET /agent/me is the live foundry-dispatch agent', async () => {
-    const band = new BandAdapter({
-      secrets: new SecretStore(),
-      environment: 'production',
-      publicBaseUrl: 'https://example.test',
-    });
-    const me = await band.getMe();
+    const me = await liveBand().getMe();
     expect(me.handle ?? me.id).toMatch(/foundry-dispatch/i);
+  });
+
+  it('createChat accepts the dispatcher company payload and returns a room id', async () => {
+    const chat = await liveBand().createChat({
+      name: 'Zero Human Co coordination',
+      taskId: 'co_01M03F7RQW2M6540BY2GZHCFBW',
+    });
+    expect(chat.id.length).toBeGreaterThan(0);
+    process.stdout.write(`BAND chat id: ${chat.id}\n`);
   });
 });

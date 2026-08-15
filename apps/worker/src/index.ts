@@ -19,7 +19,7 @@
 import { describeError } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
 import { QUEUE_NAMES, WorkerSet, type HandlerMap, type QueueName } from '@foundry/queue';
-import { buildContext, wireRuntime } from '@foundry/runtime';
+import { buildContext, bootstrapOperatingCompany, wireRuntime } from '@foundry/runtime';
 import { buildHandlers, unhandledQueues } from './handlers.js';
 
 /** Kept in sync with `packages/db/src/migrations`; the schema health check reads it. */
@@ -38,9 +38,18 @@ async function main(): Promise<void> {
     // instance re-registers them and the cron fires N times.
     installSchedules: role === 'agents',
   });
-  const log = getLogger();
-
   const services = wireRuntime(ctx);
+  const boot = await bootstrapOperatingCompany(ctx);
+  const log = getLogger();
+  log.info(
+    {
+      companyId: boot.companyId,
+      created: boot.created,
+      cycleId: boot.cycleId,
+      bandChatId: boot.bandRoom.chatId,
+    },
+    'operating company ready',
+  );
   const all = buildHandlers(ctx, services);
   const handlers = filterByRole(all, role);
 

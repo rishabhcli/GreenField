@@ -15,7 +15,9 @@ import { describe, expect, it } from 'vitest';
 import { evaluateReleaseGate } from '@foundry/core';
 import {
   flowFromBug,
+  isExplorationFinished,
   isProjectIdle,
+  isProjectWorkIdle,
   isTerminalExplorationStatus,
   severityFromBug,
   toQaRunAndDefects,
@@ -82,6 +84,8 @@ describe('isTerminalExplorationStatus', () => {
   it('treats in-progress words as non-terminal', () => {
     expect(isTerminalExplorationStatus('queued')).toBe(false);
     expect(isTerminalExplorationStatus('running')).toBe(false);
+    expect(isTerminalExplorationStatus('in-progress')).toBe(false);
+    expect(isTerminalExplorationStatus('in_progress')).toBe(false);
   });
 });
 
@@ -175,9 +179,20 @@ describe('toQaRunAndDefects', () => {
     expect(run.unavailableReason).toBeNull();
   });
 
-  it('maps a still-running exploration status to the running QaRunStatus', () => {
-    const { run } = toQaRunAndDefects(project(), exploration({ status: 'in_progress' }), []);
+  it('maps a live in-progress exploration to running, never completed', () => {
+    const { run } = toQaRunAndDefects(project(), exploration({ status: 'in-progress', finished_at: null }), []);
     expect(run.status).toBe('running');
+    expect(run.status).not.toBe('completed');
+  });
+
+  it('uses completed_at from the live exploration payload as finishedAt', () => {
+    const { run } = toQaRunAndDefects(
+      project(),
+      exploration({ status: 'completed', finished_at: null, completed_at: '2026-08-15T12:30:00.000Z' }),
+      [],
+    );
+    expect(run.status).toBe('completed');
+    expect(run.finishedAt).toBe('2026-08-15T12:30:00.000Z');
   });
 
   it('tallies defectCounts by the same severities reported per-defect', () => {
@@ -280,6 +295,53 @@ describe('isProjectIdle', () => {
     expect(isProjectIdle(ReplayProjectTiming.parse({ finished_at: null, started_at: '2026-08-15T11:00:00.000Z' }))).toBe(
       false,
     );
+  });
+
+  it('treats live completed_at as finished even when finished_at is null', () => {
+    expect(
+      isExplorationFinished({ status: 'in-progress', finished_at: null, completed_at: '2026-08-15T12:30:00.000Z' }),
+    ).toBe(true);
+    expect(isExplorationFinished({ status: 'in-progress', finished_at: null, completed_at: null })).toBe(false);
+  });
+
+  it('does not treat a 90s poll timeout as idle or as a pass', () => {
+    const { run } = toQaRunFromProject(
+      project(),
+      ReplayProjectTiming.parse({
+        started_at: '2026-08-15T11:00:00.000Z',
+        first_event_at: '2026-08-15T11:00:12.000Z',
+        finished_at: null,
+      }),
+      [],
+      [],
+      exploration({ status: 'in-progress', finished_at: null }),
+    );
+    expect(run.status).toBe('running');
+    expect(run.status).not.toBe('completed');
+  });
+});
+
+describe('isProjectWorkIdle', () => {
+  it('is not idle while explorations or test runs are in-progress', () => {
+    expect(
+      isProjectWorkIdle(
+        { explorations: { 'in-progress': 1 }, test_runs: { 'in-progress': 6, incomplete: 1 } },
+        { started_at: '2026-08-15T19:00:00.000Z', first_event_at: '2026-08-15T19:00:12.000Z', finished_at: null },
+      ),
+    ).toBe(false);
+  });
+
+  it('treats a terminal incomplete count as not in-flight', () => {
+    expect(
+      isProjectWorkIdle(
+        { explorations: { completed: 1 }, test_runs: { incomplete: 1, 'infra-failed': 4 } },
+        { started_at: '2026-08-15T19:00:00.000Z', first_event_at: '2026-08-15T19:00:12.000Z', finished_at: null },
+      ),
+    ).toBe(true);
+  });
+
+  it('is not idle at t=0 with empty counts and no start', () => {
+    expect(isProjectWorkIdle({ explorations: {}, test_runs: {} }, { started_at: null, finished_at: null })).toBe(false);
   });
 });
 

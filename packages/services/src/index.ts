@@ -46,6 +46,8 @@ export * from './legal/documents.js';
 
 export * from './org/seed.js';
 export * from './org/default-config.js';
+export * from './org/ensure.js';
+export * from './org/prize-tracks.js';
 
 export * from './tools/host.js';
 export * from './tools/catalog.js';

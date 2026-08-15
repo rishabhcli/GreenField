@@ -102,6 +102,11 @@ export class LovableMcpClient {
     return (result as Record<string, unknown> | undefined) ?? {};
   }
 
+  async listTools(): Promise<unknown> {
+    if (!this.#initialized) await this.initialize();
+    return this.#rpc('tools/list', {});
+  }
+
   async callTool(name: string, args: Record<string, unknown> = {}): Promise<McpToolCallResult> {
     if (!this.#initialized) await this.initialize();
     const result = await this.#rpc('tools/call', { name, arguments: args });

@@ -11,7 +11,13 @@
  * this adapter would be a false compliance claim.
  */
 
-import { ConflictError, ValidationError, assertPaymentRoute } from '@foundry/core';
+import {
+  ConflictError,
+  ProviderAuthError,
+  ValidationError,
+  assertPaymentRoute,
+  toFoundryError,
+} from '@foundry/core';
 import { ProviderAdapter, type AdapterContext, type ProbeResult } from '../http/adapter.js';
 import { bearerAuth, type ProviderHttpClient } from '../http/client.js';
 import { verifyStandardWebhook, type VerificationInput, type VerificationResult } from '../http/webhook-verify.js';
@@ -56,20 +62,38 @@ export class DodoAdapter extends ProviderAdapter {
   }
 
   override async probe(): Promise<ProbeResult> {
-    const response = await this.#http().request(
-      { method: 'GET', path: '/products', query: { page_size: 1, page_number: 0 }, operation: 'products.list' },
-      DodoProductList,
-    );
-    return {
-      succeeded: true,
-      detail: `GET /products succeeded (${this.ctx.environment === 'production' ? 'live' : 'test'} host)`,
-      evidence: {
-        endpoint: 'GET /products',
-        host: this.baseUrl(),
-        itemCount: response.body.items?.length ?? 0,
-        status: response.status,
-      },
-    };
+    try {
+      const response = await this.#http().request(
+        { method: 'GET', path: '/products', query: { page_size: 1, page_number: 0 }, operation: 'products.list' },
+        DodoProductList,
+      );
+      return {
+        succeeded: true,
+        detail: `GET /products succeeded (${this.ctx.environment === 'production' ? 'live' : 'test'} host)`,
+        evidence: {
+          endpoint: 'GET /products',
+          host: this.baseUrl(),
+          itemCount: response.body.items?.length ?? 0,
+          status: response.status,
+        },
+      };
+    } catch (error) {
+      const foundry = toFoundryError(error);
+      if (!(foundry instanceof ProviderAuthError)) throw error;
+      const status = foundry.context['status'];
+      const body = foundry.context['body'];
+      const bodyText = typeof body === 'string' ? body : JSON.stringify(body);
+      return {
+        succeeded: false,
+        detail: `GET /products HTTP ${String(status ?? 401)} body=${bodyText}`,
+        evidence: {
+          endpoint: 'GET /products',
+          host: this.baseUrl(),
+          status: status ?? 401,
+          body,
+        },
+      };
+    }
   }
 
   async createCheckout(input: DodoCheckoutInput): Promise<DodoCheckoutResult> {

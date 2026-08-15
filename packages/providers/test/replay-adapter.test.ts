@@ -82,10 +82,94 @@ describe('ReplayAdapter waitForProjectIdle', () => {
           match: (url, method) => method === 'GET' && url.includes('/timing'),
           response: () => json({ started_at: '2026-08-15T11:01:00.000Z', finished_at: null }),
         },
+        {
+          match: (url, method) => method === 'GET' && url.includes('/explorations'),
+          response: () =>
+            json({
+              items: [{ id: 'expl_1', status: 'in-progress', finished_at: null, completed_at: null }],
+            }),
+        },
       ]),
     });
 
     await expect(adapter.waitForProjectIdle('proj_1', { timeoutMs: 20, pollIntervalMs: 5 })).rejects.toBeInstanceOf(
+      TimeoutError,
+    );
+  });
+
+  it('returns when listed explorations have completed_at even if timing.finished_at lags', async () => {
+    const adapter = new ReplayAdapter(ctx({ REPLAY_API_KEY: KEY }), {
+      fetchImpl: router([
+        {
+          match: (url) => url.includes('openapi.json'),
+          response: () => json({ servers: [{ url: 'https://loop-qa.replay.io/api/v1' }] }),
+        },
+        {
+          match: (url, method) => method === 'GET' && url.includes('/timing'),
+          response: () => json({ started_at: '2026-08-15T11:01:00.000Z', finished_at: null }),
+        },
+        {
+          match: (url, method) => method === 'GET' && url.includes('/explorations'),
+          response: () =>
+            json({
+              items: [
+                {
+                  id: 'expl_1',
+                  status: 'completed',
+                  finished_at: null,
+                  completed_at: '2026-08-15T11:20:00.000Z',
+                },
+              ],
+            }),
+        },
+        {
+          match: (url, method) => method === 'GET' && url.includes('/status'),
+          response: () => json({ explorations: { completed: 1 }, test_runs: { passed: 4, 'infra-failed': 1 } }),
+        },
+      ]),
+    });
+
+    const timing = await adapter.waitForProjectIdle('proj_1', { timeoutMs: 5_000, pollIntervalMs: 10 });
+    expect(timing.finished_at).toBe('2026-08-15T11:20:00.000Z');
+  });
+
+  it('does not treat exploration completed_at as idle while test runs are in-progress', async () => {
+    const adapter = new ReplayAdapter(ctx({ REPLAY_API_KEY: KEY }), {
+      fetchImpl: router([
+        {
+          match: (url) => url.includes('openapi.json'),
+          response: () => json({ servers: [{ url: 'https://loop-qa.replay.io/api/v1' }] }),
+        },
+        {
+          match: (url, method) => method === 'GET' && url.includes('/timing'),
+          response: () => json({ started_at: '2026-08-15T11:01:00.000Z', finished_at: null }),
+        },
+        {
+          match: (url, method) => method === 'GET' && url.includes('/explorations'),
+          response: () =>
+            json({
+              items: [
+                {
+                  id: 'expl_1',
+                  status: 'completed',
+                  finished_at: null,
+                  completed_at: '2026-08-15T11:20:00.000Z',
+                },
+              ],
+            }),
+        },
+        {
+          match: (url, method) => method === 'GET' && url.includes('/status'),
+          response: () =>
+            json({
+              explorations: { completed: 1 },
+              test_runs: { 'in-progress': 5, incomplete: 1, 'infra-failed': 4 },
+            }),
+        },
+      ]),
+    });
+
+    await expect(adapter.waitForProjectIdle('proj_1', { timeoutMs: 40, pollIntervalMs: 10 })).rejects.toBeInstanceOf(
       TimeoutError,
     );
   });

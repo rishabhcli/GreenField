@@ -19,10 +19,10 @@
  *     reassignable so a first-live-probe correction is one line.
  *
  * Pause checkpoints the encrypted root filesystem but does **not** preserve
- * running processes, memory, sockets, or PIDs. Superserve pause does. Workload
- * routing must not treat a resumed Sandbox0 sandbox as still running the
- * process that was alive at pause — REPL sessions, open sockets, and PIDs
- * are gone; files on the writable rootfs are not.
+ * running processes, memory, sockets, or PIDs. Superserve pause does. Live
+ * `POST …/pause` on 2026-08-15 returned HTTP 200 with `paused: false` /
+ * `status: running` — 200 is not proof the sandbox is paused. Workload routing
+ * must not treat Sandbox0 as a Superserve-equivalent persistent VM.
  *
  * Auth: OpenAPI `components.securitySchemes.bearerAuth` is HTTP Bearer.
  * Research §11 recorded the header as UNVERIFIED because the public docs
@@ -32,13 +32,15 @@
  * source curl examples also send `X-Team-ID`; the token is team-scoped and we
  * have no such secret, so that header is not sent.
  *
- * No idempotency header. Claims are keyed on `metadata.agent_run_id` so a
- * retried job reattaches. OpenAPI's `ClaimRequest` / `Sandbox` do not list
- * `metadata` — sending and matching it is a recorded assumption.
+ * No idempotency header. The adapter still sends `metadata.agent_run_id` on
+ * claim. Live claim+GET/LIST on 2026-08-15 dropped that metadata — it was not
+ * on the claim response, GET, or LIST — so reattach-by-metadata is not proven
+ * and must not be treated as working idempotency.
  *
  * Verified against sandbox0.ai/docs and `docs/research/SPONSOR_API_RESEARCH.md`
- * §11 on 2026-08-15. Missing `SANDBOX0_TOKEN` raises `CredentialsMissingError`;
- * that is the correct output, not a reason to stub a claim.
+ * §11 on 2026-08-15. Public paths are `/api/v1/…` (`GET /v1/sandboxes` 404).
+ * Missing `SANDBOX0_TOKEN` raises `CredentialsMissingError`; that is the
+ * correct output, not a reason to stub a claim.
  */
 
 import {
@@ -65,8 +67,10 @@ import {
   Sandbox0FileContentEnvelope,
   Sandbox0FileListEnvelope,
   Sandbox0NetworkPolicyEnvelope,
+  Sandbox0PauseEnvelope,
   Sandbox0PreviewEnvelope,
   Sandbox0RefreshEnvelope,
+  Sandbox0ResumeEnvelope,
   Sandbox0SandboxEnvelope,
   Sandbox0SandboxListEnvelope,
   Sandbox0WebhookEvent,
@@ -78,13 +82,21 @@ import {
   type Sandbox0ExecResult,
   type Sandbox0FileInfo,
   type Sandbox0NetworkPolicy,
+  type Sandbox0Pause,
   type Sandbox0Preview,
   type Sandbox0Refresh,
+  type Sandbox0Resume,
   type Sandbox0Sandbox,
   type Sandbox0SandboxSummary,
 } from './schemas.js';
 
 export type { AdapterContext };
+
+/** Live 2026-08-15: pause does not keep processes. Superserve pause does. */
+export const SANDBOX0_PAUSE_PRESERVES_PROCESSES = false;
+
+/** Live 2026-08-15: claim-body `metadata` was not returned on claim/GET/LIST. */
+export const SANDBOX0_CLAIM_METADATA_PERSISTED = false;
 
 /* -------------------------------------------------------------------------- */
 /* UNVERIFIED paths — reassignable like Terac's `feasibilityRequestPath`         */
@@ -316,8 +328,8 @@ export interface ClaimOrCreateSandboxInput {
   readonly ttlSeconds?: number;
   readonly hardTtlSeconds?: number;
   /**
-   * Must include `agent_run_id`. Sent as claim-body `metadata` so a retried
-   * job can reattach. See the class comment: this field is not in OpenAPI.
+   * Must include `agent_run_id` and is still sent on claim. Live 2026-08-15
+   * dropped it on claim/GET/LIST, so reattach-by-metadata is not proven.
    */
   readonly metadata: { readonly agent_run_id: string } & Record<string, unknown>;
   readonly network?: Sandbox0NetworkPolicy;
@@ -402,10 +414,10 @@ export class Sandbox0Adapter extends ProviderAdapter {
   /* ---------------------------------------------------------------------- */
 
   /**
-   * Find-or-claim keyed on `metadata.agent_run_id`. There is no idempotency
-   * header; this is what makes a retried job reattach instead of paying for a
-   * second sandbox. POST claim is not retried (`retryable: false`) for the
-   * same reason.
+   * Claim a sandbox. There is no idempotency header. The body still includes
+   * `metadata.agent_run_id` and we look for a matching listed sandbox, but live
+   * 2026-08-15 dropped that metadata on claim/GET/LIST — reattach is not proven.
+   * POST claim is not retried (`retryable: false`).
    */
   async claimOrCreateSandbox(input: ClaimOrCreateSandboxInput): Promise<Sandbox0Claim | Sandbox0Sandbox | Sandbox0SandboxSummary> {
     this.assertActivated();
@@ -433,6 +445,10 @@ export class Sandbox0Adapter extends ProviderAdapter {
     return this.#claimSandbox(input, agentRunId);
   }
 
+  /**
+   * Best-effort reattach. Live 2026-08-15 dropped claim `metadata`, so listed
+   * rows typically have no `agent_run_id` and this returns undefined.
+   */
   async findSandboxByAgentRunId(agentRunId: string): Promise<Sandbox0SandboxSummary | undefined> {
     const all = await this.listSandboxes();
     return all.find((sandbox) => {
@@ -478,7 +494,7 @@ export class Sandbox0Adapter extends ProviderAdapter {
       template: input.template,
       ...(input.snapshotId ? { snapshot_id: input.snapshotId } : {}),
       ...(Object.keys(config).length > 0 ? { config } : {}),
-      // UNVERIFIED field — see class comment. Not listed on ClaimRequest.
+      // Sent, not proven stored. Live 2026-08-15 dropped this field.
       metadata: { ...input.metadata, agent_run_id: agentRunId },
     };
     const response = await this.#client().request(
@@ -515,9 +531,7 @@ export class Sandbox0Adapter extends ProviderAdapter {
   async deleteSandbox(sandboxId: string): Promise<void> {
     this.assertActivated();
     await this.#client().raw({ method: 'DELETE', path: sandboxPath(sandboxId), operation: 'deleteSandbox' });
-    for (const key of [...this.#replContexts.keys()]) {
-      if (key.startsWith(`${sandboxId}:`)) this.#replContexts.delete(key);
-    }
+    this.#forgetReplContexts(sandboxId);
     getLogger().info({ sandboxId }, 'sandbox0 sandbox deleted');
   }
 
@@ -533,6 +547,76 @@ export class Sandbox0Adapter extends ProviderAdapter {
       Sandbox0RefreshEnvelope,
     );
     return response.body.data;
+  }
+
+  /**
+   * `POST /api/v1/sandboxes/{id}/pause`.
+   *
+   * Live 2026-08-15: HTTP 200 with `paused: false` / `status: running`. This
+   * returns that body as-is and does not rewrite `paused` to true. Pause does
+   * not preserve processes, memory, sockets, or PIDs (unlike Superserve).
+   * When `paused` is actually true, cached REPL context ids are dropped
+   * because those processes are gone.
+   */
+  async pauseSandbox(sandboxId: string): Promise<Sandbox0Pause> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      {
+        method: 'POST',
+        path: `${sandboxPath(sandboxId)}/pause`,
+        retryable: false,
+        operation: 'pauseSandbox',
+      },
+      Sandbox0PauseEnvelope,
+    );
+    const paused = response.body.data;
+    if (paused.paused === true) this.#forgetReplContexts(sandboxId);
+    getLogger().info(
+      {
+        sandboxId,
+        paused: paused.paused,
+        status: paused.status,
+        httpStatus: response.status,
+        preservesProcesses: SANDBOX0_PAUSE_PRESERVES_PROCESSES,
+      },
+      'sandbox0 pause accepted; HTTP 200 does not mean paused:true and does not keep processes',
+    );
+    return paused;
+  }
+
+  /**
+   * `POST /api/v1/sandboxes/{id}/resume`. Live 200 on 2026-08-15.
+   * Resume does not restore processes that pause discarded — this is not
+   * Superserve's memory+PID snapshot.
+   */
+  async resumeSandbox(sandboxId: string): Promise<Sandbox0Resume> {
+    this.assertActivated();
+    const response = await this.#client().request(
+      {
+        method: 'POST',
+        path: `${sandboxPath(sandboxId)}/resume`,
+        retryable: false,
+        operation: 'resumeSandbox',
+      },
+      Sandbox0ResumeEnvelope,
+    );
+    getLogger().info(
+      {
+        sandboxId,
+        resumed: response.body.data.resumed,
+        status: response.body.data.status,
+        httpStatus: response.status,
+        preservesProcesses: SANDBOX0_PAUSE_PRESERVES_PROCESSES,
+      },
+      'sandbox0 resume accepted; processes from before pause are not restored',
+    );
+    return response.body.data;
+  }
+
+  #forgetReplContexts(sandboxId: string): void {
+    for (const key of [...this.#replContexts.keys()]) {
+      if (key.startsWith(`${sandboxId}:`)) this.#replContexts.delete(key);
+    }
   }
 
   /* ---------------------------------------------------------------------- */

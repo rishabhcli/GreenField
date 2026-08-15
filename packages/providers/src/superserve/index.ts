@@ -525,15 +525,17 @@ export class SuperserveAdapter extends ProviderAdapter {
   async execInSandbox(sandboxId: string, input: ExecInput): Promise<SuperserveExecResult> {
     this.assertActivated();
     const token = this.#currentAccessToken(sandboxId);
+    const timeoutSeconds = input.timeoutSeconds ?? 30;
     const response = await this.#dataPlaneClient().request(
       {
         method: 'POST',
         path: `${this.#dataPlaneHost(sandboxId)}/exec`,
         headers: { 'x-access-token': token.reveal() },
+        timeoutMs: timeoutSeconds * 1000 + 5_000,
         body: {
           command: input.command,
           ...(input.shell ? { shell: input.shell } : {}),
-          ...(input.timeoutSeconds !== undefined ? { timeout_s: input.timeoutSeconds } : {}),
+          timeout_s: timeoutSeconds,
         },
         operation: 'exec',
       },
