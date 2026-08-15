@@ -69,11 +69,11 @@ export class WhopCommerceService {
   async catalogueProduct(input: CatalogueWhopProductInput): Promise<ServiceOutcome<CatalogueWhopProductResult>> {
     refusePhysical(input.kind);
     const adapter = this.#adapter();
-    if (!adapter.ok) return adapter;
+    if (!adapter) return this.#notConfigured();
 
     let created: { id: string; planId?: string };
     try {
-      created = await adapter.data.createProduct({
+      created = await adapter.createProduct({
         kind: input.kind,
         title: input.name,
         description: input.description,
@@ -115,7 +115,7 @@ export class WhopCommerceService {
   async startCheckout(input: StartWhopCheckoutInput): Promise<ServiceOutcome<StartWhopCheckoutResult>> {
     refusePhysical(input.productKind);
     const adapter = this.#adapter();
-    if (!adapter.ok) return adapter;
+    if (!adapter) return this.#notConfigured();
 
     const order = await this.deps.repos.commerce.orders.byId(input.orderId);
     if (order.company_id !== input.companyId) {
@@ -130,7 +130,7 @@ export class WhopCommerceService {
 
     let checkout: { id: string; url: string | null };
     try {
-      checkout = await adapter.data.createCheckout({
+      checkout = await adapter.createCheckout({
         orderId: order.id,
         productKind: input.productKind,
         planId: input.planId,
@@ -161,18 +161,18 @@ export class WhopCommerceService {
     };
   }
 
-  #adapter(): (ServiceOutcome<WhopAdapter> & { data: WhopAdapter }) | ServiceOutcome<never> {
-    const adapter = this.deps.providers.adapter('whop') as WhopAdapter | undefined;
-    if (!adapter) {
-      return {
-        ok: false,
-        blockedOn: {
-          capability: 'commerce.membership',
-          reason: 'WHOP_API_KEY / WHOP_COMPANY_ID are not configured; Whop adapter is not registered',
-        },
-      };
-    }
-    return { ok: true, data: adapter };
+  #adapter(): WhopAdapter | undefined {
+    return this.deps.providers.adapter('whop') as WhopAdapter | undefined;
+  }
+
+  #notConfigured(): ServiceOutcome<never> {
+    return {
+      ok: false,
+      blockedOn: {
+        capability: 'commerce.membership' satisfies Capability,
+        reason: 'WHOP_API_KEY / WHOP_COMPANY_ID are not configured; Whop adapter is not registered',
+      },
+    };
   }
 
   #blocked(error: unknown): ServiceOutcome<never> {

@@ -108,6 +108,13 @@ export class SiteDeployService {
       };
     }
 
+    // Past the gate, a deployment id is guaranteed: a null id yields an
+    // empty-run gate that always blocks and returns above. This guard narrows
+    // the type for the promotion path and documents that invariant.
+    if (!gatedDeploymentId) {
+      return blocked('qa.release_gate', 'No gated deployment id is available to promote to production.');
+    }
+
     if (typeof adapter.getService === 'function') {
       const service = await adapter.getService(site.hosting_service_id);
       const previewed = service.serviceDetails?.url ?? null;

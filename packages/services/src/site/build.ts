@@ -49,7 +49,7 @@ export function siteBuildComplete(input: {
     return false;
   }
   const files = input.exportedFiles;
-  return Boolean(input.generatorProjectId) && Boolean(files) && Object.keys(files).length > 0;
+  return Boolean(input.generatorProjectId) && files != null && Object.keys(files).length > 0;
 }
 
 export class SiteBuildService {
