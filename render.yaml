@@ -328,6 +328,23 @@ services:
           property: connectionString
       - fromGroup: foundry-provider-secrets
 
+  # ---------------------------------------------------------------------------
+  # Static site — the public landing page (apps/site).
+  #
+  # Pure static assets (HTML/CSS/JS) with no build step and no dependencies,
+  # so it cannot conflict with the Node services above. It describes the
+  # platform; it is not the storefront the company loop generates.
+  # ---------------------------------------------------------------------------
+  - type: static
+    name: foundry-site
+    plan: free
+    region: oregon
+    rootDir: .
+    buildCommand: echo "static site - no build step"
+    publishPath: apps/site
+    autoDeployTrigger: commit
+    pullRequestPreviewsEnabled: false
+
 # -----------------------------------------------------------------------------
 # Environment groups.
 #
