@@ -51,13 +51,15 @@ These are unit/integration tests against code and a real Postgres — they do no
 | Policy engine | **DONE** | Unit tests over `evaluatePolicy`. |
 | Opportunity scoring + selection gates | **DONE** | Unit tests: grounded-vs-assumed split, hard gates. |
 | Landed cost + contribution margin | **DONE** | Unit tests: break-even CAC, negative-contribution detection. |
-| Database schema | **DONE** | Applied to hosted Postgres. Invariant-violation attempts rejected; see `docs/verification/DB_INVARIANTS.md`. |
+| Database schema | **DONE** | Applied to hosted Postgres. Invariant-violation attempts rejected; conventions are stated at the top of `packages/db/migrations/0001_foundation.sql`. |
 | Budget reservation under concurrency | **DONE** | Integration: 10 concurrent reservations against a 5-slot budget grant exactly 5. |
 | Idempotency ledger | **DONE** | Integration: concurrent claimants, replay, mismatched payload rejected. |
 | Audit hash chain | **DONE** | Integration: chain verifies; tamper detected. |
 | Webhook deduplication | **DONE** | Integration: redelivery recognised, signature headers redacted. |
 | Double-entry ledger | **DONE** | Integration: balanced sale written, unbalanced rejected. |
 | Agent run records | **DONE** | Integration: model from org-chart tier, unknown role refused. |
+| ID prefix registry + collision guard | **DONE** | 28 unit tests (`packages/core/test/ids.test.ts`): distinct prefix per kind (pins the `aud` collision regression — `auditEvent` keeps `aud`, `audienceSegment` moved), round-trip through `idKindOf`, Crockford-excluded letters rejected, monotonic ULID ordering, `findIdPrefixProblems` guard. |
+| Toolchain: clean build + lint | **DONE** | `pnpm clean && pnpm build` green from a clean state — a stale `.tsbuildinfo` previously produced a confident false failure (and can equally false-pass); `pnpm lint` (CommonJS flat config) exits 0 with 2 known dead-import warnings; `pnpm preflight` exit 0. |
 | Operator console (`apps/site/console.html`) | **PARTIAL** | 17 structural tests pass (`apps/site/test/console.test.ts`): every `$('id')` resolves, every API path it calls is registered by a route file, the phase rail matches `LOOP_PHASE_ORDER`, the token never reaches `localStorage`, and no reassurance is emitted for an unread value. Rendering was verified against a **local mock**, not a live API — see below. |
 
 ---

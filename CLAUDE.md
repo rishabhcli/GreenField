@@ -25,20 +25,19 @@ This is not a convention, it is load-bearing structure (`packages/core/src/capab
 pnpm build           # tsc -b tsconfig.build.json (composite project references)
 pnpm typecheck       # identical to build plus --pretty — it DOES emit, not a noEmit check
 pnpm clean           # tsc -b --clean && rm -rf packages/*/dist apps/*/dist
-pnpm test            # vitest run — currently 469 passed / 13 skipped
+pnpm test            # vitest run — currently 549 passed / 13 skipped
 pnpm test path/to/file.test.ts
 pnpm test:watch
 pnpm migrate         # node packages/db/dist/cli/migrate.js — requires a build first
 ```
 
-**Two root scripts are broken; don't trust them:**
+**One root script is broken; don't trust it:**
 
 | Script | Problem | Use instead |
 | --- | --- | --- |
-| `pnpm lint` | `eslint .` with **no `eslint.config.js` anywhere** — exits 2 | nothing; ESLint is unconfigured |
 | `pnpm verify` | points at `apps/verifier/dist/cli.js`, which does not exist (and there is no `src/cli.ts`) | `pnpm --filter @foundry/verifier start` |
 
-`pnpm preflight` (`build && test && lint`) therefore always fails at the lint step.
+`pnpm lint` is **not** broken anymore. It is a CommonJS flat config (`eslint.config.js`) that passes — exit 0 with exactly two warnings, both dead imports in files deliberately left untouched. `pnpm preflight` (`build && test && lint`) is green.
 
 ### Tests
 
@@ -146,7 +145,7 @@ Auth covers **only** governance routes: a bearer `OPERATOR_API_TOKEN` compared i
 
 **A queue** needs four coordinated edits: `QUEUE_NAMES`, `JOB_SCHEMAS`, and `QUEUE_POLICIES` in `packages/queue/src/contracts.ts` (the latter two are `satisfies`-enforced, so a missing entry fails to compile), plus a handler in `apps/worker/src/handlers.ts` — and a decision about which `WORKER_ROLE` consumes it. Every payload extends `JobEnvelope` (`companyId`, `traceId`, `originRunId`, `idempotencyKey`) and is validated on both enqueue and dequeue. **Never put `:` in a job id** — BullMQ 5 rejects it; use `jobKey()`/`bullmqId()`.
 
-**A migration** means bumping `EXPECTED_MIGRATIONS` (currently `5`) in **all six entrypoints together**: `apps/api/src/index.ts`, `apps/worker/src/index.ts`, `apps/worker/src/cron/{loop-tick,reconcile}.ts`, `apps/workflows/src/index.ts`, `apps/verifier/src/index.ts`.
+**A migration** means bumping `EXPECTED_MIGRATIONS` (currently `6`) in **all six entrypoints together**: `apps/api/src/index.ts`, `apps/worker/src/index.ts`, `apps/worker/src/cron/{loop-tick,reconcile}.ts`, `apps/workflows/src/index.ts`, `apps/verifier/src/index.ts`.
 
 **A provider** means a manifest entry, a barrel line, and a factory in the runtime registry wiring.
 
@@ -156,7 +155,7 @@ Auth covers **only** governance routes: a bearer `OPERATOR_API_TOKEN` compared i
 
 `render.yaml` **is** the deployment — there is no local mode, and a localhost/laptop architecture is never completion. `assertProductionTopology` refuses to boot production pointed at localhost.
 
-Seven services, all built with `corepack enable && pnpm install --frozen-lockfile && pnpm run build`: `foundry-api` (web, ×2 for rolling deploys, `healthCheckPath: /ready`), `foundry-worker` and `foundry-agents` (the **same binary**, split by `WORKER_ROLE` into complementary queue sets so a stuck agent run can't starve order processing), three crons (`loop-tick` */15, `verify` every 6h, `reconcile` daily), and `foundry-site` as static assets.
+Seven services, all built with `corepack enable && pnpm install --frozen-lockfile && pnpm run build`: `foundry-api` (web, ×2 for rolling deploys, `healthCheckPath: /ready`), `foundry-worker` and `foundry-agents` (the **same binary**, split by `WORKER_ROLE` into complementary queue sets so a stuck agent run can't starve order processing), two crons (`verify` every 6h, `reconcile` daily), and `foundry-site` as static assets. The operating loop is **not** a cron: it is driven by the repeatable `loop.tick` job (`OPERATING_LOOP_CRON`, `*/10`), declared in `packages/queue/src/contracts.ts` and installed only by the `agents` worker — the `foundry-loop-tick` Render cron was removed because it double-fired alongside the repeatable job (see the comment in `render.yaml`). `apps/worker/src/cron/loop-tick.ts` still exists but is no longer wired to any schedule.
 
 - Migrations run as `preDeployCommand`, never in `startCommand` — that would race N instances.
 - **No `disk:` anywhere, deliberately** — a disk pins a service to one instance and disables zero-downtime deploys.
@@ -178,7 +177,7 @@ Seven services, all built with `corepack enable && pnpm install --frozen-lockfil
 ## Notes
 
 - `.env` and `hackathon-sponsor-credentials.md` are gitignored and must never be committed. When adding a secret, its **name** must also be added to the Render env group.
-- `PROGRESS.md` line 54 references `docs/verification/DB_INVARIANTS.md`, which does not exist. `docs/` contains only `research/SPONSOR_API_RESEARCH.md`.
+- **`tsc -b` incremental state can lie.** A stale `.tsbuildinfo` has produced a confident false failure (a package typechecking against an outdated `.d.ts`) and can equally produce a false pass. After changing a cross-package type, verify with `pnpm clean && pnpm build` rather than a bare `pnpm build`. `pnpm test` is type-blind (vitest → esbuild strips types) and cannot catch this.
 - The `Clock` interface is consumed by `retry.ts` and `packages/providers`, but is **not** threaded through `packages/agents` — `PolicyGate.evaluate` calls `new Date()` directly.
 - `QueueEvents` is imported and closed in `packages/queue/src/queues.ts` but never instantiated (dead code).
 - No enforced commit convention; git history uses freeform subjects.
