@@ -2,47 +2,79 @@
 
 Status legend: **DONE** = built and verified by an executed test. **PARTIAL** = built,
 not yet fully verified. **NOT COMPLETE** = not built, or built but a stated requirement
-is unmet. Nothing is marked DONE on the strength of code existing.
+is unmet. `live_verified` is used only for prize methods that actually succeeded —
+never for catalog/list probes, unexecuted work, or an accepted-but-failed run.
 
-Last updated: 2026-08-15 (verifier rows + Render Workflows). Production **NOT COMPLETE**. Loop **not DONE**.
+Last updated: 2026-08-15. Production **NOT COMPLETE**. Company loop **not DONE**.
 
 ---
 
-## Verified by executed tests
+## Live company loop (not DONE)
+
+Company `co_01M03F7RQW2M6540BY2GZHCFBW` exists. Render Workflows `tickCompanyLoop` **COMPLETED** (`trn-0994gda0c8fvlk1mc73fl86u0`). The tick's action output is **blocked** on `research.web_search` (`BRAVE_SEARCH_API_KEY` missing) — that is loop output, not a workflow failure. No Brave success is recorded. Loop has not completed a phase. Anthropic is missing.
+
+---
+
+## Prize methods — `live_verified` only if the method succeeded
+
+| Prize method | Status | Live fact |
+|---|---|---|
+| Stripe Payment Link | **`live_verified`** | Link live: `plink_1U4lK242nB81EBguRPuIHrxS` / `https://buy.stripe.com/bJe7sE7Ti3nmbLYdjb2go00` |
+| Stripe webhook ingest | **`live_verified`** | `POST /webhooks/stripe` ingest **200** |
+| Band room | **`live_verified`** | Room `a70129cc-0663-4090-86b5-c5a98025532e` |
+| Render `tickCompanyLoop` | **`live_verified`** | **COMPLETED** `trn-0994gda0c8fvlk1mc73fl86u0` for `co_01M03F7RQW2M6540BY2GZHCFBW`. Brave block is loop output, not a workflow failure. |
+| Linq link/open iMessage App | **`live_verified`** | **HTTP 202** chat `de316f38-5ead-4ded-8ca9-27a5c4851987` message `b63a89a7-7204-47e3-bbe4-32acf278f3a9`; Stripe Payment Link as `params.url`. |
+| Superserve pause | **`live_verified`** | Pause proven (VM state preserved) |
+| Solari exec | **`live_verified`** | Exec live |
+| sandbox0 exec | **`live_verified`** | Exec live (pause does **not** equal Superserve) |
+| Linq Agent Pay | **NOT COMPLETE** | `POST /v3/payment_requests` **2011** (no connected payment account) |
+| Pioneer inference | **NOT COMPLETE** | **403** `card_required` |
+| Terac launch | **NOT COMPLETE** | Org credit **$0** |
+| Replay QA | **NOT COMPLETE** | Journeys **recording-lost** — not a pass |
+| Lovable site.generate | **NOT COMPLETE** | No OAuth (`LOVABLE_OAUTH_ACCESS_TOKEN` missing) |
+| Dodo | **NOT COMPLETE** | **HTTP 401** |
+| Discover / Brave | **NOT COMPLETE** | `BRAVE_SEARCH_API_KEY` missing |
+| Anthropic | **NOT COMPLETE** | `ANTHROPIC_API_KEY` missing |
+
+Adapter `probe()` rows (GET /projects, catalog, GET /v1/services, …) are **not** `live_verified`. See `VERIFICATION_EVIDENCE.md`.
+
+---
+
+## Local tests (not live prize evidence)
+
+These are unit/integration tests against code and a real Postgres — they do not make production or the company loop DONE.
 
 | Area | Status | Evidence |
 |---|---|---|
-| Exact decimal money (`Money`) | **DONE** | 21 unit tests. Covers 0.1+0.2, banker's rounding, allocation without losing a minor unit, $4,800 tooling across 25,000 units, provider minor-unit conversion. |
-| Order state machine | **DONE** | 19 unit + 9 integration tests. Legal transitions, idempotent redelivery, stale out-of-order events, refund ceilings, payment-route compliance. |
-| Policy engine (authority, budgets, kill switches, approvals) | **DONE** | 22 unit tests over `evaluatePolicy`, including human-only authorities and approval reuse. |
-| Opportunity scoring + selection gates | **DONE** | 20 unit tests. Risk inversion, confidence shrink toward neutral, grounded-vs-assumed split, hard gates that a high score cannot bypass. |
-| Landed cost + contribution margin | **DONE** | 18 unit tests. Grounded ratio, break-even CAC, negative-contribution detection, price-for-target-margin round trip. |
-| Database schema | **DONE** | 52 tables, 169 indexes, 104 FKs, applied to a real PostgreSQL 16 server. 23 invariant-violation attempts all rejected; see `docs/verification/DB_INVARIANTS.md`. |
-| Budget reservation under concurrency | **DONE** | Integration test: 10 concurrent reservations against a 5-slot budget grant exactly 5. |
-| Idempotency ledger | **DONE** | Integration tests: 8 concurrent claimants → 1 winner; completed key replays without re-running the effect; mismatched payload rejected. |
-| Audit hash chain | **DONE** | Integration tests: chain verifies; a row altered with the append-only trigger disabled is detected and located. |
-| Webhook deduplication | **DONE** | Integration tests: redelivery recognised, signature headers redacted, single-claim processing. |
-| Double-entry ledger | **DONE** | Integration tests: balanced sale written, unbalanced transaction rejected before reaching the database, P&L derived not asserted. |
-| Agent run records | **DONE** | Integration tests: model resolved from the org chart tier, usage accumulated, unknown role refused. |
+| Exact decimal money (`Money`) | **DONE** | Unit tests: 0.1+0.2, banker's rounding, allocation, provider minor-unit conversion. |
+| Order state machine | **DONE** | Unit + integration: legal transitions, idempotent redelivery, refund ceilings. |
+| Policy engine | **DONE** | Unit tests over `evaluatePolicy`. |
+| Opportunity scoring + selection gates | **DONE** | Unit tests: grounded-vs-assumed split, hard gates. |
+| Landed cost + contribution margin | **DONE** | Unit tests: break-even CAC, negative-contribution detection. |
+| Database schema | **DONE** | Applied to hosted Postgres. Invariant-violation attempts rejected; see `docs/verification/DB_INVARIANTS.md`. |
+| Budget reservation under concurrency | **DONE** | Integration: 10 concurrent reservations against a 5-slot budget grant exactly 5. |
+| Idempotency ledger | **DONE** | Integration: concurrent claimants, replay, mismatched payload rejected. |
+| Audit hash chain | **DONE** | Integration: chain verifies; tamper detected. |
+| Webhook deduplication | **DONE** | Integration: redelivery recognised, signature headers redacted. |
+| Double-entry ledger | **DONE** | Integration: balanced sale written, unbalanced rejected. |
+| Agent run records | **DONE** | Integration: model from org-chart tier, unknown role refused. |
 
-Full suite this session: **354 passed, 1 skipped** (`live-prize-probes` unless `LIVE_PROBES=1`). `pnpm typecheck` passed.
+---
 
 ## Built vs live-verified
 
 | Area | Status | What is missing |
 |---|---|---|
 | Provider HTTP client | **PARTIAL** | Unit coverage exists; not every client path has a live call. |
-| Webhook signature verifiers | **PARTIAL** | Stripe ingest blocked: `STRIPE_WEBHOOK_SECRET` unset. |
-| Provider manifests / registry | **PARTIAL** | Verifier wrote 24 rows. **11 providers `live_verified`** (probe only). See `VERIFICATION_EVIDENCE.md`. |
-| Queue system | **PARTIAL** | Render Key Value provisioned (`noeviction`). BullMQ 5 rejects `:`; local fix `environment.name`. Deployed `main` still fails workflow ticks. 24 queues. |
-| Dodo / Whop / Lovable | **PARTIAL** | Whop `live_verified`. Dodo 401. Lovable missing OAuth. Physical refuse local. |
-| Prize-track adapters | **PARTIAL** | Probe-verified: Terac, Stripe, Linq (phone), Replay (list), Superserve, Pioneer (catalog), Band, Render. Still blocked: Agent Pay 2011, Pioneer inference, Terac study (0 projects), Replay QA, workflow task success. |
+| Stripe Payment Link + webhook ingest | **DONE** (those two methods) | Does not make the company loop DONE. |
+| Render Workflows `tickCompanyLoop` | **DONE** (prize method) | Tick completed. Loop still **not DONE** (Brave). |
+| Linq link/open | **DONE** (prize method) | HTTP 202 with Payment Link as `params.url`. Agent Pay still 2011. |
+| Prize-track adapters | **PARTIAL** | Succeeded methods listed above. Blocked: Agent Pay 2011, Pioneer `card_required`, Terac $0, Replay recording-lost, Lovable OAuth, Dodo 401, Brave missing, Anthropic missing. |
 
 ## Not complete (production)
 
-- Company loop on `foundry-api` + workers — **NOT COMPLETE** (`foundry-api` not created)
-- Linq Agent Pay, Pioneer GLiNER2/GLiGuard inference, Dodo, Lovable MCP — **NOT COMPLETE**
-- Workflow `tickCompanyLoop` **accepted** (HTTP 202) then **failed** on deployed queue names — **NOT COMPLETE** until local BullMQ fix is deployed
+- Company loop — **NOT COMPLETE** (discover blocked on Brave; Anthropic missing)
+- Linq Agent Pay, Pioneer GLiNER2/GLiGuard inference, Terac launch, Replay QA pass, Dodo, Lovable MCP — **NOT COMPLETE**
 - Remaining required markdown (ARCHITECTURE, SPONSORS, INTEGRATIONS, DATA_MODEL, AGENTS, SECURITY, LEGAL_COMPLIANCE, TESTING, RUNBOOK, PRODUCTION_CHECKLIST, DECISIONS) — **NOT COMPLETE**
 
 ## Design decisions forced by testing
@@ -63,15 +95,5 @@ These were found by tests failing, not by review:
 4. **A pre-transaction dedupe check was added to `applyEvent`.** A provider retry storm is
    the common case; letting redeliveries contend on a transaction wasted a retry budget for
    what is not really a conflict.
-
-## Honest position on live integrations
-
-Verifier **ran** against hosted Render Postgres and wrote 24 `integration_verifications` rows.
-**11 `live_verified`:** terac, stripe, whop, render, linq, superserve, replay, band, sandbox0, solari, pioneer
-(those are `probe()` rows — not Agent Pay settlement, not Pioneer inference, not a Terac study, not a finished workflow tick).
-
-Render Workflows: `POST /v1/workflows` created `foundry-workflows`; `POST /v1/task-runs` returned **202** then failed on deployed `Queue name cannot contain :`. Local queue key fix is unpushed.
-
-Human blockers unchanged: Linq **2011**, Pioneer **403 card_required**, Dodo **401**, Lovable OAuth, Egoist by design.
 
 See `VERIFICATION_EVIDENCE.md` and `BLOCKERS.md`.

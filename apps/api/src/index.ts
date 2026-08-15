@@ -14,9 +14,10 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
 import rateLimit from '@fastify/rate-limit';
-import { describeError, isFoundryError } from '@foundry/core';
+import { describeError } from '@foundry/core';
 import { getLogger, metrics, withContext } from '@foundry/obs';
 import { buildContext, bootstrapOperatingCompany, wireRuntime, type AppContext } from '@foundry/runtime';
+import { registerErrorHandler } from './errors.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 import { registerReadinessRoutes } from './routes/readiness.js';
 import { registerGovernanceRoutes } from './routes/governance.js';
@@ -106,29 +107,7 @@ async function main(): Promise<void> {
     done();
   });
 
-  app.setErrorHandler((error, request, reply) => {
-    const described = describeError(error);
-    const status = isFoundryError(error) ? error.httpStatus : ((error as { statusCode?: number }).statusCode ?? 500);
-
-    if (status >= 500) {
-      log.error({ err: described, route: request.url }, 'unhandled request error');
-    } else {
-      log.warn({ err: described, route: request.url }, 'request rejected');
-    }
-
-    // Internal details never leave the process; the client gets the code and a
-    // safe message plus the trace id for support.
-    return reply.code(status).send({
-      error: {
-        code: described['code'] ?? 'internal',
-        message: status >= 500 ? 'Internal error' : String(described['message'] ?? 'Request rejected'),
-        traceId: (request as { traceId?: string }).traceId,
-        ...(isFoundryError(error) && error.retryAfterSeconds
-          ? { retryAfterSeconds: error.retryAfterSeconds }
-          : {}),
-      },
-    });
-  });
+  registerErrorHandler(app);
 
   /* ---------------------------------------------------------------------- */
   /* Routes                                                                  */

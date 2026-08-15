@@ -16,7 +16,7 @@ import {
   LINQ_AGENT_PAY_BLOCKER,
   PIONEER_INFERENCE_BLOCKER,
   PRIZE_TRACKS,
-  RENDER_WORKFLOW_BLOCKER,
+  RENDER_WORKFLOW_COMPLETED_TASK_RUN,
   REPLAY_QA_BLOCKER,
   TERAC_STUDY_BLOCKER,
   prizeTrackSnapshot,
@@ -133,11 +133,6 @@ describe('prizeTrackSnapshot', () => {
     expect(guard.liveVerified).toBe(false);
     expect(guard.blockedOn).toBe(PIONEER_INFERENCE_BLOCKER);
 
-    const workflows = row(tracks, 'platform.workflows');
-    expect(workflows.probeLive).toBe(true);
-    expect(workflows.liveVerified).toBe(false);
-    expect(workflows.blockedOn).toBe(RENDER_WORKFLOW_BLOCKER);
-
     const terac = row(tracks, 'expert.structured_review');
     expect(terac.probeLive).toBe(true);
     expect(terac.liveVerified).toBe(false);
@@ -169,6 +164,26 @@ describe('prizeTrackSnapshot', () => {
     expect(row(tracks, 'platform.deploy_control').liveVerified).toBe(true);
     expect(row(tracks, 'compute.persistent_sandbox').liveVerified).toBe(true);
     expect(row(tracks, 'research.browser_session').liveVerified).toBe(true);
+  });
+
+  it('marks Render Workflows liveVerified from the completed tickCompanyLoop task-run, not GET /v1/services or missing Brave', () => {
+    const workflows = row(prizeTrackSnapshot(registry()), 'platform.workflows');
+    expect(workflows.verifiedBy).toBe('prize_method');
+    expect(workflows.probe).toBe('GET /v1/services');
+    expect(workflows.probeLive).toBe(true);
+    expect(workflows.prizeMethodSucceeded).toBe(true);
+    expect(workflows.liveVerified).toBe(true);
+    expect(workflows.state).toBe('live_verified');
+    expect(workflows.blockedOn).toBeNull();
+    expect(workflows.prizeMethod).toContain('tickCompanyLoop completed');
+    expect(RENDER_WORKFLOW_COMPLETED_TASK_RUN).toBe('trn-0994gda0c8fvlk1mc73fl86u0');
+    expect(JSON.stringify(workflows)).not.toMatch(/Queue name cannot contain/);
+    expect(JSON.stringify(workflows)).not.toMatch(/BRAVE_SEARCH/);
+
+    const withoutRenderProbe = row(prizeTrackSnapshot(registry([])), 'platform.workflows');
+    expect(withoutRenderProbe.probeLive).toBe(false);
+    expect(withoutRenderProbe.liveVerified).toBe(true);
+    expect(withoutRenderProbe.blockedOn).toBeNull();
   });
 
   it('leaves Lovable blocked on missing OAuth rather than a fake pass', () => {

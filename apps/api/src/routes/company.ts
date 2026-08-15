@@ -6,10 +6,15 @@
  * not block creation; the loop records blocked phases instead.
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { CompanyConfig, ValidationError } from '@foundry/core';
-import { defaultHackathonCompanyConfig, ensureOperatingCompany, prizeTrackSnapshot } from '@foundry/services';
+import { CompanyConfig, isFoundryError, type FoundryError, ValidationError } from '@foundry/core';
+import {
+  companyAlreadyExistsError,
+  defaultHackathonCompanyConfig,
+  ensureOperatingCompany,
+  prizeTrackSnapshot,
+} from '@foundry/services';
 import type { AppContext, Services } from '@foundry/runtime';
 
 const CreateCompany = z.object({
@@ -30,45 +35,95 @@ const CollectResearch = z.object({
   maxItems: z.number().int().positive().max(100).default(40),
 });
 
+/**
+ * Reply with the Foundry error envelope directly. Fastify's default handler
+ * looks at `statusCode`, not `httpStatus`, so throwing a FoundryError becomes
+ * a 500 `{ code: internal }` even when the category is conflict/validation.
+ */
+function sendFoundryError(request: FastifyRequest, reply: FastifyReply, error: FoundryError) {
+  return reply.code(error.httpStatus).send({
+    error: {
+      code: error.code,
+      message: error.message,
+      traceId: (request as { traceId?: string }).traceId,
+    },
+  });
+}
+
+function isZodIssues(error: unknown): error is { issues: { path: PropertyKey[]; message: string }[] } {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'issues' in error &&
+      Array.isArray((error as { issues: unknown }).issues),
+  );
+}
+
 export async function registerCompanyRoutes(
   app: FastifyInstance,
   ctx: AppContext,
   services: Services,
 ): Promise<void> {
   app.post<{ Body: unknown }>('/api/companies', async (request, reply) => {
-    const body = CreateCompany.parse(request.body);
-    const existing = await ctx.repos.companies.first();
-    if (existing) {
-      throw new ValidationError(
-        `A company already exists (${existing.id}). PUT /api/companies/${existing.id}/config to update it.`,
-        { companyId: existing.id },
+    const parsed = CreateCompany.safeParse(request.body);
+    if (!parsed.success) {
+      return sendFoundryError(
+        request,
+        reply,
+        new ValidationError('Invalid company payload', {
+          issues: parsed.error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`),
+        }),
       );
     }
+    const body = parsed.data;
 
-    const config = body.config ?? defaultHackathonCompanyConfig({
-      ownerName: body.ownerName,
-      ownerEmail: body.ownerEmail,
-    });
+    const existing = await ctx.repos.companies.first();
+    if (existing) {
+      return sendFoundryError(request, reply, companyAlreadyExistsError(existing.id));
+    }
 
-    const seeded = await ensureOperatingCompany({
-      repos: ctx.repos,
-      queues: ctx.queues,
-      name: body.name,
-      mission: body.mission,
-      ownerName: body.ownerName,
-      ownerEmail: body.ownerEmail,
-      config,
-    });
+    try {
+      const config = body.config ?? defaultHackathonCompanyConfig({
+        ownerName: body.ownerName,
+        ownerEmail: body.ownerEmail,
+      });
 
-    return reply.code(201).send({
-      companyId: seeded.companyId,
-      cycleId: seeded.cycleId,
-      actorsSeeded: seeded.actorsSeeded,
-      loopJobId: seeded.loopJobId,
-      enqueueError: seeded.enqueueError,
-      prizeTracks: prizeTrackSnapshot(ctx.capabilities),
-      note: 'Legal documents will not generate until legalEntity.registeredName and related fields are set. Missing sponsor keys block phases; they do not fake completion.',
-    });
+      const seeded = await ensureOperatingCompany({
+        repos: ctx.repos,
+        queues: ctx.queues,
+        name: body.name,
+        mission: body.mission,
+        ownerName: body.ownerName,
+        ownerEmail: body.ownerEmail,
+        config,
+      });
+
+      // Lost the create race with boot or another POST — still not a 201.
+      if (!seeded.created) {
+        return sendFoundryError(request, reply, companyAlreadyExistsError(seeded.companyId));
+      }
+
+      return reply.code(201).send({
+        companyId: seeded.companyId,
+        cycleId: seeded.cycleId,
+        actorsSeeded: seeded.actorsSeeded,
+        loopJobId: seeded.loopJobId,
+        enqueueError: seeded.enqueueError,
+        prizeTracks: prizeTrackSnapshot(ctx.capabilities),
+        note: 'Legal documents will not generate until legalEntity.registeredName and related fields are set. Missing sponsor keys block phases; they do not fake completion.',
+      });
+    } catch (error) {
+      if (isZodIssues(error)) {
+        return sendFoundryError(
+          request,
+          reply,
+          new ValidationError('Invalid company payload', {
+            issues: error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`),
+          }),
+        );
+      }
+      throw error;
+    }
   });
 
   app.get('/api/companies', async () => {
@@ -108,10 +163,35 @@ export async function registerCompanyRoutes(
     };
   });
 
-  app.put<{ Params: { id: string }; Body: unknown }>('/api/companies/:id/config', async (request) => {
-    const body = UpdateConfig.parse(request.body);
-    const company = await ctx.repos.companies.updateConfig(request.params.id, body.config);
-    return { companyId: company.id, updated: true };
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/companies/:id/config', async (request, reply) => {
+    const parsed = UpdateConfig.safeParse(request.body);
+    if (!parsed.success) {
+      return sendFoundryError(
+        request,
+        reply,
+        new ValidationError('Invalid company config', {
+          issues: parsed.error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`),
+        }),
+      );
+    }
+    try {
+      const company = await ctx.repos.companies.updateConfig(request.params.id, parsed.data.config);
+      return reply.code(200).send({ companyId: company.id, updated: true });
+    } catch (error) {
+      if (isZodIssues(error)) {
+        return sendFoundryError(
+          request,
+          reply,
+          new ValidationError('Invalid company config', {
+            issues: error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`),
+          }),
+        );
+      }
+      if (isFoundryError(error)) {
+        return sendFoundryError(request, reply, error);
+      }
+      throw error;
+    }
   });
 
   app.get<{ Params: { id: string } }>('/api/companies/:id/loop', async (request) => {

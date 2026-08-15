@@ -28,8 +28,13 @@ export const TERAC_STUDY_BLOCKER =
 export const REPLAY_QA_BLOCKER =
   'autonomous_exploration finished with status "running". An unexecuted check is not a passing check.';
 
-/** POST /v1/task-runs 202 is not a successful workflow tick. */
-export const RENDER_WORKFLOW_BLOCKER = 'Queue name cannot contain :';
+/**
+ * Recorded prize method for Best use of Render (Workflows):
+ * POST /v1/task-runs `foundry-workflows/tickCompanyLoop` completed.
+ * Tick output blocked on `research.web_search` (missing BRAVE_SEARCH_API_KEY)
+ * is honest company-loop Discover status, not a workflow failure.
+ */
+export const RENDER_WORKFLOW_COMPLETED_TASK_RUN = 'trn-0994gda0c8fvlk1mc73fl86u0';
 
 /**
  * How this track may claim `liveVerified`.
@@ -37,7 +42,9 @@ export const RENDER_WORKFLOW_BLOCKER = 'Queue name cannot contain :';
  * - `probe`: the documented adapter.probe() *is* the prize-relevant evidence
  *   (Band GET /agent/me, Stripe Payment Link retrieve, Linq link/open).
  * - `prize_method`: a successful listing/catalog probe is not enough; the
- *   named prize method must have succeeded. We have no such success on record.
+ *   named prize method must have succeeded. Record that with
+ *   `prizeMethodCompleted` (Render Workflows task-run). Known failures stay
+ *   `prizeMethodBlocker`. Missing Brave is a loop blocker, not a workflow one.
  */
 export type PrizeVerificationBasis = 'probe' | 'prize_method';
 
@@ -128,7 +135,8 @@ export const PRIZE_TRACKS = [
     probe: 'GET /v1/services',
     prizeMethod: 'POST /v1/task-runs tickCompanyLoop completed',
     verifiedBy: 'prize_method' as const,
-    prizeMethodBlocker: RENDER_WORKFLOW_BLOCKER,
+    prizeMethodBlocker: null,
+    prizeMethodCompleted: RENDER_WORKFLOW_COMPLETED_TASK_RUN,
   },
   {
     track: 'Render deploys',
@@ -180,7 +188,8 @@ export function prizeTrackSnapshot(capabilities: CapabilityRegistry): readonly P
   return PRIZE_TRACKS.map((item) => {
     const status = capabilities.resolveCapability(item.capability);
     const probeLive = status.state === 'live_verified';
-    const prizeMethodSucceeded = item.verifiedBy === 'probe' && probeLive;
+    const prizeMethodSucceeded =
+      item.verifiedBy === 'probe' ? probeLive : prizeMethodCompletedId(item) != null;
     const liveVerified = prizeMethodSucceeded;
     const blockedOn = blockedOnFor(item.prizeMethodBlocker, liveVerified, status.usable, status.remediation);
     return {
@@ -203,6 +212,10 @@ export function prizeTrackSnapshot(capabilities: CapabilityRegistry): readonly P
 
 export function prizeTrackBlockers(capabilities: CapabilityRegistry): readonly PrizeTrackStatus[] {
   return prizeTrackSnapshot(capabilities).filter((row) => !row.liveVerified);
+}
+
+function prizeMethodCompletedId(item: (typeof PRIZE_TRACKS)[number]): string | null {
+  return 'prizeMethodCompleted' in item ? item.prizeMethodCompleted : null;
 }
 
 function prizeTrackState(

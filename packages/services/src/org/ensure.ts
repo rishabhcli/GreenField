@@ -5,12 +5,20 @@
  * later phases record `blockedOn` when a key is missing.
  */
 
-import { CompanyConfig, describeError } from '@foundry/core';
+import { CompanyConfig, ConflictError, describeError } from '@foundry/core';
 import type { Repositories } from '@foundry/db';
 import type { QueueSet } from '@foundry/queue';
 import { getLogger } from '@foundry/obs';
 import { defaultHackathonCompanyConfig, HACKATHON_COMPANY } from './default-config.js';
 import { seedOrgActors } from './seed.js';
+
+/** POST /api/companies is create-once; boot uses `ensureOperatingCompany` instead. */
+export function companyAlreadyExistsError(companyId: string): ConflictError {
+  return new ConflictError(
+    `A company already exists (${companyId}). PUT /api/companies/${companyId}/config to update it.`,
+    { companyId },
+  );
+}
 
 export interface EnsureOperatingCompanyInput {
   readonly repos: Repositories;

@@ -2,9 +2,12 @@
  * Research collection: web search and Reddit listings → evidence rows.
  *
  * Every inserted draft has a real source URL or external id, a retrieval
- * timestamp, `provenance.method = 'public_api'`, and compliance metadata.
- * Empty provider results stay empty — this service never invents a post,
- * a price, or a pain-point label without a URL.
+ * timestamp, and compliance metadata. Brave/Reddit hits use
+ * `provenance.method = 'public_api'`. When those capabilities are missing,
+ * collection falls through to a Solari browser session and records only
+ * URLs+titles of pages the session actually loaded
+ * (`provenance.method = 'browser_session'`). Empty provider results stay
+ * empty — this service never invents a post, a price, or a snippet.
  */
 
 import {
@@ -16,7 +19,9 @@ import {
   type EvidenceDraft as EvidenceDraftType,
   type EvidenceSourceKind,
 } from '@foundry/core';
+import { getLogger } from '@foundry/obs';
 import { optionalCapability, requireCapability, type ServiceDeps } from '../deps.js';
+import { openLoadedPagesViaCdp, type LoadedBrowserPage } from './browser-pages.js';
 
 export interface CollectInput {
   readonly companyId: string;
@@ -64,6 +69,23 @@ interface RedditSearchAdapter {
     opts?: { count?: number },
   ): Promise<readonly EvidenceDraftType[] | readonly WebSearchHit[]>;
   search?(input: { query: string; subreddit?: string; limit?: number }): Promise<readonly EvidenceDraftType[]>;
+}
+
+interface BrowserSessionAdapter {
+  createBrowserSession?(input?: { readonly recording?: boolean }): Promise<{
+    readonly sessionId?: string;
+    readonly cdpEndpoint?: string | null;
+    readonly wsEndpoint?: string | null;
+  }>;
+  deleteSession?(sessionId: string): Promise<void>;
+  /** Test/production seam: pages this session actually loaded. */
+  loadQueryPages?(input: {
+    readonly query: string;
+    readonly maxItems: number;
+    readonly sessionId: string;
+    readonly cdpEndpoint?: string | null;
+    readonly wsEndpoint?: string | null;
+  }): Promise<readonly LoadedBrowserPage[]>;
 }
 
 const NEWS_DOMAINS = [
@@ -114,6 +136,18 @@ export class ResearchCollectService {
     if (inserted + duplicates > 0) {
       return { inserted, duplicates };
     }
+
+    if (blockedOn?.capability === 'research.web_search') {
+      const browser = await this.#collectViaBrowser(input.companyId, input.query, maxItems);
+      if (browser.inserted + browser.duplicates > 0) {
+        return { inserted: browser.inserted, duplicates: browser.duplicates };
+      }
+      if (browser.blockedOn) {
+        return { inserted: 0, duplicates: 0, blockedOn: browser.blockedOn };
+      }
+      return { inserted: 0, duplicates: 0 };
+    }
+
     return blockedOn ? { inserted, duplicates, blockedOn } : { inserted, duplicates };
   }
 
@@ -285,6 +319,104 @@ export class ResearchCollectService {
       if (blocked) return { inserted: 0, duplicates: 0, blockedOn: blocked };
       throw error;
     }
+  }
+
+  /**
+   * Brave/Reddit were unavailable. Drive a real Solari session and keep only
+   * pages that actually loaded. Never stamps Brave provenance onto this path.
+   */
+  async #collectViaBrowser(companyId: string, query: string, maxItems: number): Promise<CollectionResult> {
+    let adapter: BrowserSessionAdapter;
+    try {
+      adapter = requireCapability<BrowserSessionAdapter>(this.deps, 'research.browser_session').adapter;
+    } catch (error) {
+      const blocked = blockedFrom(error, 'research.browser_session');
+      if (blocked) return { inserted: 0, duplicates: 0, blockedOn: blocked };
+      throw error;
+    }
+
+    if (typeof adapter.createBrowserSession !== 'function') {
+      return {
+        inserted: 0,
+        duplicates: 0,
+        blockedOn: {
+          capability: 'research.browser_session',
+          reason: 'Resolved browser-session adapter does not implement createBrowserSession.',
+        },
+      };
+    }
+
+    let sessionId: string | undefined;
+    try {
+      const session = await adapter.createBrowserSession({ recording: false });
+      sessionId = session.sessionId?.trim();
+      if (!sessionId) {
+        return {
+          inserted: 0,
+          duplicates: 0,
+          blockedOn: {
+            capability: 'research.browser_session',
+            reason: 'Solari createBrowserSession returned no sessionId.',
+          },
+        };
+      }
+      const resolvedSessionId = sessionId;
+
+      const provider =
+        this.deps.providers.forCapability('research.browser_session').status.provider ?? 'solari';
+      const pages = await this.#pagesFromSession(adapter, {
+        query,
+        maxItems,
+        sessionId: resolvedSessionId,
+        cdpEndpoint: session.cdpEndpoint ?? null,
+        wsEndpoint: session.wsEndpoint ?? null,
+      });
+      const drafts = pages
+        .map((page) => browserPageToDraft(page, provider, resolvedSessionId))
+        .filter((d): d is EvidenceDraftType => d !== undefined);
+      getLogger().info(
+        { companyId, sessionId, query, loaded: drafts.length, provider },
+        'research collect via browser session',
+      );
+      return this.#insertAll(companyId, drafts);
+    } catch (error) {
+      const blocked = blockedFrom(error, 'research.browser_session');
+      if (blocked) return { inserted: 0, duplicates: 0, blockedOn: blocked };
+      throw error;
+    } finally {
+      if (sessionId && typeof adapter.deleteSession === 'function') {
+        await adapter.deleteSession(sessionId).catch(() => undefined);
+      }
+    }
+  }
+
+  async #pagesFromSession(
+    adapter: BrowserSessionAdapter,
+    input: {
+      readonly query: string;
+      readonly maxItems: number;
+      readonly sessionId: string;
+      readonly cdpEndpoint: string | null;
+      readonly wsEndpoint: string | null;
+    },
+  ): Promise<readonly LoadedBrowserPage[]> {
+    if (typeof adapter.loadQueryPages === 'function') {
+      const pages = await adapter.loadQueryPages(input);
+      return Array.isArray(pages) ? pages : [];
+    }
+    const cdpEndpoint = input.cdpEndpoint?.trim();
+    if (!cdpEndpoint) {
+      throw new CapabilityUnsupportedError(
+        'solari',
+        'research.browser_session',
+        'Session has no cdpEndpoint and the adapter cannot report loaded pages.',
+      );
+    }
+    return openLoadedPagesViaCdp({
+      cdpEndpoint,
+      query: input.query,
+      maxItems: input.maxItems,
+    });
   }
 
   async #insertAll(companyId: string, drafts: readonly EvidenceDraftType[]): Promise<CollectionResult> {
@@ -466,7 +598,67 @@ function redditItemToDraft(item: EvidenceDraftType | WebSearchHit): EvidenceDraf
   return parsed.success ? parsed.data : undefined;
 }
 
+function browserPageToDraft(
+  page: LoadedBrowserPage,
+  provider: string,
+  sessionId: string,
+): EvidenceDraftType | undefined {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(page.url);
+  } catch {
+    return undefined;
+  }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return undefined;
+
+  const title = (page.title ?? '').trim();
+  const summary = title || parsedUrl.toString();
+  if (!summary) return undefined;
+
+  const host = parsedUrl.hostname.replace(/^www\./, '').toLowerCase();
+  const sourceKind = classifyHost(host);
+  const retrievedAt = new Date().toISOString();
+  const painPointLabels = COMPLAINT_LANGUAGE.test(title) && title ? [title.slice(0, 80)] : [];
+
+  const parsed = EvidenceDraft.safeParse({
+    sourceKind,
+    sourceUrl: parsedUrl.toString(),
+    externalId: null,
+    sourceDomain: host,
+    retrievedAt,
+    authoredAt: null,
+    provenance: { method: 'browser_session', provider, sessionId },
+    compliance: {
+      robotsAllowed: false,
+      robotsCheckedAt: null,
+      termsReviewed: false,
+      excerptStoragePermitted: false,
+      authorIdentifierRetained: false,
+      retentionPolicy: 'summary_only',
+      notes:
+        'robots.txt was not checked (unknown). Page body and snippets were not stored. ' +
+        'URL and document title only, from a page the Solari session actually loaded.',
+    },
+    excerpt: null,
+    summary,
+    language: 'en',
+    painPointLabels,
+    categoryLabels: [],
+    competitorsMentioned: [],
+    sentiment: 0,
+    severity: 0,
+    purchaseIntent: 'none',
+    workaroundDescribed: false,
+    willingnessToPayCents: null,
+    geography: null,
+    engagementScore: null,
+    confidence: 0.5,
+  });
+  return parsed.success ? parsed.data : undefined;
+}
+
 function classifyHost(host: string): EvidenceSourceKind {
+  if (host === 'reddit.com' || host.endsWith('.reddit.com')) return 'reddit_post';
   if (NEWS_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) return 'news_article';
   return 'blog_post';
 }
