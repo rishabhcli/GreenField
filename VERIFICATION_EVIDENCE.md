@@ -147,7 +147,7 @@ Terac launch, Linq Agent Pay, Pioneer inference, and Replay QA are unchanged —
 
 Live HTTP status only (2026-08-15, after `foundry-api` deploy `dep-da0ehrou01pc73905m20` **live** and `foundry-site` rewrite + asset deploy): `GET https://foundry-api-8ih0.onrender.com/ready` **200**, `GET /readiness/company` **200**. Same paths on the static host now rewrite to the API: `GET https://foundry-site-ye1g.onrender.com/readiness/company` **200**, `GET /ready` **200**, `GET /api/companies` **200**. Live `console-config.js` assigns `https://foundry-api-8ih0.onrender.com` (sha256 prefix matches repo). CORS from `https://foundry-site-ye1g.onrender.com`: `GET /readiness/company` **200** ACAO match, `OPTIONS /readiness/company` **204** ACAO match; `evil.example` gets no ACAO. Not a prize method. Not `live_verified`. Loop **not DONE**.
 
-Landing hero LED field (2026-08-16): `apps/site/test/landing.test.ts` asserts `#heroLeds` is present and that neither `.hero-leds` nor `body.lp .hero-leds` is `display: none` (28 tests passed locally). Live `foundry-site` deploy `dep-da0gjv0ae00c73fn8vdg` is **live** on commit `d301f8b`; `GET https://foundry-site-ye1g.onrender.com/assets/styles.css` has no `display: none` on `.hero-leds`, and `index.html` still includes `#heroLeds`. Not a prize method.
+Landing hero LED field (2026-08-16): first restore unhid the canvas but the wave still read as absent — copy/console damp floors (0.4 / 0.26) and REST 0.055 killed motion over most of the hero. `apps/site/test/landing.test.ts` now pins REST ≥ 0.1, copy damp ≥ 0.7, wave speed ≥ 0.18, and `.hero-leds` z-index. 29 tests passed locally. Not a prize method.
 
 ## Terac expert_validate (this pass)
 

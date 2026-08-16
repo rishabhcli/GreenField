@@ -42,7 +42,7 @@ describe('landing site', () => {
       const refs = [...pages[name].matchAll(/(?:href|src)="\.\/([^"]+)"/g)].map((m) => m[1] ?? '');
       expect(refs.length, `${name} has no local references`).toBeGreaterThanOrEqual(2);
       for (const ref of refs) {
-        const file = ref.split('#')[0] ?? ref;
+        const file = (ref.split('#')[0] ?? ref).split('?')[0] ?? ref;
         expect(existsSync(join(siteDir, file)), `broken reference in ${name}: ${ref}`).toBe(true);
       }
     }
@@ -262,6 +262,28 @@ describe('landing site', () => {
     expect(index).toContain('class="hero-leds"');
     expect(css).not.toMatch(/\.hero-leds\s*\{[^}]*display\s*:\s*none/);
     expect(css).not.toMatch(/body\.lp\s+\.hero-leds\s*\{[^}]*display\s*:\s*none/);
+  });
+
+  /**
+   * Unhiding the canvas is not enough. The field was running in production
+   * and still read as absent because the copy/console damp floors killed
+   * the wave over most of the hero, and the diodes sat at rest 0.055.
+   * These floors and the rest glow are the visibility contract.
+   */
+  it('keeps the LED wave bright enough to read as motion', () => {
+    const rest = js.match(/var REST = ([0-9.]+)/);
+    expect(rest, 'REST constant missing').not.toBeNull();
+    expect(Number(rest?.[1])).toBeGreaterThanOrEqual(0.1);
+
+    const copyFloor = js.match(/measure\("\.hero-copy",\s*rect,\s*\d+,\s*([0-9.]+)/);
+    expect(copyFloor, 'hero-copy damp floor missing').not.toBeNull();
+    expect(Number(copyFloor?.[1])).toBeGreaterThanOrEqual(0.7);
+
+    const speed = js.match(/phase \+= dt \* ([0-9.]+)/);
+    expect(speed, 'wave speed missing').not.toBeNull();
+    expect(Number(speed?.[1])).toBeGreaterThanOrEqual(0.18);
+
+    expect(css).toMatch(/\.hero-leds\s*\{[^}]*z-index:\s*[0-9]/);
   });
 
   it('keeps the LED field looping after the first paint', () => {

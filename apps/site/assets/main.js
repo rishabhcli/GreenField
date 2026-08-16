@@ -163,10 +163,10 @@
 
   if (ledCtx && heroSection) {
     var PITCH = 17; /* grid spacing, CSS px — dense enough to read as a panel */
-    var SIZE = 2.5; /* emitter edge length */
+    var SIZE = 3.2; /* emitter edge length */
     var LENS = 4.6; /* diode package: the dark lens the emitter sits inside */
     var LEVELS = 16; /* brightness buckets */
-    var HOT = 0.42; /* above this an LED also gets additive bloom sprites */
+    var HOT = 0.32; /* above this an LED also gets additive bloom sprites */
     var SPRITE_CAP = 1400; /* hard ceiling on additive draws per frame */
     var ATTACK = 34; /* per-diode rise rate — LEDs switch on fast */
     var DECAY = 7.5; /* per-diode fall rate — and bleed off slower */
@@ -176,7 +176,7 @@
     var W_LEAD = 0.08; /* crest rising edge, in field widths */
     var W_TRAIL = 0.19; /* crest falling edge */
     var SKEW = 0.22; /* per-row phase lag */
-    var REST = 0.055; /* unlit diode glow */
+    var REST = 0.12; /* unlit diode glow — must stay visible as a panel */
 
     var cols = 0;
     var rows = 0;
@@ -342,8 +342,8 @@
       bucketLen = new Int32Array(LEVELS);
 
       var regions = [];
-      var copyBox = measure(".hero-copy", rect, 14, 0.4, 70);
-      var consoleBox = measure(".console", rect, 8, 0.26, 56);
+      var copyBox = measure(".hero-copy", rect, 14, 0.72, 70);
+      var consoleBox = measure(".console", rect, 8, 0.42, 56);
       if (copyBox) regions.push(copyBox);
       if (consoleBox) regions.push(consoleBox);
 
@@ -411,7 +411,7 @@
 
         /* Resting term keeps unlit diodes faintly visible, so the field reads
            as hardware that is off rather than as empty background. */
-        lit[i] = a * vary[i] * 0.62 + REST;
+        lit[i] = a * vary[i] * 0.92 + REST;
       }
 
       blm.fill(0);
@@ -423,7 +423,7 @@
         addBloom(trail[s].x, trail[s].y, 78 + age * 104, 0.95 * fall);
       }
 
-      if (pointerIn) addBloom(headX.value, headY.value, 120, 1.35);
+      if (pointerIn) addBloom(headX.value, headY.value, 160, 1.7);
 
       for (i = 0; i < LEVELS; i++) bucketLen[i] = 0;
 
@@ -487,7 +487,7 @@
       rafId = 0;
       var dt = Math.min((nowMs - lastMs) / 1000, 1 / 30);
       lastMs = nowMs;
-      phase += dt * 0.115;
+      phase += dt * 0.22;
       phase -= Math.floor(phase);
       phase2 += dt * 0.043;
       phase2 -= Math.floor(phase2);
