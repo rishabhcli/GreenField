@@ -1548,6 +1548,27 @@
     if (ev.target === $('storefrontStage')) closeStorefront();
   });
 
+  function renderLinqStore(store) {
+    var number = store && store.linqNumber ? store.linqNumber : 'unpublished';
+    $('linqStoreNumber').textContent = number;
+    $('linqStoreNote').textContent =
+      (store && store.note) ||
+      'Digits load from /api/store. Unpublished if LINQ_FROM_NUMBER is unset.';
+    $('linqStoreReady').textContent = store && store.ready ? 'ready' : 'unpublished';
+    if (store && store.smsLink) $('linqStoreLink').setAttribute('href', store.smsLink);
+  }
+
+  fetch(API + '/api/store', { headers: { Accept: 'application/json' }, mode: 'cors' })
+    .then(function (res) {
+      return res.ok ? res.json() : null;
+    })
+    .then(function (store) {
+      if (store) renderLinqStore(store);
+    })
+    .catch(function () {
+      /* Leave unpublished. A failed read is not a number. */
+    });
+
   $('apiBaseLabel').textContent = API;
   $('pollLabel').textContent = String(POLL_MS / 1000);
   syncTokenButton();

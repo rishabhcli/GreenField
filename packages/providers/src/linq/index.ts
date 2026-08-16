@@ -148,6 +148,13 @@ export class LinqAdapter extends ProviderAdapter {
     this.#optOutState = store;
   }
 
+  /** Assigned Linq line. Replies come from the number the customer texted. */
+  #fromNumber(explicit?: string): string | undefined {
+    if (explicit && explicit.trim().length > 0) return explicit.trim();
+    const configured = this.optionalSecret(SECRETS.linqFromNumber)?.reveal().trim();
+    return configured && configured.length > 0 ? configured : undefined;
+  }
+
   #httpClient(): ProviderHttpClient {
     if (!this.#client) {
       this.#client = this.http(bearerAuth(this.requireSecret(SECRETS.linqApiKey)), {
@@ -247,9 +254,10 @@ export class LinqAdapter extends ProviderAdapter {
 
     const preferredService =
       input.parts.some((part) => part.type === 'imessage_app') ? 'iMessage' : input.preferredService;
+    const from = this.#fromNumber(input.from);
     const body = {
       to: input.to,
-      ...(input.from ? { from: input.from } : {}),
+      ...(from ? { from } : {}),
       message: {
         parts: input.parts,
         ...(preferredService ? { preferred_service: preferredService } : {}),
@@ -314,11 +322,12 @@ export class LinqAdapter extends ProviderAdapter {
       preferred_service: 'iMessage' as const,
       idempotency_key: input.idempotencyKey,
     };
+    const from = this.#fromNumber(input.from);
     const body = input.chatId
       ? { message: experienceMessage }
       : {
           to: input.to,
-          ...(input.from ? { from: input.from } : {}),
+          ...(from ? { from } : {}),
           message: experienceMessage,
         };
     const res = await this.#httpClient().request(

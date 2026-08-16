@@ -114,6 +114,23 @@ describe('landing site', () => {
     expect(index).toContain('Illustrative operating view');
   });
 
+  it('presents the Linq number as the consumer store and does not invent the digits', () => {
+    expect(index).toContain('Text the store');
+    expect(index).toContain('/api/store');
+    expect(index).toContain('LINQ_FROM_NUMBER');
+    expect(js).toContain('/api/store');
+    expect(js).not.toMatch(/\+1\d{10}/);
+    expect(index).not.toMatch(/\+1\d{10}/);
+  });
+
+  it('ships a #store intake so a dropship idea can be submitted without inventing a number', () => {
+    expect(index).toContain('id="store"');
+    expect(index).toContain('id="storeIdeaForm"');
+    expect(index).toContain('id="storeIdea"');
+    expect(js).toContain('/api/store/ideas');
+    expect(js).toContain('sourcingQueued');
+  });
+
   /**
    * The integration table used to hand-type twelve `probe verified` chips and
    * a frozen date. Nothing in this system may assert that an integration

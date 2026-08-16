@@ -31,6 +31,7 @@ import {
   StripeCharge,
   StripeDispute,
   StripeEventEnvelope,
+  StripeInvoice,
   StripePaymentIntent,
   StripePaymentLink,
   StripeRefund,
@@ -98,6 +99,28 @@ export interface CreateCheckoutSessionInput {
   readonly attribution?: Readonly<Record<string, string>>;
   readonly idempotencyKey: string;
   readonly expiresInMinutes?: number;
+}
+
+export interface CreateInvoiceInput {
+  readonly orderId: string;
+  readonly currency: string;
+  readonly lineItems: readonly CheckoutLineItemInput[];
+  readonly amountMinor: number;
+  readonly phoneE164?: string;
+  readonly email?: string;
+  readonly customerName?: string;
+  readonly description?: string;
+  readonly idempotencyKey: string;
+  readonly daysUntilDue?: number;
+}
+
+export interface InvoiceResult {
+  readonly invoiceId: string;
+  readonly hostedInvoiceUrl: string;
+  readonly customerId: string;
+  readonly paymentIntentId: string | null;
+  readonly amountDueMinor: number;
+  readonly currency: string;
 }
 
 export interface CheckoutSessionResult {
@@ -274,6 +297,109 @@ export class StripeAdapter extends ProviderAdapter {
       paymentIntentId: refId(session.payment_intent),
       expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : null,
       livemode: session.livemode ?? this.isLiveMode,
+    };
+  }
+
+  /**
+   * One-off Stripe Invoice at the catalogue total. The hosted URL is what we
+   * send over Linq — we do not call invoices.sendInvoice (that emails; SMS
+   * delivery is ours). Amount comes from line items, never a caller override
+   * that disagrees with the order.
+   */
+  async createAndFinalizeInvoice(input: CreateInvoiceInput): Promise<InvoiceResult> {
+    this.assertActivated();
+    if (input.lineItems.length === 0) {
+      throw new ValidationError('An invoice needs at least one line item', { orderId: input.orderId });
+    }
+    if (input.lineItems.some((li) => li.unitPriceMinor <= 0 || li.quantity <= 0)) {
+      throw new ValidationError('Invoice line items must have a positive catalogue unit price and quantity', {
+        orderId: input.orderId,
+      });
+    }
+    const lineTotal = input.lineItems.reduce((sum, li) => sum + li.unitPriceMinor * li.quantity, 0);
+    if (lineTotal !== input.amountMinor) {
+      throw new ValidationError('Invoice amountMinor must equal the catalogue line total', {
+        orderId: input.orderId,
+        amountMinor: input.amountMinor,
+        lineTotal,
+      });
+    }
+    if (input.amountMinor < 50) {
+      throw new ValidationError('Invoice amount is below Stripe practical minimums', {
+        orderId: input.orderId,
+        amountMinor: input.amountMinor,
+      });
+    }
+    if (!input.phoneE164 && !input.email) {
+      throw new ValidationError('A Stripe invoice needs a customer phone or email', { orderId: input.orderId });
+    }
+
+    const stripe = this.#stripe();
+    const customer = await this.#call('customers.create', () =>
+      stripe.customers.create(
+        {
+          ...(input.email ? { email: input.email } : {}),
+          ...(input.phoneE164 ? { phone: input.phoneE164 } : {}),
+          ...(input.customerName ? { name: input.customerName } : {}),
+          metadata: { internal_order_id: input.orderId },
+        },
+        { idempotencyKey: `${input.idempotencyKey}:customer` },
+      ),
+    );
+
+    const draft = await this.#call('invoices.create', () =>
+      stripe.invoices.create(
+        {
+          customer: customer.id,
+          collection_method: 'send_invoice',
+          days_until_due: input.daysUntilDue ?? 7,
+          currency: input.currency.toLowerCase(),
+          pending_invoice_items_behavior: 'exclude',
+          metadata: { internal_order_id: input.orderId },
+          ...(input.description ? { description: input.description } : {}),
+        },
+        { idempotencyKey: `${input.idempotencyKey}:invoice` },
+      ),
+    );
+
+    await this.#call('invoices.addLines', () =>
+      stripe.invoices.addLines(
+        draft.id,
+        {
+          lines: input.lineItems.map((li) => ({
+            description: li.quantity > 1 ? `${li.name} × ${li.quantity}` : li.name,
+            amount: li.unitPriceMinor * li.quantity,
+          })),
+        },
+        { idempotencyKey: `${input.idempotencyKey}:lines` },
+      ),
+    );
+
+    const raw = await this.#call('invoices.finalizeInvoice', () =>
+      stripe.invoices.finalizeInvoice(draft.id, undefined, {
+        idempotencyKey: `${input.idempotencyKey}:finalize`,
+      }),
+    );
+    const invoice = StripeInvoice.parse(raw);
+    if (!invoice.hosted_invoice_url) {
+      throw new ProviderContractError('stripe', 'finalized invoice has no hosted_invoice_url', {
+        invoiceId: invoice.id,
+        orderId: input.orderId,
+      });
+    }
+
+    getLogger().info(
+      { orderId: input.orderId, invoiceId: invoice.id, livemode: invoice.livemode },
+      'stripe invoice finalized',
+    );
+
+    return {
+      invoiceId: invoice.id,
+      hostedInvoiceUrl: invoice.hosted_invoice_url,
+      customerId: customer.id,
+      paymentIntentId: refId(invoice.payment_intent),
+      amountDueMinor: invoice.amount_due ?? input.amountMinor,
+      currency: invoice.currency ?? input.currency.toLowerCase(),
     };
   }
 

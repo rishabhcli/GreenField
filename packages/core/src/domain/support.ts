@@ -54,6 +54,7 @@ export const TicketIntent = z.enum([
   'shipping_delay',
   'delivery_issue',
   'product_question',
+  'dropship_request',
   'product_defect',
   'return_request',
   'refund_request',
@@ -179,7 +180,12 @@ export function decideEscalation(input: EscalationInput): EscalationDecision {
       priority: 'normal',
     };
   }
-  if (!input.orderFound && input.intent !== 'general_enquiry' && input.intent !== 'product_question') {
+  if (
+    !input.orderFound &&
+    input.intent !== 'general_enquiry' &&
+    input.intent !== 'product_question' &&
+    input.intent !== 'dropship_request'
+  ) {
     return {
       escalate: true,
       reason: 'no matching order was found for an order-specific request',

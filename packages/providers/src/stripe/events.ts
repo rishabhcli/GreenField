@@ -15,7 +15,15 @@
  */
 
 import { Address, type OrderEventKind, type OrderStatus } from '@foundry/core';
-import { StripeCharge, StripeCheckoutSession, StripeDispute, StripePaymentIntent, StripeRefund, refId } from './schemas.js';
+import {
+  StripeCharge,
+  StripeCheckoutSession,
+  StripeDispute,
+  StripeInvoice,
+  StripePaymentIntent,
+  StripeRefund,
+  refId,
+} from './schemas.js';
 
 export interface OrderTransitionIntent {
   /** Target status, or null to record the event without changing status. */
@@ -165,6 +173,25 @@ export function mapStripeEventToOrderTransition(eventType: string, dataObject: u
     /* ---------------------------------------------------------------- */
     case 'payment_intent.succeeded': {
       const pi = StripePaymentIntent.parse(dataObject);
+      const invoiceId = refId(pi.invoice);
+      if (invoiceId) {
+        // invoice.paid is the money event for Stripe Invoices. Crediting here
+        // would double-count the same capture.
+        return {
+          action: 'transition',
+          intent: {
+            orderStatus: null,
+            kind: 'payment_captured',
+            externalIds: compact({
+              stripe_payment_intent: pi.id,
+              stripe_charge: refId(pi.latest_charge),
+              stripe_invoice: invoiceId,
+            }),
+            currency: pi.currency,
+            detail: { amount: pi.amount, amountReceived: pi.amount_received ?? null, skippedPaid: true, invoiceId },
+          },
+        };
+      }
       const received = pi.amount_received;
       if (received == null || received <= 0) {
         // Do not mark PAID with a zero capture. checkout.session.completed
@@ -232,6 +259,69 @@ export function mapStripeEventToOrderTransition(eventType: string, dataObject: u
           kind: 'status_changed',
           externalIds: { stripe_payment_intent: pi.id },
           detail: { status: pi.status },
+        },
+      };
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Invoices — SMS / iMessage collection                             */
+    /* ---------------------------------------------------------------- */
+    case 'invoice.paid': {
+      const record = StripeInvoice.parse(dataObject);
+      const ids = invoiceIds(record);
+      if (record.amount_paid == null || record.amount_paid <= 0) {
+        return {
+          action: 'transition',
+          intent: {
+            orderStatus: 'MANUAL_REVIEW',
+            kind: 'manual_review_flagged',
+            externalIds: ids,
+            currency: record.currency ?? undefined,
+            detail: { invoiceStatus: record.status ?? null, missingAmountPaid: true },
+            manualReviewReason:
+              'Paid invoice is missing amount_paid. Refusing to mark PAID with an unknown amount.',
+          },
+        };
+      }
+      return {
+        action: 'transition',
+        intent: {
+          orderStatus: 'PAID',
+          kind: 'payment_webhook_received',
+          externalIds: ids,
+          amountPaidDeltaMinor: record.amount_paid,
+          currency: record.currency ?? undefined,
+          detail: {
+            invoiceStatus: record.status ?? null,
+            hostedInvoiceUrl: record.hosted_invoice_url ?? null,
+            customerEmail: null,
+          },
+        },
+      };
+    }
+
+    case 'invoice.payment_failed': {
+      const record = StripeInvoice.parse(dataObject);
+      return {
+        action: 'transition',
+        intent: {
+          orderStatus: 'PAYMENT_FAILED',
+          kind: 'payment_failed',
+          externalIds: invoiceIds(record),
+          detail: { invoiceStatus: record.status ?? null },
+        },
+      };
+    }
+
+    case 'invoice.voided': {
+      const record = StripeInvoice.parse(dataObject);
+      return {
+        action: 'transition',
+        intent: {
+          orderStatus: 'CANCELLED',
+          kind: 'status_changed',
+          externalIds: invoiceIds(record),
+          detail: { reason: 'stripe invoice voided', invoiceStatus: record.status ?? null },
         },
       };
     }
@@ -522,6 +612,9 @@ export const HANDLED_STRIPE_EVENTS: readonly string[] = [
   'payment_intent.payment_failed',
   'payment_intent.processing',
   'payment_intent.canceled',
+  'invoice.paid',
+  'invoice.payment_failed',
+  'invoice.voided',
   'payment_intent.requires_action',
   'charge.succeeded',
   'charge.failed',
@@ -539,6 +632,15 @@ export const HANDLED_STRIPE_EVENTS: readonly string[] = [
   'review.opened',
   'review.closed',
 ];
+
+function invoiceIds(invoice: StripeInvoice): Record<string, string> {
+  return compact({
+    stripe_invoice: invoice.id,
+    stripe_payment_intent: refId(invoice.payment_intent),
+    stripe_customer: refId(invoice.customer),
+    internal_order_id: invoice.metadata?.['internal_order_id'] ?? null,
+  });
+}
 
 function sessionIds(session: StripeCheckoutSession): Record<string, string> {
   return compact({

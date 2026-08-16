@@ -103,11 +103,29 @@ export const StripePaymentIntent = z.object({
   currency: z.string(),
   metadata: z.record(z.string(), z.string()).nullish(),
   latest_charge: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
+  invoice: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
   last_payment_error: z.object({ code: z.string().nullish(), message: z.string().nullish() }).nullish(),
   created: z.number(),
   livemode: z.boolean().optional(),
 });
 export type StripePaymentIntent = z.infer<typeof StripePaymentIntent>;
+
+export const StripeInvoice = z.object({
+  id: z.string(),
+  object: z.literal('invoice'),
+  status: z.string().nullish(),
+  paid: z.boolean().nullish(),
+  amount_paid: z.number().nullish(),
+  amount_due: z.number().nullish(),
+  currency: z.string().nullish(),
+  hosted_invoice_url: z.string().nullish(),
+  invoice_pdf: z.string().nullish(),
+  customer: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
+  payment_intent: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
+  metadata: z.record(z.string(), z.string()).nullish(),
+  livemode: z.boolean().optional(),
+});
+export type StripeInvoice = z.infer<typeof StripeInvoice>;
 
 export const StripeCharge = z.object({
   id: z.string(),

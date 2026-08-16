@@ -43,7 +43,7 @@
         <a href="./evidence.html#faq">FAQ</a>
         <a href="./console.html">Console</a>
       </nav>
-      <a class="btn btn-primary btn-sm" href="./pricing.html">Founding access — $99</a>
+      <a class="btn btn-primary btn-sm" id="navStoreCta" href="#store">Text the store</a>
       <button class="nav-menu-btn" id="navMenuBtn" type="button" aria-expanded="false" aria-controls="navPanel" aria-label="Open menu">
         <span class="nav-menu-bar" aria-hidden="true"></span>
         <span class="nav-menu-bar" aria-hidden="true"></span>
@@ -85,9 +85,13 @@
             without evidence.
           </p>
           <div class="hero-cta" data-reveal style="--rd:180ms">
-            <a class="btn btn-primary" href="./pricing.html">Get founding access — $99</a>
-            <a class="btn btn-ghost" href="./system.html#loop">Explore the loop</a>
+            <a class="btn btn-primary" id="linqStoreCta" href="#store">Text the store</a>
+            <a class="btn btn-ghost" href="./pricing.html">Founding access — $99</a>
           </div>
+          <p class="hero-store" id="linqStoreLine" data-reveal style="--rd:200ms">
+            The store is this page and the Linq number. Describe what you want shipped below — or text the
+            number when <code>/api/store</code> publishes it. A Stripe invoice follows a real catalogue price only.
+          </p>
           <ul class="hero-status" data-reveal style="--rd:240ms" aria-label="Illustrative snapshot">
             <li>test suite executed — the count lives in CI, not here</li>
             <li>schema applied to real Postgres</li>
@@ -183,6 +187,41 @@
             console. <a href="./console.html">Open the live console →</a>
           </figcaption>
         </figure>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         CONSUMER STORE — dropship intake
+    ===================================================================== -->
+    <section class="section section-alt" id="store">
+      <div class="container store-grid">
+        <div class="section-head">
+          <p class="eyebrow" data-reveal>The store</p>
+          <h2 data-reveal style="--rd:60ms">Tell us what you want shipped.</h2>
+          <p class="section-sub" data-reveal style="--rd:120ms">
+            This is the consumer interface. Text the Linq number when it is published, or drop the idea here.
+            If it is in the catalogue you get a real Stripe invoice. If it is not, we start sourcing — we do
+            not invent a price or a website. The Linq digits come from <code>/api/store</code> and stay
+            unpublished when <code>LINQ_FROM_NUMBER</code> is unset.
+          </p>
+        </div>
+        <form class="store-form" id="storeIdeaForm" data-reveal style="--rd:160ms">
+          <label class="store-label" for="storeIdea">Dropship idea</label>
+          <textarea
+            id="storeIdea"
+            name="idea"
+            required
+            minlength="8"
+            maxlength="2000"
+            rows="5"
+            placeholder="Custom made costumes for dogs — a site that sells them"
+          ></textarea>
+          <div class="store-form-row">
+            <button type="submit" class="btn btn-primary" id="storeIdeaSubmit">Start sourcing</button>
+            <p class="store-form-hint" id="storeIdeaHint">No invoice until a catalogue price exists.</p>
+          </div>
+          <p class="store-form-result" id="storeIdeaResult" hidden></p>
+        </form>
       </div>
     </section>
 

@@ -106,13 +106,28 @@
     </div>
 
     <!-- ====================================================================
+         CONSUMER STORE — Linq is the primary dropship interface
+    ===================================================================== -->
+    <section class="cnsl-store" data-c-reveal aria-label="Consumer store">
+      <div class="cnsl-store-copy">
+        <span class="cnsl-panel-title">Consumer store</span>
+        <p class="cnsl-store-lead">Customers text the Linq number with what they want shipped. That thread is the store — not these brand windows.</p>
+        <a class="cnsl-store-number" id="linqStoreLink" href="#store">
+          <span id="linqStoreNumber">unpublished</span>
+        </a>
+        <p class="cnsl-store-note" id="linqStoreNote">Digits load from <code>/api/store</code>. Unpublished if <code>LINQ_FROM_NUMBER</code> is unset.</p>
+      </div>
+      <span class="cnsl-pill" id="linqStoreReady">not read</span>
+    </section>
+
+    <!-- ====================================================================
          STOREFRONTS
     ===================================================================== -->
     <section class="sf-deck" data-c-reveal aria-label="Storefronts">
       <div class="sf-deck-head">
         <div>
-          <span class="cnsl-panel-title">Storefronts</span>
-          <p class="sf-deck-sub">Eight brands. Click any window.</p>
+          <span class="cnsl-panel-title">Brand windows</span>
+          <p class="sf-deck-sub">Secondary. The live store is the Linq number above.</p>
         </div>
         <span class="cnsl-panel-count" id="storefrontCount">8</span>
         <span class="cnsl-panel-head-spacer"></span>

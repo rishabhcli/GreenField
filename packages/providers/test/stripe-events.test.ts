@@ -118,9 +118,71 @@ describe('coverage of the declared event list', () => {
   });
 
   it('reports an unknown event as unhandled rather than guessing', () => {
-    const result = mapStripeEventToOrderTransition('invoice.paid', {});
+    const result = mapStripeEventToOrderTransition('billing.credit_grant.created', {});
     expect(result.action).toBe('unhandled');
     if (result.action === 'unhandled') expect(result.reason).toContain('no mapping');
+  });
+});
+
+function invoice(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'in_test_a1',
+    object: 'invoice',
+    status: 'paid',
+    paid: true,
+    amount_paid: 9900,
+    amount_due: 9900,
+    currency: 'usd',
+    hosted_invoice_url: 'https://invoice.stripe.com/i/acct_test/test_hosted',
+    customer: 'cus_test_a1',
+    payment_intent: 'pi_test_invoice',
+    metadata: { internal_order_id: 'ord_01ABC' },
+    livemode: false,
+    ...overrides,
+  };
+}
+
+describe('invoice events', () => {
+  it('invoice.paid moves the order to PAID with amount_paid and the invoice id', () => {
+    const result = mapStripeEventToOrderTransition('invoice.paid', invoice());
+    expect(result.action).toBe('transition');
+    if (result.action !== 'transition') return;
+    expect(result.intent.orderStatus).toBe('PAID');
+    expect(result.intent.amountPaidDeltaMinor).toBe(9900);
+    expect(result.intent.externalIds['stripe_invoice']).toBe('in_test_a1');
+    expect(result.intent.externalIds['internal_order_id']).toBe('ord_01ABC');
+    expect(result.intent.externalIds['stripe_payment_intent']).toBe('pi_test_invoice');
+    expect(canTransition('CREATED', 'PAID')).toBe(true);
+  });
+
+  it('invoice.paid missing amount_paid does not mark PAID with zero', () => {
+    const result = mapStripeEventToOrderTransition('invoice.paid', invoice({ amount_paid: null }));
+    expect(result.action).toBe('transition');
+    if (result.action !== 'transition') return;
+    expect(result.intent.orderStatus).not.toBe('PAID');
+    expect(result.intent.amountPaidDeltaMinor).toBeUndefined();
+  });
+
+  it('invoice.payment_failed marks PAYMENT_FAILED without crediting', () => {
+    const result = mapStripeEventToOrderTransition(
+      'invoice.payment_failed',
+      invoice({ status: 'open', paid: false, amount_paid: 0 }),
+    );
+    expect(result.action).toBe('transition');
+    if (result.action !== 'transition') return;
+    expect(result.intent.orderStatus).toBe('PAYMENT_FAILED');
+    expect(result.intent.amountPaidDeltaMinor).toBeUndefined();
+  });
+
+  it('payment_intent.succeeded for an invoice-originated PI does not carry the amount', () => {
+    const result = mapStripeEventToOrderTransition(
+      'payment_intent.succeeded',
+      paymentIntent({ invoice: 'in_test_a1' }),
+    );
+    expect(result.action).toBe('transition');
+    if (result.action !== 'transition') return;
+    expect(result.intent.amountPaidDeltaMinor).toBeUndefined();
+    expect(result.intent.orderStatus).toBeNull();
   });
 });
 

@@ -442,7 +442,14 @@ export function buildHandlers(ctx: AppContext, services: Services): HandlerMap {
         await ctx.dispatcher.enqueueSystem({
           companyId: ticket.company_id,
           toRoleKey: 'customer_ops_manager',
-          objective: `Handle inbound ticket ${ticket.id} (intent=${ticket.intent}, channel=${ticket.channel}). Do not invent a reply that was not sent.`,
+          objective:
+            `The Linq thread is the primary store. Handle inbound ticket ${ticket.id} ` +
+            `(intent=${ticket.intent}, channel=${ticket.channel}). ` +
+            `A store greeting may already have been sent. Reply on the same thread. ` +
+            `Treat their text as a dropship request: call commerce.match_catalog / commerce.list_products, ` +
+            `then commerce.issue_invoice for a real catalogue SKU so they get a Stripe hosted invoice. ` +
+            `If nothing matches, research.collect may already be queued — tell them sourcing started. ` +
+            `Do not invent a price, a storefront URL, or a reply that was not sent.`,
           inputRefs: { ticketId: ticket.id, supportMessageId: payload.supportMessageId },
           traceId: payload.traceId,
         });

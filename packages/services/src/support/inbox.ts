@@ -18,6 +18,8 @@ import { companyConfig, type Repositories } from '@foundry/db';
 import { LinqAdapter, LinqOptOutError, type OptOutStateStore } from '@foundry/providers';
 import { optionalCapability, type ServiceDeps, type ServiceOutcome } from '../deps.js';
 import { RefundService, type RefundOutcome, type RefundRequest } from '../commerce/refunds.js';
+import { LINQ_STORE_GREETING } from '../commerce/sms-invoice.js';
+import { queueDropshipIfUnmatched } from '../commerce/store-intake.js';
 
 export interface IngestInboundInput {
   readonly companyId: string;
@@ -35,6 +37,7 @@ export class SupportInboxService {
     messageId: string;
     intent: TicketIntent;
     escalated: boolean;
+    sourcingQueued?: boolean;
   }>> {
     const classified = classifyIntent(input.body);
     const { ticket } = await this.deps.repos.growth.support.openOrGet({
@@ -110,10 +113,82 @@ export class SupportInboxService {
       await this.deps.repos.growth.support.escalate(ticket.id, decision.reason ?? 'escalated', decision.priority);
     }
 
+    if (inboundCount === 1 && isStoreIntent(classified.intent) && linq && isLinqChannel(input.channel)) {
+      await this.#greetStore(input, ticket.id, linq);
+    }
+
+    let sourcingQueued = false;
+    if (classified.intent === 'dropship_request') {
+      const follow = await queueDropshipIfUnmatched(this.deps, {
+        companyId: input.companyId,
+        ticketId: ticket.id,
+        idea: input.body,
+        traceId: ticket.id,
+      });
+      sourcingQueued = follow.sourcingQueued;
+      if (sourcingQueued && linq && isLinqChannel(input.channel)) {
+        await this.#sendStoreText(input, ticket.id, linq, follow.note, `store.source:${ticket.id}`);
+      }
+    }
+
     return {
       ok: true,
-      data: { ticketId: ticket.id, messageId, intent: classified.intent, escalated: decision.escalate },
+      data: {
+        ticketId: ticket.id,
+        messageId,
+        intent: classified.intent,
+        escalated: decision.escalate,
+        sourcingQueued,
+      },
     };
+  }
+
+  async #greetStore(
+    input: IngestInboundInput,
+    ticketId: string,
+    linq: LinqAdapter,
+  ): Promise<void> {
+    await this.#sendStoreText(input, ticketId, linq, LINQ_STORE_GREETING, `store.greet:${ticketId}`);
+  }
+
+  async #sendStoreText(
+    input: IngestInboundInput,
+    ticketId: string,
+    linq: LinqAdapter,
+    body: string,
+    idempotencyKey: string,
+  ): Promise<void> {
+    try {
+      const sent = input.externalChatId && typeof linq.sendToChat === 'function'
+        ? await linq.sendToChat(input.externalChatId, {
+            parts: [{ type: 'text', value: body }],
+            idempotencyKey,
+          })
+        : await linq.sendMessage({
+            to: [input.customerHandle],
+            parts: [{ type: 'text', value: body }],
+            preferredService: preferredService(input.channel),
+            idempotencyKey,
+          });
+      await this.deps.repos.growth.support.recordMessage({
+        companyId: input.companyId,
+        ticketId,
+        channel: input.channel,
+        direction: 'outbound',
+        provider: 'linq',
+        fromHandle: sent.fromSelection?.from ?? 'store',
+        toHandle: input.customerHandle,
+        body,
+        status: 'sent',
+        externalChatId: sent.chatId ?? input.externalChatId,
+        externalMessageId: sent.messageIds?.[0] ?? null,
+      });
+    } catch (error) {
+      if (error instanceof CredentialsMissingError || error instanceof CapabilityUnsupportedError) {
+        return;
+      }
+      throw error;
+    }
   }
 
   async #recordOptOut(input: IngestInboundInput): Promise<void> {
@@ -277,7 +352,30 @@ function classifyIntent(body: string): { intent: TicketIntent; confidence: numbe
   if (/\b(where is|tracking|shipped|delivery)\b/.test(text)) return { intent: 'shipping_delay', confidence: 0.65 };
   if (/\b(order status|my order|ord_)\b/.test(text)) return { intent: 'order_status', confidence: 0.6 };
   if (/\bcancel\b/.test(text)) return { intent: 'cancel_order', confidence: 0.6 };
-  return { intent: 'unknown', confidence: 0.2 };
+  if (/\b(invoice|buy|purchase|\bpay\b|how much|price|want one|send (me )?(the )?link)\b/.test(text)) {
+    return { intent: 'product_question', confidence: 0.65 };
+  }
+  if (
+    /\b(ship|dropship|source|looking for|get me|make me|can you (get|find|make)|i want|i need|idea)\b/.test(
+      text,
+    )
+  ) {
+    return { intent: 'dropship_request', confidence: 0.7 };
+  }
+  if (/^(hi|hey|hello|yo|what do you (sell|ship)|what can i (buy|order))\b/.test(text)) {
+    return { intent: 'general_enquiry', confidence: 0.7 };
+  }
+  // The Linq thread is the store. Unclassified consumer text is a dropship
+  // request, not a low-confidence unknown that would escalate.
+  return { intent: 'dropship_request', confidence: 0.65 };
+}
+
+function isStoreIntent(intent: TicketIntent): boolean {
+  return intent === 'dropship_request' || intent === 'product_question' || intent === 'general_enquiry';
+}
+
+function isLinqChannel(channel: MessageChannel): boolean {
+  return channel === 'sms' || channel === 'imessage' || channel === 'rcs';
 }
 
 function extractRefundRequest(body: string): number | null {

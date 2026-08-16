@@ -514,6 +514,89 @@ h3 {
   margin-top: 34px;
 }
 
+.hero-store {
+  margin-top: 16px;
+  max-width: 540px;
+  color: var(--text-3);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.hero-store code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.hero-store[data-ready='true'] {
+  color: var(--text-2);
+}
+
+.store-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  gap: clamp(32px, 5vw, 72px);
+  align-items: start;
+}
+
+.store-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.store-label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 600;
+}
+
+.store-form textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 140px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.store-form textarea:focus {
+  outline: 2px solid var(--neon-dim);
+  border-color: var(--neon);
+}
+
+.store-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+
+.store-form-hint,
+.store-form-result {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.store-form-result[data-state='queued'] {
+  color: var(--text-2);
+}
+
+.store-form-result[data-state='error'] {
+  color: #ff8a80;
+}
+
 /* Hairline rule as an accent form: the divider ignites yellow at its head and
    cools back to the ordinary border colour. */
 .hero-status {
@@ -1571,6 +1654,10 @@ h3 {
 
   .hero-cta {
     justify-content: center;
+  }
+
+  .store-grid {
+    grid-template-columns: 1fr;
   }
 
   .hero-visual {

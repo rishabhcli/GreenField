@@ -280,6 +280,9 @@ const MANAGERS: readonly RoleDefinition[] = [
       'commerce.create_product',
       'commerce.configure_checkout',
       'commerce.collect_payment',
+      'commerce.list_products',
+      'commerce.match_catalog',
+      'commerce.issue_invoice',
       'linq.send_link',
       'qa.request_gate',
     ],
@@ -325,7 +328,9 @@ const MANAGERS: readonly RoleDefinition[] = [
     'Customer Operations Manager',
     'customer_ops',
     'Answer customers accurately and fast, using only verified order and policy data. You never invent a ' +
-      'shipment status, a refund outcome or a policy. Legal threats, safety incidents, injury, chargeback ' +
+      'shipment status, a refund outcome, a price or a policy. When someone texts to buy or asks for an ' +
+      'invoice, converse on the same Linq thread, list real catalogue SKUs, then call commerce.issue_invoice ' +
+      'so they receive a Stripe hosted invoice. Legal threats, safety incidents, injury, chargeback ' +
       'threats, suspected fraud, high-value refunds and regulator or media contact always escalate.',
     [
       'ticket triage and resolution within policy',
@@ -344,6 +349,9 @@ const MANAGERS: readonly RoleDefinition[] = [
       'support.issue_refund',
       'support.escalate',
       'commerce.collect_payment',
+      'commerce.list_products',
+      'commerce.match_catalog',
+      'commerce.issue_invoice',
     ],
     50_00,
   ),
@@ -608,8 +616,10 @@ const SPECIALISTS: readonly RoleDefinition[] = [
 
   // Customer ops
   specialist('support_agent', 'Customer Support Agent', 'customer_ops_manager', 'customer_ops',
-    'Answer customers from verified order and policy data only. If you do not know, say so and escalate.',
-    ['support.get_order_context', 'support.send_reply', 'support.escalate'], ['messaging.send_customer'], ['messaging.sms']),
+    'The Linq thread is the store. Greet the customer, match their idea to the catalogue, and send a Stripe invoice for a real SKU. Never invent a price. If nothing matches, say we will source it. Answer order questions from verified records only.',
+    ['support.get_order_context', 'support.send_reply', 'support.escalate', 'commerce.list_products', 'commerce.match_catalog', 'commerce.issue_invoice'],
+    ['messaging.send_customer', 'payments.configure'],
+    ['messaging.sms']),
   specialist('order_status_agent', 'Order Status Agent', 'customer_ops_manager', 'customer_ops',
     'Report shipment status strictly from carrier and order records. Never estimate a delivery date the carrier has not given.',
     ['support.get_order_context', 'fulfilment.get_tracking', 'support.send_reply'], ['messaging.send_customer']),

@@ -68,6 +68,23 @@ describe('StripeAdapter payment links', () => {
   });
 });
 
+describe('StripeAdapter invoices', () => {
+  it('createAndFinalizeInvoice without credentials names STRIPE_SECRET_KEY', async () => {
+    await expect(
+      adapterWith().createAndFinalizeInvoice({
+        orderId: 'ord_1',
+        currency: 'USD',
+        amountMinor: 9900,
+        phoneE164: '+15551234567',
+        idempotencyKey: 'k-inv',
+        lineItems: [{ productId: 'prd_1', name: 'Founding', unitPriceMinor: 9900, quantity: 1 }],
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) => error instanceof CredentialsMissingError && error.missing.includes('STRIPE_SECRET_KEY'),
+    );
+  });
+});
+
 describe('StripeAdapter webhook ingest', () => {
   it('reports STRIPE_WEBHOOK_SECRET as blocked when unset, not ready', () => {
     expect(adapterWith().webhookIngestStatus()).toEqual({

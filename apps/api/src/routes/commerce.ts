@@ -18,8 +18,9 @@ import {
   idempotencyKey,
 } from '@foundry/core';
 import { getLogger } from '@foundry/obs';
-import type { StripeAdapter } from '@foundry/providers';
+import { SECRETS, type StripeAdapter } from '@foundry/providers';
 import { companyConfig } from '@foundry/db';
+import { DropshipStoreService, type ServiceDeps } from '@foundry/services';
 import type { AppContext } from '@foundry/runtime';
 import { requireOperator } from '../auth.js';
 import { checkoutRedirectAllowed } from '../http-policy.js';
@@ -63,6 +64,31 @@ export function assertCheckoutPaymentRoute(kind: string, route: string): void {
 }
 
 /** True when tracked inventory cannot cover this quantity. Untracked stock is never blocked here. */
+/** Public consumer store: the Linq number, or an honest unpublished state. */
+export function buildPublicLinqStore(input: {
+  readonly linqNumber: string | null;
+  readonly messagingUsable: boolean;
+}): {
+  readonly channel: 'linq';
+  readonly role: 'primary_consumer_store';
+  readonly linqNumber: string | null;
+  readonly smsLink: string | null;
+  readonly ready: boolean;
+  readonly note: string;
+} {
+  const number = input.linqNumber && input.linqNumber.trim().length > 0 ? input.linqNumber.trim() : null;
+  return {
+    channel: 'linq',
+    role: 'primary_consumer_store',
+    linqNumber: number,
+    smsLink: number ? `sms:${number}` : null,
+    ready: Boolean(number) && input.messagingUsable,
+    note: number
+      ? 'Text this number with what you want shipped. A Stripe hosted invoice is sent when a catalogue price exists.'
+      : 'LINQ_FROM_NUMBER is not set. The consumer store number is unpublished.',
+  };
+}
+
 export function trackedProductOutOfStock(
   product: {
     sku: string;
@@ -96,6 +122,51 @@ export async function registerCommerceRoutes(app: FastifyInstance, ctx: AppConte
     if (!row) throw new ValidationError('No company is configured yet.');
     return row;
   };
+
+  /** Public consumer store. The Linq number is the primary dropship interface. */
+  app.get('/api/store', async () => {
+    const number = ctx.secrets.tryGet(SECRETS.linqFromNumber)?.reveal() ?? null;
+    const messaging = ctx.capabilities.resolveCapability('messaging.sms');
+    return buildPublicLinqStore({ linqNumber: number, messagingUsable: messaging.usable });
+  });
+
+  const StoreIdea = z.object({
+    idea: z.string().trim().min(8).max(2000),
+  });
+
+  /**
+   * Public dropship intake. The landing form and the Linq thread are the same
+   * store: match the catalogue or start research. Never invents a price.
+   */
+  app.post<{ Body: unknown }>('/api/store/ideas', async (request) => {
+    const body = StoreIdea.parse(request.body);
+    const row = await company();
+    const store = new DropshipStoreService({
+      repos: ctx.repos,
+      queues: ctx.queues,
+    } as ServiceDeps);
+    const accepted = await store.accept({
+      companyId: row.id,
+      idea: body.idea,
+      channel: 'web_form',
+      customerHandle: 'web',
+      externalChatId: `web:${row.id}:${body.idea.slice(0, 80)}`,
+      traceId: `store:${row.id}`,
+    });
+    if (!accepted.ok || !accepted.data) {
+      throw new ValidationError(accepted.blockedOn?.reason ?? 'Dropship idea was not accepted.');
+    }
+    return {
+      ticketId: accepted.data.ticketId,
+      intent: accepted.data.intent,
+      matches: accepted.data.matches,
+      sourcingQueued: accepted.data.sourcingQueued,
+      note: accepted.data.note,
+      invoiceUrl: null,
+      storefrontUrl: null,
+      priceMinor: null,
+    };
+  });
 
   /** Public catalogue. Only active products, and only public fields. */
   app.get('/api/products', async () => {

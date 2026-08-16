@@ -141,6 +141,7 @@ export const SECRETS = {
     env: 'LINQ_FROM_NUMBER',
     description: 'E.164 number provisioned for this business by a Linq representative',
     required: false,
+    publicSafe: true,
     obtainFrom: 'Linq provisions numbers manually; GET /v3/phone_numbers lists what is assigned',
   },
 
@@ -511,6 +512,9 @@ export const STRIPE_MANIFEST: ProviderManifest = {
         // 3DS or similar pending customer action. Subscribed so the order shows
         // PAYMENT_PENDING rather than sitting in CHECKOUT_STARTED indefinitely.
         'payment_intent.requires_action',
+        'invoice.paid',
+        'invoice.payment_failed',
+        'invoice.voided',
         'charge.succeeded',
         'charge.failed',
         'charge.refunded',

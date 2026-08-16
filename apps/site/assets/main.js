@@ -723,6 +723,92 @@
   ).replace(/\/$/, "");
 
   /* -------------------------------------------------------------------------
+     Consumer store number. The Linq line is the primary dropship interface.
+     Digits come from GET /api/store. This page never invents a phone number.
+  ------------------------------------------------------------------------- */
+  var storeCta = document.getElementById("linqStoreCta");
+  var navStoreCta = document.getElementById("navStoreCta");
+  var storeLine = document.getElementById("linqStoreLine");
+  if (storeCta || storeLine) {
+    fetch(apiBase + "/api/store", { headers: { Accept: "application/json" }, mode: "cors" })
+      .then(function (res) {
+        return res.ok ? res.json() : null;
+      })
+      .then(function (store) {
+        if (!store) return;
+        if (store.smsLink) {
+          if (storeCta) {
+            storeCta.setAttribute("href", store.smsLink);
+            storeCta.textContent = store.linqNumber ? "Text " + store.linqNumber : "Text the store";
+          }
+          if (navStoreCta) {
+            navStoreCta.setAttribute("href", store.smsLink);
+            if (store.linqNumber) navStoreCta.textContent = store.linqNumber;
+          }
+        }
+        if (storeLine) {
+          storeLine.textContent = store.note;
+          storeLine.setAttribute("data-ready", store.ready ? "true" : "false");
+        }
+      })
+      .catch(function () {
+        /* Leave the unpublished copy. A failed read is not a number. */
+      });
+  }
+
+  var storeForm = document.getElementById("storeIdeaForm");
+  var storeIdea = document.getElementById("storeIdea");
+  var storeResult = document.getElementById("storeIdeaResult");
+  var storeSubmit = document.getElementById("storeIdeaSubmit");
+  if (storeForm && storeIdea && storeResult) {
+    storeForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var idea = String(storeIdea.value || "").trim();
+      if (idea.length < 8) {
+        storeResult.hidden = false;
+        storeResult.setAttribute("data-state", "error");
+        storeResult.textContent = "Describe the idea in a bit more detail.";
+        return;
+      }
+      if (storeSubmit) storeSubmit.disabled = true;
+      storeResult.hidden = false;
+      storeResult.removeAttribute("data-state");
+      storeResult.textContent = "Sending the idea to the store…";
+      fetch(apiBase + "/api/store/ideas", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        mode: "cors",
+        body: JSON.stringify({ idea: idea }),
+      })
+        .then(function (res) {
+          return res.json().then(function (body) {
+            return { ok: res.ok, body: body };
+          });
+        })
+        .then(function (out) {
+          if (!out.ok) {
+            storeResult.setAttribute("data-state", "error");
+            storeResult.textContent =
+              (out.body && (out.body.message || out.body.note)) ||
+              "The store did not accept this idea. No price was invented.";
+            return;
+          }
+          var note = out.body && out.body.note ? String(out.body.note) : "";
+          storeResult.setAttribute("data-state", out.body && out.body.sourcingQueued ? "queued" : "ok");
+          storeResult.textContent = note || "Received. No invoice until a catalogue price exists.";
+        })
+        .catch(function () {
+          storeResult.setAttribute("data-state", "error");
+          storeResult.textContent =
+            "The store API did not accept this idea. The request was not queued.";
+        })
+        .then(function () {
+          if (storeSubmit) storeSubmit.disabled = false;
+        });
+    });
+  }
+
+  /* -------------------------------------------------------------------------
      Live provider status on the system page.
 
      This table used to hand-type twelve green "probe verified" chips with a

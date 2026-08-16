@@ -27,11 +27,12 @@ function emptyAdapter(): LinqAdapter {
   });
 }
 
-function keyedAdapter(fetchImpl: typeof fetch): LinqAdapter {
+function keyedAdapter(fetchImpl: typeof fetch, extra: Record<string, string> = {}): LinqAdapter {
   return new LinqAdapter(
     {
       secrets: new SecretStore({
-        get: (name) => (name === 'LINQ_API_V3_API_KEY' ? 'linq_test_not_live' : undefined),
+        get: (name) =>
+          name === 'LINQ_API_V3_API_KEY' ? 'linq_test_not_live' : extra[name],
       }),
       environment: 'preview',
       publicBaseUrl: 'https://example.test',
@@ -258,6 +259,33 @@ describe('Linq iMessage Apps', () => {
     expect(JSON.stringify(posted?.body)).not.toContain('"parts"');
     expect(result.messageIds).toEqual(['3a358962-14ca-4a63-8e99-0b4a11f3af01']);
     expect(result.chatId).toBe('de316f38-5ead-4ded-8ca9-27a5c4851987');
+  });
+
+  it('sendMessage and sendLink default from to LINQ_FROM_NUMBER when the caller omits it', async () => {
+    const posted: unknown[] = [];
+    const adapter = keyedAdapter(async (_input, init) => {
+      posted.push(JSON.parse(String(init?.body ?? '')));
+      return new Response(JSON.stringify(LIVE_MESSAGES_SEND), {
+        status: 202,
+        headers: { 'content-type': 'application/json' },
+      });
+    }, { LINQ_FROM_NUMBER: '+14155550100' });
+
+    await adapter.sendMessage({
+      to: ['+15551234567'],
+      parts: [{ type: 'text', value: 'here is your invoice' }],
+      idempotencyKey: 'k-from-text',
+      preferredService: 'SMS',
+    });
+    await adapter.sendLink({
+      to: '+15551234567',
+      url: 'https://invoice.stripe.com/i/acct_test/hosted',
+      title: 'Stripe invoice',
+      idempotencyKey: 'k-from-link',
+    });
+
+    expect(posted[0]).toMatchObject({ from: '+14155550100', to: ['+15551234567'] });
+    expect(posted[1]).toMatchObject({ from: '+14155550100', to: ['+15551234567'] });
   });
 
   it('sendExperience posts experience XOR parts with preferred_service iMessage', async () => {

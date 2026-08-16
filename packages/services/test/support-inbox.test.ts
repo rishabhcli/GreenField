@@ -17,6 +17,14 @@ function inboxDeps(opts: {
   conversation?: Array<Record<string, unknown>>;
   linqAdapter?: unknown;
   linqStatus?: { usable: boolean; state: string; remediation?: string };
+  products?: readonly {
+    sku: string;
+    name: string;
+    description?: string | null;
+    price_minor: number;
+    currency: string;
+  }[];
+  enqueue?: (queue: string, payload: Record<string, unknown>) => Promise<string>;
 }): {
   deps: ServiceDeps;
   consents: { granted: boolean; channel: string; source: string }[];
@@ -62,12 +70,18 @@ function inboxDeps(opts: {
             await opts.recordConsent?.(id, channel, granted, source);
           },
         },
+        products: {
+          listActive: async () => opts.products ?? [],
+        },
         orders: {
           byId: async () => {
             throw new Error('no order');
           },
         },
       },
+    },
+    queues: {
+      enqueue: opts.enqueue ?? (async () => 'job_unused'),
     },
     providers: {
       forCapability: () => ({
@@ -106,6 +120,90 @@ describe('SupportInboxService.ingestInbound', () => {
     expect(result.ok).toBe(true);
     expect(result.data?.intent).toBe('marketing_opt_out');
     expect(consents).toEqual([{ granted: false, channel: 'sms', source: 'inbound_opt_out' }]);
+  });
+
+  it('classifies a buy / invoice request as product_question so the agent can send a Stripe invoice', async () => {
+    const cases = ['send me the invoice', 'I want to buy the founding access', 'can I pay over text?'];
+    for (const body of cases) {
+      const { deps } = inboxDeps({});
+      const result = await new SupportInboxService(deps).ingestInbound({
+        companyId: 'co_1',
+        channel: 'sms',
+        externalChatId: 'chat_1',
+        body,
+        customerHandle: '+15551234567',
+      });
+      expect(result.ok).toBe(true);
+      expect(result.data?.intent).toBe('product_question');
+      expect(result.data?.escalated).toBe(false);
+    }
+  });
+
+  it('treats a dropship idea as the store, greets on first text, and does not escalate', async () => {
+    const sent: { body: string }[] = [];
+    const { deps, escalations } = inboxDeps({
+      linqAdapter: {
+        sendToChat: async (_chatId: string, input: { parts: { value: string }[] }) => {
+          sent.push({ body: input.parts[0]?.value ?? '' });
+          return { messageIds: ['msg_greet'], chatId: 'chat_1', fromSelection: { from: '+14155550100' } };
+        },
+      },
+      linqStatus: { usable: true, state: 'live_verified' },
+    });
+    const result = await new SupportInboxService(deps).ingestInbound({
+      companyId: 'co_1',
+      channel: 'sms',
+      externalChatId: 'chat_1',
+      body: 'ship me a ceramic pour-over',
+      customerHandle: '+15551234567',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.data?.intent).toBe('dropship_request');
+    expect(result.data?.escalated).toBe(false);
+    expect(escalations).toEqual([]);
+    expect(sent[0]?.body).toMatch(/this is the store/i);
+  });
+
+  it('queues research.collect for a dog-costume website idea that is not in the catalogue', async () => {
+    const enqueued: { queue: string; payload: Record<string, unknown> }[] = [];
+    const idea = 'Hey I want to dropship a website that sells custom made costumes for dogs';
+    const { deps, escalations } = inboxDeps({
+      products: [{ sku: 'zhc-founding', name: 'Founding access', description: null, price_minor: 9900, currency: 'USD' }],
+      enqueue: async (queue, payload) => {
+        enqueued.push({ queue, payload });
+        return 'job_1';
+      },
+    });
+    const result = await new SupportInboxService(deps).ingestInbound({
+      companyId: 'co_1',
+      channel: 'sms',
+      externalChatId: 'chat_1',
+      body: idea,
+      customerHandle: '+15551234567',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.data?.intent).toBe('dropship_request');
+    expect(result.data?.sourcingQueued).toBe(true);
+    expect(escalations).toEqual([]);
+    expect(enqueued[0]).toMatchObject({
+      queue: 'research.collect',
+      payload: { query: idea, sourceKinds: ['web', 'reddit'] },
+    });
+  });
+
+  it('treats a hello as a store enquiry rather than a low-confidence unknown', async () => {
+    const { deps, escalations } = inboxDeps({});
+    const result = await new SupportInboxService(deps).ingestInbound({
+      companyId: 'co_1',
+      channel: 'sms',
+      externalChatId: 'chat_1',
+      body: 'hi',
+      customerHandle: '+15551234567',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.data?.intent).toBe('general_enquiry');
+    expect(result.data?.escalated).toBe(false);
+    expect(escalations).toEqual([]);
   });
 
   it('escalates legal, safety, chargeback, and regulator inbound rather than answering', async () => {

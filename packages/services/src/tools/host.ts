@@ -2,6 +2,7 @@ import type { ServiceDeps } from '../deps.js';
 import type { BrandAssetService } from '../brand/assets.js';
 import type { BrandIdentityService } from '../brand/identity.js';
 import type { CollectPaymentService } from '../commerce/collect.js';
+import type { SmsInvoiceService } from '../commerce/sms-invoice.js';
 import type { FulfilmentService } from '../commerce/fulfilment.js';
 import type { RefundService } from '../commerce/refunds.js';
 import type { WebhookProcessorService } from '../commerce/webhook-processor.js';
@@ -55,6 +56,7 @@ export interface CompanyToolHost {
   readonly ledger: LedgerService;
   readonly reconciliation: ReconciliationService;
   readonly collect: CollectPaymentService;
+  readonly smsInvoice: SmsInvoiceService;
   readonly compliance: ComplianceScanService;
   readonly webhooks: WebhookProcessorService;
 }

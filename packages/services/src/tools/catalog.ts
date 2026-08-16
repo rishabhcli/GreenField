@@ -36,6 +36,7 @@ import {
 } from '@foundry/providers';
 import { optionalCapability as optCap } from '../deps.js';
 import { prizeTrackSnapshot } from '../org/prize-tracks.js';
+import { matchCatalogProducts } from '../commerce/sms-invoice.js';
 import { loadAndEvaluateSelection } from '../research/selection.js';
 import { resolveUnitContributionMinor } from '../sourcing/economics.js';
 import type { CompanyToolHost } from './host.js';
@@ -1459,6 +1460,78 @@ function brandSiteTools(s: CompanyToolHost): AgentTool<never, unknown>[] {
             });
           }
         },
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'commerce.list_products',
+        description:
+          'List active catalogue products with real prices. Call this before commerce.issue_invoice so you name a real SKU.',
+        authority: 'payments.configure',
+        consequential: false,
+        input: Empty,
+        execute: async (_input, ctx) => {
+          const products = await s.deps.repos.commerce.products.listActive(ctx.companyId);
+          return products.map((product) => ({
+            sku: product.sku,
+            name: product.name,
+            priceMinor: product.price_minor,
+            currency: product.currency,
+            paymentRoute: product.payment_route,
+          }));
+        },
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'commerce.match_catalog',
+        description:
+          'Match a customer idea against active catalogue SKUs. Returns real prices only. Empty matches means do not invent a price — tell them we will source it.',
+        authority: 'payments.configure',
+        consequential: false,
+        input: z.object({ idea: Text }),
+        execute: async (input, ctx) => {
+          const products = await s.deps.repos.commerce.products.listActive(ctx.companyId);
+          const matches = matchCatalogProducts(products, input.idea);
+          return {
+            idea: input.idea,
+            matches,
+            note:
+              matches.length === 0
+                ? 'No catalogue match. Do not invent a price. Tell the customer we will source it and invoice only after a real catalogue price exists.'
+                : 'Prices are catalogue rows. Offer these SKUs, then call commerce.issue_invoice.',
+          };
+        },
+      },
+      s,
+    ),
+    tool(
+      {
+        name: 'commerce.issue_invoice',
+        description:
+          'Create a Stripe hosted invoice at the catalogue price and send it on the Linq thread the customer texted. Amount comes from the product row, never from the model.',
+        authority: 'payments.configure',
+        capability: 'payments.checkout.physical',
+        consequential: true,
+        input: z.object({
+          toHandle: Text,
+          sku: Text.optional(),
+          email: z.string().email().optional(),
+          chatId: Text.optional(),
+          ticketId: Id.optional(),
+        }),
+        execute: async (input, ctx) =>
+          s.smsInvoice.issue({
+            companyId: ctx.companyId,
+            toHandle: input.toHandle,
+            sku: input.sku,
+            email: input.email,
+            chatId: input.chatId,
+            ticketId: input.ticketId,
+            idempotencyKey: `invoice:${ctx.companyId}:${input.toHandle}:${input.sku ?? 'default'}:${ctx.runId}`,
+          }),
       },
       s,
     ),

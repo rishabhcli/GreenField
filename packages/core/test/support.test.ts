@@ -44,6 +44,13 @@ describe('decideEscalation', () => {
   it('does not escalate a confident, in-limit, order-found enquiry', () => {
     expect(decideEscalation(input()).escalate).toBe(false);
   });
+
+  it('does not escalate a dropship request that has no order yet — the Linq thread is the store', () => {
+    const result = decideEscalation(
+      input({ intent: 'dropship_request', orderFound: false, intentConfidence: 0.7 }),
+    );
+    expect(result.escalate).toBe(false);
+  });
 });
 
 describe('isOptOutMessage', () => {

@@ -413,6 +413,15 @@ describe('operator console', () => {
       'kite',
     ] as const;
 
+    it('names the Linq thread as the consumer store above the brand windows', () => {
+      expect(html).toContain('id="linqStoreNumber"');
+      expect(html).toContain('id="linqStoreNote"');
+      expect(html).toContain('id="linqStoreLink"');
+      expect(html).toContain('id="linqStoreReady"');
+      expect(html).toContain('Consumer store');
+      expect(js).toContain('/api/store');
+    });
+
     it('ships eight branded sites with local photography', () => {
       expect(html).toContain('id="storefrontsGrid"');
       expect(html).toContain('id="storefrontStage"');

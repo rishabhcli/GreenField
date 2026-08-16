@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ConflictError, ValidationError } from '@foundry/core';
 import {
   assertCheckoutPaymentRoute,
+  buildPublicLinqStore,
   rejectCustomerTypedCheckoutAmount,
   trackedProductOutOfStock,
 } from '../src/routes/commerce.js';
@@ -48,6 +49,41 @@ describe('customer-typed checkout amounts', () => {
         cancelUrl: 'https://shop.example.test/no',
       }),
     ).not.toThrow();
+  });
+});
+
+describe('public Linq store', () => {
+  it('does not invent a number when LINQ_FROM_NUMBER is unset', () => {
+    const store = buildPublicLinqStore({ linqNumber: null, messagingUsable: true });
+    expect(store.linqNumber).toBeNull();
+    expect(store.smsLink).toBeNull();
+    expect(store.ready).toBe(false);
+    expect(store.role).toBe('primary_consumer_store');
+    expect(store.note).toMatch(/unpublished/i);
+  });
+
+  it('publishes an sms: link when the assigned line is present', () => {
+    const store = buildPublicLinqStore({ linqNumber: '+14155550100', messagingUsable: true });
+    expect(store.linqNumber).toBe('+14155550100');
+    expect(store.smsLink).toBe('sms:+14155550100');
+    expect(store.ready).toBe(true);
+  });
+});
+
+describe('public dropship idea response', () => {
+  it('refuses to carry an invented price or storefront', async () => {
+    const { buildDropshipIdeaResponse } = await import('@foundry/services');
+    const body = buildDropshipIdeaResponse({
+      ticketId: 'tkt_1',
+      intent: 'dropship_request',
+      matches: [],
+      sourcingQueued: true,
+      note: 'We started sourcing.',
+    });
+    expect(body.invoiceUrl).toBeNull();
+    expect(body.storefrontUrl).toBeNull();
+    expect(body.priceMinor).toBeNull();
+    expect(body.sourcingQueued).toBe(true);
   });
 });
 

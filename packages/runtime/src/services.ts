@@ -16,6 +16,7 @@ import {
   BrandAssetService,
   BrandIdentityService,
   CollectPaymentService,
+  SmsInvoiceService,
   ComplianceScanService,
   ExpertReviewService,
   FulfilmentService,
@@ -88,6 +89,7 @@ export function buildServices(ctx: AppContext): Services {
     ledger: new LedgerService(deps),
     reconciliation: new ReconciliationService(deps),
     collect: new CollectPaymentService(deps),
+    smsInvoice: new SmsInvoiceService(deps),
     compliance: new ComplianceScanService(deps),
     webhooks: new WebhookProcessorService(deps),
   };
