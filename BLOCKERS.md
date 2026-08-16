@@ -2,7 +2,7 @@
 
 Production **NOT COMPLETE**. Loop **not DONE**.
 
-Company `co_01M03F7RQW2M6540BY2GZHCFBW`: Workflows `tickCompanyLoop` **COMPLETED**; discover is still blocked on missing Brave (loop output). Do not treat catalog probes as `live_verified`.
+Company `co_01M03F7RQW2M6540BY2GZHCFBW`: Workflows `tickCompanyLoop` **COMPLETED**. Discover is **no longer blocked on Brave** — `apps/verifier` recorded a passing `brave_search` probe (2026-08-16T00:07:59Z, `GET /web/search?q=foundry&count=1` → 1 result) and `research.web_search` resolves `live_verified`. The `loop_cycles` row was carrying a stale `blocked` status from 19:44 because nothing retracted it; that is fixed in `LoopOrchestrator.#tickExclusive` and the live row is now `running`. Discover is still **not complete**: 221 evidence rows, 0 opportunity rows — clustering has not produced a candidate. Do not treat catalog probes as `live_verified`.
 
 ---
 
@@ -10,7 +10,7 @@ Company `co_01M03F7RQW2M6540BY2GZHCFBW`: Workflows `tickCompanyLoop` **COMPLETED
 
 | Track | Exact error | Human action |
 |---|---|---|
-| Discover / Brave | ~~missing~~ — **key present, direct live probe HTTP 200** (2026-08-15, real web results). Now set on `foundry-worker` + `foundry-api`. | **Unblocked at the credential layer.** A raw API 200 is *not* a verified prize method: `apps/verifier` still has to write the `integration_verifications` row, and the loop still has to complete a discover phase. Reddit keys remain absent. |
+| Discover / Brave | ~~missing~~ — **key present and `live_verified`**: `apps/verifier` wrote passing `integration_verifications` rows (2026-08-15T23:10Z, 23:41Z, 2026-08-16T00:07:59Z), `pnpm verify` reports `brave_search PROBE OK live_verified`. Set on `foundry-worker` + `foundry-api`. | **No human action left for Brave.** Still not a verified prize method: the loop must complete a discover phase (221 evidence rows, 0 opportunities — clustering is the open item). Reddit keys remain absent, so `research.web_search` runs on Brave alone. |
 | Anthropic | `ANTHROPIC_API_KEY` missing | Issue an Anthropic key. |
 | Linq Agent Pay | `POST /v3/payment_requests` **2011** `no connected payment account on file for your account` | Connect Stripe in Linq dashboard. Do **not** use Stripe Payment Link as `agentpay` `checkout_url`. Linq link/open already **HTTP 202**. |
 | Pioneer inference | **403** `card_required`: `To run inference on Pioneer, subscribe to the Hobby or Pro plan at https://agent.pioneer.ai/billing.` | Confirm billing actually authorizes inference. Then probe GLiNER2-PII + GLiGuard. Catalog is not a prize-method pass. |

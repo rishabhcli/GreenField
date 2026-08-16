@@ -80,6 +80,123 @@ export function capToolResultForModel(full: string): CappedToolResult {
   };
 }
 
+/**
+ * Consecutive iterations that add nothing new before the run is stopped.
+ *
+ * An iteration is "barren" when every tool call it made returned a
+ * (tool, input, result) triple this run has already seen. Nothing new entered
+ * the conversation, so the next request is the same question against the same
+ * evidence — a model that answered it one way will answer it that way again.
+ * Three in a row is the point where that stops being a retry and starts being a
+ * loop, and left alone it runs until something kills the process: the observed
+ * failure mode where a run burns its whole budget and reports nothing.
+ *
+ * The rule is deliberately per-iteration rather than per-call. Re-reading
+ * unchanged company state at the top of several iterations is normal and
+ * productive as long as *something* in that iteration was new; only an
+ * iteration where nothing at all was new counts against the budget.
+ */
+export const MAX_BARREN_ITERATIONS = 3;
+
+/**
+ * Wall-clock headroom kept in reserve before `deadline_at`.
+ *
+ * The executor stops before starting an iteration it cannot be confident of
+ * finishing, so that closing the run out — the terminal `agent_runs` row, the
+ * audit event, the BAND release — happens inside the deadline rather than
+ * racing it. This is a floor, not a guarantee: a single iteration can take
+ * minutes, so a run that starts an iteration with headroom to spare can still
+ * overshoot. The backstops for that are the job's own abort signal and
+ * `reapOverdueRuns`.
+ */
+export const DEADLINE_MARGIN_MS = 30_000;
+
+/**
+ * Cheap non-cryptographic digest, so the detector holds keys and not payloads.
+ *
+ * A NUL separates the three parts because it cannot occur in a tool name, in
+ * JSON, or in a UTF-8 tool result — a printable delimiter could let a differing
+ * (name, input, result) triple concatenate to the same string and read as a
+ * repeat. The length is carried alongside the hash for the same reason: two
+ * different payloads have to collide on both to be mistaken for each other.
+ */
+function fingerprint(name: string, input: unknown, result: string): string {
+  const material = `${name}\u0000${safeJson(input)}\u0000${result}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < material.length; i += 1) {
+    hash ^= material.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${name}:${material.length}:${hash.toString(16)}`;
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? 'undefined';
+  } catch {
+    return String(value);
+  }
+}
+
+export interface ObservedToolCall {
+  readonly name: string;
+  readonly input: unknown;
+  readonly result: string;
+}
+
+/**
+ * Watches for the loop that cannot make progress.
+ *
+ * Kept as its own object, with no I/O, because the decision to stop a run early
+ * is a judgement that has to be inspectable and testable on its own — not a
+ * condition buried in the middle of a 200-line method.
+ */
+export class UnproductiveLoopDetector {
+  readonly #seen = new Set<string>();
+  #barrenStreak = 0;
+  #repeatedTool: string | null = null;
+
+  constructor(private readonly limit: number = MAX_BARREN_ITERATIONS) {}
+
+  /**
+   * Records one iteration's tool calls. Returns a truthful reason to stop, or
+   * `null` to continue. Iterations with no tool calls are not judged: a turn
+   * that made no call either ends the loop on its own or is a server-side
+   * `pause_turn` continuation, and neither is evidence of a stuck agent.
+   */
+  observe(calls: readonly ObservedToolCall[]): string | null {
+    if (calls.length === 0) return null;
+
+    let novel = 0;
+    for (const call of calls) {
+      const key = fingerprint(call.name, call.input, call.result);
+      if (this.#seen.has(key)) {
+        this.#repeatedTool = call.name;
+      } else {
+        this.#seen.add(key);
+        novel += 1;
+      }
+    }
+
+    if (novel > 0) {
+      this.#barrenStreak = 0;
+      return null;
+    }
+
+    this.#barrenStreak += 1;
+    if (this.#barrenStreak < this.limit) return null;
+
+    return (
+      `Stopped after ${this.#barrenStreak} consecutive iterations in which every tool call ` +
+      `repeated an earlier call with an identical result` +
+      (this.#repeatedTool ? ` (most recently "${this.#repeatedTool}")` : '') +
+      `. No new information was reaching the model, so the run was making no progress. ` +
+      `If it was waiting for something to change, the run should end and be dispatched again ` +
+      `with a delay rather than poll inside a single run.`
+    );
+  }
+}
+
 export interface ExecutorDeps {
   readonly repos: Repositories;
   readonly llm: AnthropicAdapter;
@@ -96,6 +213,13 @@ export interface RunRequest {
   readonly objective: string;
   readonly inputRefs?: Record<string, unknown>;
   readonly maxIterations?: number;
+  /**
+   * `agent_runs.deadline_at`, ISO-8601. When supplied the executor stops itself
+   * before overrunning it, which is the difference between a run that closes out
+   * with a report and one the job timeout kills mid-request. Absent, the only
+   * wall-clock bound is `signal`, and a killed run is what you get.
+   */
+  readonly deadlineAt?: string;
   readonly signal: AbortSignal;
 }
 
@@ -153,6 +277,40 @@ export class AgentExecutor {
     let blockedReason: string | null = null;
 
     /**
+     * What the run has actually consumed and produced so far.
+     *
+     * Maintained here, not read off the loop's return value, because the loop
+     * only returns one on a clean exit. A run killed by a provider timeout at
+     * iteration 18 has genuinely spent eighteen iterations of tokens and written
+     * eighteen iterations of messages; reporting zero — which is what the catch
+     * path did — makes a real cost invisible and makes the run look like it
+     * never started. `addUsage` already wrote the truth to the row per step;
+     * this keeps the returned outcome and the audit event consistent with it.
+     */
+    let iterationsCompleted = 0;
+    let costMinorUsdSoFar = 0;
+    /**
+     * The most recent assistant prose. On a crash this is what the run had to
+     * say before it died, and handing it back is the difference between a
+     * partial report and nothing at all.
+     */
+    let lastAssistantText = '';
+
+    const barrenLoop = new UnproductiveLoopDetector();
+    /**
+     * Why the executor asked the loop to stop, recorded at the moment the
+     * decision was made. Re-deriving it afterwards would let a run that stopped
+     * for lack of progress get relabelled as a timeout simply because the
+     * deadline had also drawn close by the time the row was written.
+     */
+    const earlyStop: { reason: string | null; kind: 'deadline' | 'no_progress' | null } = {
+      reason: null,
+      kind: null,
+    };
+
+    const deadlineMs = parseDeadline(request.deadlineAt);
+
+    /**
      * Marks the boundary between "refused to start" and "started and then
      * failed". Everything before the tool loop is a precondition — the DB write
      * that claims the run, the BAND claim, the first two persisted messages. A
@@ -184,6 +342,16 @@ export class AgentExecutor {
      * iteration's oversized results rather than growing across the run.
      */
     const untruncatedToolResults = new Map<string, { full: string; omittedChars: number }>();
+
+    /**
+     * What each in-flight tool_use id was actually called with.
+     *
+     * `onStep` receives results keyed by id but not the name or arguments that
+     * produced them, and the loop detector needs all three to tell "asked the
+     * same question again" from "asked a different one". Entries are deleted as
+     * they are consumed, so this holds one iteration at a time.
+     */
+    const pendingCalls = new Map<string, { name: string; input: unknown }>();
 
     try {
       /* ---------------------------------------------------------------- */
@@ -232,8 +400,27 @@ export class AgentExecutor {
         maxIterations: request.maxIterations ?? 20,
         maxTokens: 16_000,
         signal: request.signal,
+        stopBeforeIteration: ({ iteration }) => {
+          // Order matters: a deadline is a fact about the world, a stuck loop is
+          // an inference about the run. Report the fact when both are true.
+          if (deadlineMs !== null && Date.now() > deadlineMs - DEADLINE_MARGIN_MS) {
+            const overdueBy = Date.now() - deadlineMs;
+            earlyStop.kind = 'deadline';
+            earlyStop.reason =
+              `Stopped before iteration ${iteration}: the run's deadline (${new Date(deadlineMs).toISOString()}) ` +
+              (overdueBy >= 0
+                ? `passed ${Math.round(overdueBy / 1000)}s ago`
+                : `is less than ${DEADLINE_MARGIN_MS / 1000}s away`) +
+              `, which is not enough time to complete another turn and still report. ` +
+              `${iterationsCompleted} iteration(s) of work are recorded on this run.`;
+            return earlyStop.reason;
+          }
+          if (earlyStop.reason) return earlyStop.reason;
+          return null;
+        },
         executeTool: async (call) => {
           toolCallCount += 1;
+          pendingCalls.set(call.id, { name: call.name, input: call.input });
           const outcome = await executeToolCall(tools, gate, { name: call.name, input: call.input }, toolCtx);
 
           if (!outcome.ok) {
@@ -263,12 +450,17 @@ export class AgentExecutor {
           return { content: capped.content, isError: !outcome.ok };
         },
         onStep: async (step) => {
+          iterationsCompleted = step.iteration;
+          const assistantText = textOf(step.assistant);
+          if (assistantText.length > 0) lastAssistantText = assistantText;
+
           await repos.agents.messages.append({
             runId: request.runId,
             sequence: sequence++,
             role: 'assistant',
             content: step.assistant,
           });
+          const observed: ObservedToolCall[] = [];
           for (const toolResult of step.toolResults) {
             // `step.toolResults[].content` is verbatim what `executeTool`
             // returned, so for a truncated result it is the shortened copy.
@@ -276,6 +468,14 @@ export class AgentExecutor {
             // separately record that the model was shown less than that.
             const untruncated = untruncatedToolResults.get(toolResult.toolUseId);
             untruncatedToolResults.delete(toolResult.toolUseId);
+            const call = pendingCalls.get(toolResult.toolUseId);
+            pendingCalls.delete(toolResult.toolUseId);
+            if (call) {
+              // The full result, not the copy the model saw: two oversized
+              // results that differ only past the truncation point are still
+              // different results.
+              observed.push({ name: call.name, input: call.input, result: untruncated?.full ?? toolResult.content });
+            }
             await repos.agents.messages.append({
               runId: request.runId,
               sequence: sequence++,
@@ -298,12 +498,28 @@ export class AgentExecutor {
           }
           // Usage is written per step, so a run killed mid-flight still
           // reports what it consumed.
+          costMinorUsdSoFar += step.usage.costMinorUsd;
           await repos.agents.runs.addUsage(request.runId, {
-            inputTokens: step.usage.inputTokens,
+            // With the system prompt cached, Anthropic reports cached prompt
+            // tokens in the cache counters and only the uncached delta in
+            // inputTokens. Cache-read tokens are still context the model
+            // consumed, so the row records all three; costMinorUsd already
+            // prices them at the discounted cache rates.
+            inputTokens:
+              step.usage.inputTokens +
+              step.usage.cacheCreationInputTokens +
+              step.usage.cacheReadInputTokens,
             outputTokens: step.usage.outputTokens,
             costMinorUsd: step.usage.costMinorUsd,
             toolCalls: step.toolResults.length,
           });
+
+          const barren = barrenLoop.observe(observed);
+          if (barren && !earlyStop.reason) {
+            earlyStop.reason = barren;
+            earlyStop.kind = 'no_progress';
+            log.warn({ role: role.key, iteration: step.iteration }, 'agent run making no progress; stopping early');
+          }
         },
       });
 
@@ -333,22 +549,60 @@ export class AgentExecutor {
         };
       }
 
-      if (result.stopReason === 'max_iterations') {
-        const reason = `Run hit the ${request.maxIterations ?? 20}-iteration cap without finishing.`;
+      /**
+       * The run stopped without finishing its objective.
+       *
+       * These are blocked outcomes in the sense CLAUDE.md means: a value handed
+       * back with a truthful reason, not a throw, and never dressed up as
+       * success. `agent_runs.status` has no `blocked` member — adding one is a
+       * migration, and the four it does have are terminal states, not verdicts —
+       * so the encoding is the most accurate existing status plus an explicit
+       * `blocked: true` in `output` and the reason on the outcome. Anything
+       * reading this run sees why it stopped, in words, rather than a bare
+       * "failed" that reads like a crash.
+       */
+      if (result.stopReason === 'stopped_early' || result.stopReason === 'max_iterations') {
+        const kind = earlyStop.kind ?? 'iteration_cap';
+        const hitDeadline = kind === 'deadline';
+        const reason =
+          earlyStop.reason ??
+          `Run hit the ${request.maxIterations ?? 20}-iteration cap without finishing. ` +
+            `${result.iterations} iteration(s) of work are recorded on this run.`;
         await repos.agents.runs.finish({
           id: request.runId,
-          status: 'failed',
+          // A deadline overrun is a timeout and saying so keeps `timed_out`
+          // meaning what it says. The other two are not: the run was stopped on
+          // purpose, having produced whatever it produced.
+          status: hitDeadline ? 'timed_out' : 'failed',
           roleKey: role.key,
           error: reason,
-          output: { iterations: result.iterations },
+          output: {
+            blocked: true,
+            blockedReason: reason,
+            kind,
+            iterations: result.iterations,
+            // Partial work, not a completed report — labelled so nothing
+            // downstream can mistake it for the deliverable.
+            partialText: lastAssistantText,
+          },
         });
-        await this.#audit(request, role, 'failure', { reason, kind: 'iteration_cap' });
-        return {
-          status: 'failed',
-          finalText: '',
+        await this.#audit(request, role, 'failure', {
+          reason,
+          kind,
           iterations: result.iterations,
           toolCalls: toolCallCount,
-          costMinorUsd: result.usage.costMinorUsd,
+          costMinorUsd: costMinorUsdSoFar,
+        });
+        log.warn(
+          { role: role.key, kind, iterations: result.iterations, costMinorUsd: costMinorUsdSoFar },
+          'agent run stopped without finishing',
+        );
+        return {
+          status: hitDeadline ? 'timed_out' : 'failed',
+          finalText: lastAssistantText,
+          iterations: result.iterations,
+          toolCalls: toolCallCount,
+          costMinorUsd: costMinorUsdSoFar,
           blockedReason: reason,
         };
       }
@@ -384,16 +638,27 @@ export class AgentExecutor {
       const timedOut = request.signal.aborted;
       const status: AgentRunStatus = timedOut ? 'timed_out' : 'failed';
 
+      // What the run got through before it died. The `agent_runs` counters were
+      // already incremented per step, so these numbers agree with the row; the
+      // messages are already persisted, so `partialText` points at work that
+      // exists rather than summarising it.
+      const salvage = {
+        iterations: iterationsCompleted,
+        toolCalls: toolCallCount,
+        costMinorUsd: costMinorUsdSoFar,
+        partialText: lastAssistantText,
+      };
+
       await repos.agents.runs.finish({
         id: request.runId,
         status,
         roleKey: role.key,
         error: String(detail['message'] ?? 'run failed'),
-        output: { error: detail },
+        output: { error: detail, ...salvage },
       });
-      await this.#audit(request, role, 'failure', detail);
+      await this.#audit(request, role, 'failure', { ...detail, ...salvage });
 
-      log.error({ role: role.key, err: error }, 'agent run failed');
+      log.error({ role: role.key, err: error, ...salvage }, 'agent run failed');
 
       if (!startupComplete) {
         // A failure before the tool loop is dispatch itself breaking — the BAND
@@ -406,10 +671,13 @@ export class AgentExecutor {
 
       return {
         status,
-        finalText: '',
-        iterations: 0,
+        // Partial, and the caller is told so by the non-null `blockedReason`
+        // sitting beside it. Returning '' here threw away work that is sitting
+        // in `agent_messages`, which is the opposite of degrading gracefully.
+        finalText: lastAssistantText,
+        iterations: salvage.iterations,
         toolCalls: toolCallCount,
-        costMinorUsd: 0,
+        costMinorUsd: salvage.costMinorUsd,
         blockedReason: String(detail['message'] ?? 'run failed'),
       };
     } finally {
@@ -571,4 +839,25 @@ function renderObjective(request: RunRequest): string {
 
 function stringRef(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * An unparseable deadline yields no deadline rather than an immediate stop.
+ * Refusing to run because a timestamp was malformed would turn a formatting bug
+ * into an outage; the job's abort signal and `reapOverdueRuns` still bound the
+ * run.
+ */
+function parseDeadline(deadlineAt: string | undefined): number | null {
+  if (!deadlineAt) return null;
+  const parsed = Date.parse(deadlineAt);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** The prose in an assistant turn, ignoring thinking and tool_use blocks. */
+function textOf(blocks: readonly { type: string }[]): string {
+  return blocks
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text' && typeof (b as { text?: unknown }).text === 'string')
+    .map((b) => b.text)
+    .join('')
+    .trim();
 }

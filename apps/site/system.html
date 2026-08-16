@@ -236,26 +236,35 @@
           </p>
         </div>
 
-        <div class="integ" data-reveal>
+        <!-- The provider name and the role it plays are facts about this
+             codebase: each has an adapter, a manifest and a probe. The *status*
+             is not a fact this page is allowed to state. It is computed by the
+             API from secret presence plus a dated live probe row, so the status
+             column is filled from `/readiness/providers` at runtime and
+             otherwise says, truthfully, that it has not been read. A green chip
+             typed into static HTML is exactly the claim this system forbids. -->
+        <div class="integ" id="integLive" data-reveal>
           <div class="integ-row integ-head mono" aria-hidden="true">
             <span>provider</span><span>role in the company</span><span>status</span>
           </div>
-          <div class="integ-row"><span class="integ-name">Terac</span><span class="integ-role">Human expert review and consumer studies on demand</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Stripe</span><span class="integ-role">Payments, checkout, webhooks, refunds, reconciliation</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Render</span><span class="integ-role">Control plane, workers, cron, managed datastores</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Whop</span><span class="integ-role">Commerce and business-operation primitives</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Linq</span><span class="integ-role">Customer support over iMessage, RCS, SMS, and voice</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Superserve</span><span class="integ-role">Persistent, secure sandboxes for long-running agents</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Replay</span><span class="integ-role">Autonomous QA as a release gate, with root-cause reports</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">BAND</span><span class="integ-role">Agent-to-agent and human coordination with governance</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Sandbox0</span><span class="integ-role">Isolated execution, workspaces, and credential control</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Solari</span><span class="integ-role">Cloud browsers, sandboxes, and GUI computers for agents</span><span class="chip chip-verified">probe verified</span></div>
-          <div class="integ-row"><span class="integ-name">Lovable</span><span class="integ-role">Programmatic storefront generation and iteration</span><span class="chip chip-wired">surface built</span></div>
-          <div class="integ-row"><span class="integ-name">Dodo Payments</span><span class="integ-role">Merchant of record for eligible digital products</span><span class="chip chip-wired">surface built</span></div>
+          <div class="integ-row" data-provider="terac"><span class="integ-name">Terac</span><span class="integ-role">Human expert review and consumer studies on demand</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="stripe"><span class="integ-name">Stripe</span><span class="integ-role">Payments, checkout, webhooks, refunds, reconciliation</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="render"><span class="integ-name">Render</span><span class="integ-role">Control plane, workers, cron, managed datastores</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="whop"><span class="integ-name">Whop</span><span class="integ-role">Commerce and business-operation primitives</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="linq"><span class="integ-name">Linq</span><span class="integ-role">Customer support over iMessage, RCS, SMS, and voice</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="superserve"><span class="integ-name">Superserve</span><span class="integ-role">Persistent, secure sandboxes for long-running agents</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="replay"><span class="integ-name">Replay</span><span class="integ-role">Autonomous QA as a release gate, with root-cause reports</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="band"><span class="integ-name">BAND</span><span class="integ-role">Agent-to-agent and human coordination with governance</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="sandbox0"><span class="integ-name">Sandbox0</span><span class="integ-role">Isolated execution, workspaces, and credential control</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="solari"><span class="integ-name">Solari</span><span class="integ-role">Cloud browsers, sandboxes, and GUI computers for agents</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="lovable"><span class="integ-name">Lovable</span><span class="integ-role">Programmatic storefront generation and iteration</span><span class="chip integ-status">status not read</span></div>
+          <div class="integ-row" data-provider="dodo"><span class="integ-name">Dodo Payments</span><span class="integ-role">Merchant of record for eligible digital products</span><span class="chip integ-status">status not read</span></div>
         </div>
 
-        <p class="integ-foot mono" data-reveal>
-          Status from executed verifier probes, 2026-08-15 · 24 verification rows · see VERIFICATION_EVIDENCE.md
+        <p class="integ-foot mono" id="integFoot" data-reveal>
+          Provider status is not asserted on this page. It is computed by the API from secret presence plus a
+          dated live probe, and this column fills in only when a signed-in operator loads it —
+          <a href="./console.html">open the operator console</a> for live status.
         </p>
       </div>
     </section>

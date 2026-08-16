@@ -131,6 +131,14 @@ body.console-page {
   background: rgba(255, 232, 26, 0.07);
 }
 
+/* Amber, not red. A 403 is the API working correctly — the operator has a
+   token to paste, not an incident to page. */
+.cnsl-conn[data-state='locked'] {
+  color: var(--warn);
+  border-color: rgba(255, 159, 10, 0.32);
+  background: var(--warn-soft);
+}
+
 .cnsl-conn-dot {
   width: 7px;
   height: 7px;
@@ -895,6 +903,132 @@ body.console-page {
 }
 
 /* ---------------------------------------------------------------------------
+   Agent interaction feed
+
+   A transcript, not a table: one row per block the agent emitted. The left
+   gutter carries the kind so the column reads as a rhythm (calls → result →
+   says) at a glance, and `data-turn="start"` puts a hairline between turns so
+   several tool calls from one message read as one decision.
+--------------------------------------------------------------------------- */
+.cnsl-step {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 16px;
+  align-items: start;
+  transition: background-color 0.25s var(--ease-out);
+}
+
+.cnsl-step[data-turn='start'] {
+  border-top: 1px solid var(--border-soft);
+}
+
+.cnsl-step:first-child {
+  border-top: none;
+}
+
+.cnsl-step:hover {
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.cnsl-step-kind {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding-top: 2px;
+  text-align: right;
+}
+
+.cnsl-step-kind[data-tone='neon'] {
+  color: var(--neon);
+}
+
+.cnsl-step-kind[data-tone='info'] {
+  color: var(--info);
+}
+
+.cnsl-step-kind[data-tone='danger'] {
+  color: var(--danger);
+}
+
+.cnsl-step-kind[data-tone='muted'] {
+  color: var(--text-3);
+  opacity: 0.65;
+}
+
+.cnsl-step-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cnsl-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.cnsl-step-role {
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.cnsl-step-tool {
+  color: var(--neon);
+  opacity: 0.85;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cnsl-step-run,
+.cnsl-step-time {
+  white-space: nowrap;
+}
+
+.cnsl-step-time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.cnsl-step-text {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  /* Wrap rather than clip: the API already decided how much text exists. */
+  overflow-wrap: anywhere;
+}
+
+.cnsl-step[data-kind='tool_call'] .cnsl-step-text,
+.cnsl-step[data-kind='tool_result'] .cnsl-step-text,
+.cnsl-step[data-kind='tool_error'] .cnsl-step-text {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.cnsl-step[data-kind='thinking'] .cnsl-step-text {
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.cnsl-step[data-kind='tool_error'] .cnsl-step-text {
+  color: var(--danger);
+}
+
+.cnsl-step-note {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+/* ---------------------------------------------------------------------------
    Provider matrix
 --------------------------------------------------------------------------- */
 .cnsl-providers {
@@ -1072,6 +1206,49 @@ body.console-page {
   padding: 2px 6px;
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* ---------------------------------------------------------------------------
+   Not-signed-in banner
+
+   Visually distinct from the offline banner. Same shape, amber instead of red,
+   and it carries the fix (a button) rather than a diagnosis.
+--------------------------------------------------------------------------- */
+.cnsl-locked {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  margin-bottom: 20px;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(255, 159, 10, 0.3);
+  background: var(--warn-soft);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.cnsl-locked.is-visible {
+  display: flex;
+}
+
+.cnsl-locked-title {
+  font-weight: 500;
+  color: var(--warn);
+}
+
+.cnsl-locked code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cnsl-locked .cnsl-act {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1445,6 +1622,15 @@ textarea.cnsl-input {
 
   .cnsl-audit-hash {
     display: none;
+  }
+
+  .cnsl-step {
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 9px;
+  }
+
+  .cnsl-locked {
+    flex-wrap: wrap;
   }
 
   .cnsl-toasts {

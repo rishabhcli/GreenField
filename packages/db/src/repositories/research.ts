@@ -262,20 +262,32 @@ export class PainPointRepository {
   async recomputeStats(painPointId: string): Promise<PainPointRow> {
     return qOne(
       this.pool,
-      `WITH stats AS (
+      // `linked` is kept separate from the competitor unnest on purpose: joining
+      // the lateral in before the aggregates would count an item once per
+      // competitor it mentions, so evidence_count would exceed the number of
+      // rows actually linked and the median would be weighted by name-dropping.
+      `WITH linked AS (
+         SELECT e.*
+           FROM pain_point_evidence ppe
+           JOIN evidence_items e ON e.id = ppe.evidence_id AND e.superseded_by_evidence_id IS NULL
+          WHERE ppe.pain_point_id = $1
+       ),
+       competitors AS (
+         SELECT COALESCE(array_agg(DISTINCT c) FILTER (WHERE c IS NOT NULL), '{}') AS competitors
+           FROM linked
+           LEFT JOIN LATERAL unnest(linked.competitors_mentioned) AS c ON TRUE
+       ),
+       stats AS (
          SELECT
            COUNT(*)::int                                        AS evidence_count,
-           COUNT(DISTINCT e.source_domain)::int                 AS independent_source_count,
-           COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY e.severity), 0) AS median_severity,
-           COALESCE(AVG(CASE WHEN e.purchase_intent IN ('moderate','strong') THEN 1.0 ELSE 0.0 END), 0) AS purchase_intent_ratio,
-           COALESCE(AVG(CASE WHEN e.workaround_described THEN 1.0 ELSE 0.0 END), 0) AS workaround_ratio,
-           COALESCE(MIN(e.retrieved_at), now())                 AS first_observed_at,
-           COALESCE(MAX(e.retrieved_at), now())                 AS last_observed_at,
-           COALESCE(array_agg(DISTINCT c) FILTER (WHERE c IS NOT NULL), '{}') AS competitors
-         FROM pain_point_evidence ppe
-         JOIN evidence_items e ON e.id = ppe.evidence_id AND e.superseded_by_evidence_id IS NULL
-         LEFT JOIN LATERAL unnest(e.competitors_mentioned) AS c ON TRUE
-         WHERE ppe.pain_point_id = $1
+           COUNT(DISTINCT linked.source_domain)::int            AS independent_source_count,
+           COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY linked.severity), 0) AS median_severity,
+           COALESCE(AVG(CASE WHEN linked.purchase_intent IN ('moderate','strong') THEN 1.0 ELSE 0.0 END), 0) AS purchase_intent_ratio,
+           COALESCE(AVG(CASE WHEN linked.workaround_described THEN 1.0 ELSE 0.0 END), 0) AS workaround_ratio,
+           COALESCE(MIN(linked.retrieved_at), now())            AS first_observed_at,
+           COALESCE(MAX(linked.retrieved_at), now())            AS last_observed_at,
+           (SELECT competitors FROM competitors)                AS competitors
+         FROM linked
        )
        UPDATE pain_points p
           SET evidence_count           = stats.evidence_count,

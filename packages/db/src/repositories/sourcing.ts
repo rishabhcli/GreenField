@@ -13,6 +13,7 @@ import {
   type CostComponent,
   type Incoterm,
   type LandedCostModel,
+  type LandedCostTerm,
   type RfqSpecification,
   type SupplierKind,
 } from '@foundry/core';
@@ -404,7 +405,8 @@ export class LandedCostRepository {
     currency: string;
     components: readonly CostComponent[];
     destinationCountry: string;
-    incoterm: Incoterm;
+    /** `not_applicable` for a digital line — there is no shipment to term. */
+    incoterm: LandedCostTerm;
     hsCode?: string | null;
   }): Promise<LandedCostRow> {
     const model: LandedCostModel = {
@@ -454,8 +456,11 @@ export class LandedCostRepository {
   async listForCompany(companyId: string, limit = 50): Promise<readonly LandedCostRow[]> {
     return q(
       this.db,
+      // Ordered by computed_at: this table has no created_at column, and
+      // ordering by one raised `column "created_at" does not exist` — which
+      // surfaced as the model_economics phase throwing rather than assessing.
       `SELECT ${COST_COLUMNS} FROM landed_cost_models
-        WHERE company_id = $1 ORDER BY created_at DESC LIMIT $2`,
+        WHERE company_id = $1 ORDER BY computed_at DESC LIMIT $2`,
       [companyId, limit],
       CostRow,
     );

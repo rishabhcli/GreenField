@@ -14,10 +14,14 @@
  *     agent was dispatched; it is done because opportunity rows with cited
  *     evidence exist. Every `isPhaseComplete` branch queries for the artefact
  *     the phase was supposed to produce.
- *  2. **Blocked is a first-class outcome.** When a phase cannot proceed because
- *     a capability is unavailable, the cycle records `blocked` with the
- *     capability name and remediation. It does not skip ahead, and it does not
- *     pretend the phase succeeded.
+ *  2. **Blocked is a first-class outcome, and a reversible one.** When a phase
+ *     cannot proceed because a capability is unavailable, the cycle records
+ *     `blocked` with the capability name and remediation. It does not skip
+ *     ahead, and it does not pretend the phase succeeded. Equally, `blocked` is
+ *     a claim about *now*: the next tick re-derives it from the live capability
+ *     registry, and an assessment that no longer blocks retracts the stored
+ *     block. A credential arriving is the expected case, not an exception, so a
+ *     stale `blocked_reason` must never be able to pin the company.
  *  3. **One tick at a time, per company.** Assessment and advancement are a
  *     read-then-write pair with no protection of their own, so two overlapping
  *     ticks would each read the same phase, each conclude it was complete, and
@@ -26,7 +30,15 @@
  *     comment on `tick` for what specifically goes wrong without it.
  */
 
-import { LOOP_PHASE_ORDER, DEFAULT_SELECTION_GATES, ValidationError, type Capability, type LoopPhase } from '@foundry/core';
+import {
+  LOOP_PHASE_ORDER,
+  DEFAULT_SELECTION_GATES,
+  ValidationError,
+  productLineOf,
+  type Capability,
+  type LoopPhase,
+  type ProductLine,
+} from '@foundry/core';
 import { companyConfig, tryAdvisoryLock } from '@foundry/db';
 import { getLogger } from '@foundry/obs';
 import type { ServiceDeps } from '../deps.js';
@@ -238,6 +250,34 @@ export class LoopOrchestrator {
         detail: assessment.blockedOn.remediation,
         blockedOnCapability: assessment.blockedOn.capability,
       };
+    }
+
+    // The assessment found nothing blocking, so any `blocked` status still on
+    // the row is now a false statement about the world and must be retracted
+    // before this tick does anything else.
+    //
+    // This is the recovery path for the normal case the whole capability
+    // registry is built around: a credential is issued, `apps/verifier` records
+    // a passing probe, the capability goes `live_verified`, and the phase that
+    // was waiting on it can proceed. Without this, nothing retracts the block —
+    // `advance` (the only other writer that clears `blocked_reason`) runs solely
+    // when the phase is *complete*, so a cycle blocked at `discover` on a
+    // missing BRAVE_SEARCH_API_KEY keeps naming that key as the reason it is
+    // stuck for as long as clustering is still in flight, hours after the key
+    // was set and the probe passed. That stale row is not cosmetic: it is what
+    // `GET /api/company/loop`, `/readiness` and the CEO's own `company.status`
+    // tool read, so the company would be told to go fix a credential that has
+    // been live and verified all along.
+    //
+    // It is safe to clear unconditionally here: a capability that is genuinely
+    // still unavailable produces `assessment.blockedOn` above and returns
+    // before this point, and the global kill switch blocks even earlier.
+    if (cycle.status === 'blocked') {
+      await this.deps.repos.loop.unblock(cycle.id);
+      log.info(
+        { cycleId: cycle.id, phase, clearedCapability: cycle.blocked_on_capability },
+        'loop cycle unblocked: the capability it was waiting on is available again',
+      );
     }
 
     if (assessment.complete) {
@@ -452,6 +492,37 @@ export class LoopOrchestrator {
 
   async #assessSource(companyId: string): Promise<PhaseAssessment> {
     const quoteCount = await this.deps.repos.sourcing.quotes.countGrounded(companyId);
+
+    // A digital product has no supplier, so there is no RFQ to send and no
+    // quote that could ever arrive. Waiting here would not be caution, it would
+    // be a phase parked on an artefact that does not exist for this kind of
+    // business — indefinitely, since `sourcing.rfq_submit` and
+    // `sourcing.quote_retrieve` have no live provider either. The phase
+    // therefore completes, but it completes *stating why*: `performed: false`
+    // with the reason recorded on the cycle, in the same shape `expert_validate`
+    // uses when it proceeds without a review. No supplier, RFQ, quote or
+    // supplier_quotes row is created, and `groundedQuoteCount` reports the real
+    // count (normally 0) rather than implying sourcing happened.
+    if (await this.#isDigital(companyId)) {
+      return {
+        complete: true,
+        detail:
+          'digital product line: there is no supplier to source from, so sourcing completes without a quote',
+        outputs: {
+          source: {
+            performed: false,
+            productLine: 'digital',
+            reason:
+              'commerce.productLine is "digital"; a digital product has no supplier, no RFQ and no supplier quote. ' +
+              'No supplier, quote or cost figure was fabricated to satisfy this phase.',
+            groundedQuoteCount: quoteCount,
+            caveat:
+              'unit economics for this line are modelled from measured marginal delivery cost, not from a supplier quote',
+          },
+        },
+      };
+    }
+
     if (quoteCount === 0) {
       const status = this.#capabilityStatus('sourcing.supplier_search');
       if (!status.usable) {
@@ -477,7 +548,16 @@ export class LoopOrchestrator {
     const models = await this.deps.repos.sourcing.landedCosts.listForCompany(companyId);
     const viable = models.filter((m) => m.grounded_ratio >= DEFAULT_SELECTION_GATES.minGroundedWeightRatio);
     if (models.length === 0) {
-      return { complete: false, detail: 'no landed-cost model has been built yet' };
+      // Both lines require a real unit-economics model before launch — a digital
+      // product still has marginal cost, and an opportunity cannot be selected
+      // without a contribution margin. Only the inputs differ, so only the
+      // wording of what is missing differs.
+      return {
+        complete: false,
+        detail: (await this.#isDigital(companyId))
+          ? 'no unit-economics model has been built yet from the measured marginal cost of delivering a digital unit'
+          : 'no landed-cost model has been built yet',
+      };
     }
     if (viable.length === 0) {
       // A real, common outcome: the unit economics do not work. The loop must
@@ -716,7 +796,12 @@ export class LoopOrchestrator {
           phase,
         }, { system: true });
 
-      case 'source':
+      case 'source': {
+        // Assessment completes `source` outright on a digital line, so this is
+        // normally unreachable there. Guarding anyway: an operator forcing the
+        // phase must not spend a sourcing manager's inference budget hunting
+        // suppliers for a product that has none.
+        if (productLineOf(company.config) === 'digital') return false;
         return this.#dispatch(companyId, cycleId, 'sourcing_manager', {
           objective:
             'Find real suppliers for the selected opportunity and obtain quotes. ' +
@@ -724,6 +809,7 @@ export class LoopOrchestrator {
           phase,
           opportunityId: company.selected_opportunity_id,
         });
+      }
 
       case 'brand':
         return this.#dispatch(companyId, cycleId, 'brand_manager', {
@@ -885,11 +971,43 @@ export class LoopOrchestrator {
         const opportunityId = company.selected_opportunity_id;
         if (!opportunityId) return false;
         let destination = 'US';
+        let currency = 'USD';
         try {
-          destination = companyConfig(company).commerce.shipsFrom[0] ?? 'US';
+          const config = companyConfig(company);
+          destination = config.commerce.shipsFrom[0] ?? 'US';
+          currency = config.commerce.baseCurrency;
         } catch {
           destination = 'US';
+          currency = 'USD';
         }
+
+        if (productLineOf(company.config) === 'digital') {
+          // No quotes exist and none can, so the model is built from what the
+          // company has actually been charged to run itself. `buildDigital`
+          // refuses if nothing has been measured — that refusal is the correct
+          // outcome, not a case to paper over with an estimate.
+          const opportunity = await this.deps.repos.research.opportunities.byId(opportunityId);
+          try {
+            await economics.buildDigital({
+              companyId,
+              opportunityId,
+              currency,
+              destinationCountry: destination,
+              sellingPriceMinor: opportunity.assumed_selling_price_cents,
+            });
+            return true;
+          } catch (error) {
+            if (error instanceof ValidationError) {
+              getLogger().warn(
+                { opportunityId, err: error.message },
+                'digital unit-cost model refused; nothing was estimated',
+              );
+              return false;
+            }
+            throw error;
+          }
+        }
+
         const quotes = await this.deps.repos.sourcing.quotes.forOpportunity(opportunityId);
         const opportunity = await this.deps.repos.research.opportunities.byId(opportunityId);
         let built = 0;
@@ -953,6 +1071,25 @@ export class LoopOrchestrator {
 
   #capabilityStatus(capability: Capability) {
     return this.deps.capabilities.resolveCapability(capability);
+  }
+
+  /**
+   * What this company sells, read straight from the stored config.
+   *
+   * Deliberately not inferred from the mission text or the opportunity title:
+   * string-matching a prose field would make the loop's behaviour depend on how
+   * a sentence was phrased, and a reworded mission would silently change which
+   * artefacts a phase waits for. `productLineOf` reads the one declared field
+   * and falls back to `physical`, so an unset or drifted config keeps the
+   * behaviour that existed before this field did.
+   */
+  async #productLine(companyId: string): Promise<ProductLine> {
+    const company = await this.deps.repos.companies.byId(companyId);
+    return productLineOf(company.config);
+  }
+
+  async #isDigital(companyId: string): Promise<boolean> {
+    return (await this.#productLine(companyId)) === 'digital';
   }
 
   /** Human-readable position in the cycle, for the operator view. */

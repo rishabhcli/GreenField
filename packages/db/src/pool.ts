@@ -77,6 +77,14 @@ export function createPool(config: PoolConfig): DbPool {
   const pool = new Pool({
     connectionString: config.connectionString,
     max: config.maxConnections ?? 10,
+    // Deliberately shorter than any plausible network idle-kill window. The
+    // external Render endpoint is reached over the public internet, where the
+    // load balancer and any NAT in between will silently drop an idle TCP
+    // session after a few minutes. Reaping our own idle clients first means the
+    // pool decides when a connection dies, instead of discovering it inside a
+    // query. A long agent run holds no transaction and queries intermittently
+    // over many minutes, so it mostly pays a fresh TLS handshake — a few tens of
+    // milliseconds against a run measured in minutes, which is the right trade.
     idleTimeoutMillis: config.idleTimeoutMs ?? 30_000,
     connectionTimeoutMillis: config.connectionTimeoutMs ?? 10_000,
     application_name: config.applicationName,
@@ -84,6 +92,15 @@ export function createPool(config: PoolConfig): DbPool {
     // A query that has been cancelled server-side should not leave the client
     // waiting for a response that will never come.
     query_timeout: (config.statementTimeoutMs ?? 30_000) + 5_000,
+    // TCP keepalive is off by default in `pg`, and that default is wrong for a
+    // database on the far side of the public internet. Without it, a socket the
+    // network has already discarded still looks alive to the pool, which hands
+    // it to the next caller; that caller is the one that dies, with
+    // `Connection terminated unexpectedly`. Probing from 10s of quiet both keeps
+    // the intermediary's mapping alive and turns a dead peer into a connection
+    // error the pool can replace between queries rather than during one.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
     // Render's managed certificate chain is not in Node's default trust store
     // for the external endpoint. TLS is still negotiated and the traffic is
     // encrypted; only chain verification is relaxed, which is what Render's own
@@ -91,13 +108,34 @@ export function createPool(config: PoolConfig): DbPool {
     ...(useTls ? { ssl: { rejectUnauthorized: false } } : {}),
   });
 
-  // An idle client erroring must not take down the process — the pool replaces
-  // it and the next query reconnects.
+  // An idle client erroring must not take down the process. `pg-pool` re-emits
+  // it here precisely because there is no query promise left to reject, so an
+  // unhandled `error` event would be an unhandled EventEmitter error and take
+  // the worker with it. The pool has already discarded the client by the time
+  // this runs; the next checkout reconnects.
   pool.on('error', (error: Error) => {
     getLogger().error({ err: error }, 'idle postgres client error');
   });
 
   return pool;
+}
+
+/**
+ * `pool.connect()` with the same classification every query gets.
+ *
+ * Checkout is where a dropped connection most often surfaces — the pool notices
+ * the socket is gone while handing one out, or the connect itself times out —
+ * and every transaction helper below used to call `pool.connect()` outside its
+ * `try`, so those failures escaped `mapPostgresError` entirely and reached the
+ * worker as an unclassified `Error`. An unclassified error is non-retryable by
+ * design, which is the opposite of what a lost connection warrants.
+ */
+async function connect(pool: DbPool): Promise<DbClient> {
+  try {
+    return await pool.connect();
+  } catch (error) {
+    throw mapPostgresError(error, { phase: 'connect' });
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -111,14 +149,112 @@ interface PgError extends Error {
   table?: string;
 }
 
-const RETRYABLE_CODES = new Set([
+/**
+ * SQLSTATEs where the correct response is to try again.
+ *
+ * Class 08 is "connection exception" and class 57 is "operator intervention";
+ * both mean the connection, not the statement, is what went wrong. Serialization
+ * and deadlock failures are retryable because the whole unit is re-executed.
+ *
+ * Deliberately absent: `08007` (transaction_resolution_unknown). The connection
+ * dropped between COMMIT and the acknowledgement, so the transaction may or may
+ * not have applied. Calling that retryable would let the platform re-run a
+ * mutation that already committed; it stays `internal` so a human decides.
+ */
+const RETRYABLE_SQLSTATES = new Set([
   '40001', // serialization_failure
   '40P01', // deadlock_detected
   '53300', // too_many_connections
-  '57P03', // cannot_connect_now
+  '57P01', // admin_shutdown — server told us to go away
+  '57P02', // crash_shutdown
+  '57P03', // cannot_connect_now — starting up / recovering
   '08000', // connection_exception
+  '08001', // sqlclient_unable_to_establish_sqlconnection
+  '08003', // connection_does_not_exist
+  '08004', // sqlserver_rejected_establishment_of_sqlconnection
   '08006', // connection_failure
 ]);
+
+/**
+ * Node socket and DNS `error.code`s that reach us through `pg` when the network
+ * between this process and Render's Postgres endpoint fails.
+ *
+ * These are structured signals, not prose: `code` is set by libuv and `pg`
+ * passes the error through untouched, so keying on it is the same mechanical
+ * classification the SQLSTATE table above does.
+ */
+const RETRYABLE_SYSCALL_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'ENOTFOUND', // DNS
+  'EAI_AGAIN', // DNS, temporary
+]);
+
+/**
+ * Connection failures `pg` raises with no code of any kind.
+ *
+ * Everything else in this file keys off a structured signal, because
+ * string-matching a driver's prose is how a taxonomy rots. This set is the
+ * documented exception and the reason is structural, not stylistic: at these
+ * call sites `pg` constructs a bare `Error` carrying nothing but a message — no
+ * SQLSTATE, no `errno`, no `severity`, nothing to key on.
+ *
+ *   pg/lib/client.js:204   'Connection terminated unexpectedly'   (socket closed under us)
+ *   pg/lib/client.js:204   'Connection terminated'                (closed by our own end())
+ *   pg/lib/client.js:170   'timeout expired'                      (client connectionTimeout)
+ *   pg/lib/client.js:707   'Query read timeout'                   (client query_timeout)
+ *   pg/lib/client.js:749   'Client has encountered a connection error and is not queryable'
+ *   pg/lib/client.js:756   'Client was closed and is not queryable'
+ *   pg-pool/index.js:224   'timeout exceeded when trying to connect'
+ *   pg-pool/index.js:276   'Connection terminated due to connection timeout'
+ *
+ * `Connection terminated unexpectedly` is the one that was observed in
+ * production: an idle socket dropped by the network between this process and
+ * `dpg-*.oregon-postgres.render.com`, handed to the next query, surfacing as an
+ * unclassified error that the queue then treated as permanent and refused to
+ * retry.
+ *
+ * Messages are compared exactly rather than by substring or regex. A `pg`
+ * upgrade that rewords one of them fails closed — back to `internal`, which is
+ * the behaviour that shipped before this fix — instead of silently widening
+ * what the platform is willing to retry.
+ */
+const CODELESS_CONNECTION_LOSS = new Set([
+  'Connection terminated unexpectedly',
+  'Connection terminated',
+  'Client has encountered a connection error and is not queryable',
+  'Client was closed and is not queryable',
+]);
+
+const CODELESS_CONNECTION_TIMEOUT = new Set([
+  'Connection terminated due to connection timeout',
+  'timeout exceeded when trying to connect',
+  'Query read timeout',
+  'timeout expired',
+]);
+
+/**
+ * `pg-pool` wraps the underlying failure as `{ cause }` (see index.js:276), so
+ * the code that classifies the error is often one level down. Bounded so a
+ * self-referential chain cannot spin.
+ */
+function errorChain(error: unknown, maxDepth = 5): Error[] {
+  const chain: Error[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < maxDepth && current instanceof Error; depth += 1) {
+    chain.push(current);
+    const next: unknown = (current as { cause?: unknown }).cause;
+    if (next === current) break;
+    current = next;
+  }
+  return chain;
+}
 
 export function mapPostgresError(error: unknown, context: Record<string, unknown> = {}): Error {
   // A domain error raised inside a transaction (an illegal state transition, a
@@ -127,9 +263,30 @@ export function mapPostgresError(error: unknown, context: Record<string, unknown
   // the HTTP status the API returns.
   if (error instanceof FoundryError) return error;
 
-  const pgError = error as PgError;
+  const chain = errorChain(error);
+  // The link carrying the code is the one carrying `constraint` and `detail`
+  // too, so classification and context stay taken from the same object.
+  const pgError = (chain.find((link) => (link as PgError).code !== undefined) ?? error) as PgError;
   const code = pgError?.code;
-  if (!code) return toFoundryError(error);
+
+  if (!code) {
+    for (const link of chain) {
+      if (CODELESS_CONNECTION_LOSS.has(link.message)) {
+        return new ProviderUnavailableError('postgres', link.message, { ...context, driverError: link.message });
+      }
+      if (CODELESS_CONNECTION_TIMEOUT.has(link.message)) {
+        // `0` matches the existing 57014 convention: the driver reports that a
+        // deadline was exceeded without telling us which one, and inventing a
+        // number would be worse than reporting none.
+        return new TimeoutError(`postgres: ${link.message}`, 0);
+      }
+    }
+    return toFoundryError(error);
+  }
+
+  if (RETRYABLE_SYSCALL_CODES.has(code)) {
+    return new ProviderUnavailableError('postgres', `${code}: ${pgError.message}`, { ...context, syscallCode: code });
+  }
 
   if (code === '23505') {
     return new ConflictError(`Unique constraint violated: ${pgError.constraint ?? 'unknown'}`, {
@@ -157,7 +314,7 @@ export function mapPostgresError(error: unknown, context: Record<string, unknown
   if (code === '57014') {
     return new TimeoutError('postgres statement', 0);
   }
-  if (RETRYABLE_CODES.has(code)) {
+  if (RETRYABLE_SQLSTATES.has(code)) {
     return new ProviderUnavailableError('postgres', `${code}: ${pgError.message}`, context);
   }
   return new InternalError(`Postgres error ${code}: ${pgError.message}`, error, context);
@@ -247,7 +404,7 @@ export async function exec(db: Queryable, sql: string, params: readonly unknown[
 /* -------------------------------------------------------------------------- */
 
 export async function withTransaction<T>(pool: DbPool, fn: (client: DbClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
+  const client = await connect(pool);
   try {
     await client.query('BEGIN');
     const result = await fn(client);
@@ -282,7 +439,7 @@ export async function withSerializableTransaction<T>(
 ): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const client = await pool.connect();
+    const client = await connect(pool);
     try {
       await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
       const result = await fn(client);
@@ -327,7 +484,7 @@ export async function withRowLockTransaction<T>(
   pool: DbPool,
   fn: (client: DbClient) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect();
+  const client = await connect(pool);
   try {
     await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
     const result = await fn(client);
@@ -354,7 +511,7 @@ export async function withRowLockTransaction<T>(
  */
 export async function withAdvisoryLock<T>(pool: DbPool, key: string, fn: () => Promise<T>): Promise<T> {
   const lockId = advisoryLockId(key);
-  const client = await pool.connect();
+  const client = await connect(pool);
   try {
     await client.query('SELECT pg_advisory_lock($1)', [lockId]);
     return await fn();
@@ -375,7 +532,7 @@ export async function tryAdvisoryLock<T>(
   fn: () => Promise<T>,
 ): Promise<T | undefined> {
   const lockId = advisoryLockId(key);
-  const client = await pool.connect();
+  const client = await connect(pool);
   try {
     const result = await client.query<{ pg_try_advisory_lock: boolean }>(
       'SELECT pg_try_advisory_lock($1)',

@@ -14,7 +14,7 @@ Last updated: 2026-08-15. Secrets in this file: **none**.
 |---|---|
 | Company | `co_01M03F7RQW2M6540BY2GZHCFBW` |
 | Workflows `tickCompanyLoop` | **COMPLETED** `trn-0994gda0c8fvlk1mc73fl86u0` |
-| Tick action / discover | **blocked** on `research.web_search` — `BRAVE_SEARCH_API_KEY` missing. Loop output, not a workflow failure. Not a Brave success. |
+| Tick action / discover | **no longer blocked on `research.web_search`** — `BRAVE_SEARCH_API_KEY` present, verifier probe passed 2026-08-16T00:07:59Z, capability `live_verified`. Cycle `task_01M03F84J1T2EVH9BNN0A66WG3` is `running` at phase `discover`, incomplete: 221 `evidence_items`, 0 `opportunities`. A `live_verified` capability is not a Brave prize-method pass. |
 | Anthropic | `ANTHROPIC_API_KEY` missing |
 | Loop | **not DONE** |
 
@@ -45,7 +45,7 @@ Last updated: 2026-08-15. Secrets in this file: **none**.
 | Replay QA exploration completed | **recording-lost** (infra-failed). 0 product bugs ≠ pass. No clean report. |
 | Lovable MCP site.generate | No OAuth (`LOVABLE_OAUTH_ACCESS_TOKEN` missing). |
 | Dodo products/checkout | **HTTP 401**. |
-| Discover / `research.web_search` | 2026-08-15: `BRAVE_SEARCH_API_KEY` present, `GET /res/v1/web/search` → **HTTP 200** with real web results; key pushed to `foundry-worker` + `foundry-api` (Render API, HTTP 200 each). **Not `live_verified`** — a hand-run curl is not `apps/verifier` writing an `integration_verifications` row. Loop **not DONE**. |
+| Discover / `research.web_search` | **`live_verified`** as of 2026-08-16T00:07:59.031Z. `apps/verifier` (`pnpm verify`) ran the manifest probe `GET /res/v1/web/search?q=foundry&count=1` and wrote a passing `integration_verifications` row: `brave_search  PROBE OK  live_verified  returned 1 result(s)` (352ms). Registry resolves `research.web_search` → provider `brave_search`, state `live_verified`, `usable=true`. No hand-inserted row, no stub. Discover is still **not complete** — 221 `evidence_items`, 0 `opportunities`; clustering is the open item. Loop **not DONE**. |
 | Anthropic | `ANTHROPIC_API_KEY` missing. |
 
 ### Lovable (this owner)
@@ -218,3 +218,89 @@ are unchanged.
 | Superserve | Pause **proven** — VM state preserved. Distinct from sandbox0. | `superserve-sandbox0-pause-semantics.test.ts`, `superserve-identities.test.ts`, `superserve-adapter.test.ts` | **None** |
 | sandbox0 | Exec **live**. Pause does **not** keep processes. | same pause-semantics file + `sandbox0-identities.test.ts` + `sandbox0-adapter.test.ts` | **None** |
 | Solari | Exec **live**. | `solari-navigate.test.ts` (no fabricated DOM), `solari-compliance.test.ts` (ToS/robots `PolicyDeniedError`), `solari-browser-sourcing.test.ts`, `solari-replay.test.ts` (missing URL blocked) | Discover: `browser_session` evidence possible. Source: **no quote artefact**. |
+
+---
+
+## Blocked-cycle recovery (2026-08-16)
+
+A `blocked` `loop_cycles` row could not retract itself. `LoopOrchestrator`
+re-derived the block on every tick, but the only writer that ever cleared
+`status` / `blocked_reason` / `blocked_on_capability` was
+`LoopCycleRepository.advance`, which runs solely when a phase is **complete**.
+So a cycle blocked at `discover` on a then-missing `BRAVE_SEARCH_API_KEY` kept
+naming that key as the reason the company was stuck for the four hours after the
+key was set and `apps/verifier` recorded a passing probe — while the same ticks
+were happily driving the phase's work. That stale row is read by
+`GET /api/company/loop`, `/readiness` and the CEO's own `company.status` tool.
+
+| Fact | Evidence |
+|---|---|
+| Probe is real | `pnpm verify` 2026-08-16T00:07:59Z — `brave_search  PROBE OK  live_verified  GET /web/search?q=foundry&count=1 returned 1 result(s)` (352ms). Written by `apps/verifier`, the only legitimate writer. |
+| Registry agrees | `ctx.capabilities.resolveCapability('research.web_search')` → `{ provider: 'brave_search', state: 'live_verified', usable: true, lastVerifiedAt: 2026-08-16T00:07:59.031Z }`. |
+| Stale row proven | `task_01M03F84J1T2EVH9BNN0A66WG3` was `status='blocked'`, `blocked_on_capability='research.web_search'`, `blocked_reason` from 2026-08-15T19:44Z, while the live assessment returned `{ complete: false, blockedOn: null }`. |
+| Fix | `packages/services/src/loop/orchestrator.ts` — `#tickExclusive` retracts the stored block once an assessment produces no `blockedOn`, before advancing or driving. |
+| Test | `packages/services/test/loop-recovery.test.ts` — 4 tests: retracts a stale block mid-phase, advances a previously blocked cycle, **keeps** the block when the capability is genuinely unavailable, and writes no unblock on a cycle that was never blocked. |
+| Live row after | `status='running'`, `blocked_reason=NULL`, `blocked_on_capability=NULL`. |
+
+This is a derived status field, not a verification record. Nothing here inserts
+into `integration_verifications`.
+
+---
+
+## Agent-run resilience: dropped Postgres connections and runaway loops (2026-08-16)
+
+Two live `agent_runs` failures on hosted Render infra, and what each turned out
+to be. Neither is a verification record; nothing here writes
+`integration_verifications`.
+
+| Fact | Evidence |
+|---|---|
+| `run_01M03XWGXJZBFS49SWRRK9VVGE` died on `Connection terminated unexpectedly` | `pg` builds that error at `pg/lib/client.js:204` as a bare `Error` with no SQLSTATE, no `errno`, no `severity`. `mapPostgresError` (`packages/db/src/pool.ts`) returned `toFoundryError(...)` → `InternalError` → `category: 'internal'` → non-retryable, so `WorkerSet.#process` (`packages/queue/src/queues.ts:295`) converted it to a BullMQ `UnrecoverableError`. A transient network drop permanently killed the job. |
+| Connection loss was also escaping classification entirely | Every transaction helper called `pool.connect()` **outside** its `try`, so a failure during checkout never reached `mapPostgresError`. Now routed through a `connect()` wrapper. |
+| Keepalive was off | `pg` defaults `keepAlive: false`. Against `dpg-*.oregon-postgres.render.com` over the public internet, an idle socket the network has discarded still looks alive to the pool until a query uses it. Now `keepAlive: true, keepAliveInitialDelayMillis: 10_000`. |
+| Pool `error` handler | Already present and correct (`pool.on('error')`); the comment now records *why* it must exist (an unhandled EventEmitter `error` would take the worker down). |
+| Classification test | `packages/db/test/pool-errors.test.ts` — 35 tests. Codeless connection-loss messages → `provider_unavailable`; codeless timeout messages → `timeout`; socket/DNS `code`s and class-08/57 SQLSTATEs → `provider_unavailable`; `08007` deliberately stays `internal` (the transaction may already have committed); an unrecognised codeless message still fails closed to `internal`. |
+| `run_01M03WYC2BKWWN5KGGBXWMT2YP` lost ~7 minutes of work | The executor already persisted every message and called `addUsage` per step, so `agent_messages` and `agent_runs.cost_minor_usd` were correct — but the catch path returned `iterations: 0, costMinorUsd: 0, finalText: ''`, so the job result and the audit event reported a run that looked like it never started. Now reports the accumulated figures and the last assistant text. |
+| No wall-clock cap inside the run | `agent.run` carries `deadlineAt` in its payload; the handler dropped it and the executor never read `agent_runs.deadline_at`. The only bound was the queue's 15-minute abort, which kills mid-request. The executor now stops before an iteration it cannot finish within `DEADLINE_MARGIN_MS` of the deadline and closes the row out as `timed_out`. |
+| No cap on an unproductive loop | Nothing detected an agent re-calling a tool that returns an unchanging result. `UnproductiveLoopDetector` stops the run after `MAX_BARREN_ITERATIONS` (3) consecutive iterations in which every tool call repeated an earlier (tool, input, result) triple. |
+| Executor tests | `packages/agents/test/executor.test.ts` — 15 tests. Six cover the detector directly; four drive the real `AnthropicAdapter.runToolLoop` with only the HTTP call stubbed: barren-loop stop, deadline stop before any spend, malformed deadline ignored, and crash-mid-loop salvage. |
+| Suite | Verified in a clean worktree at `c44cb9a` with only these six files applied: `pnpm clean && pnpm build` exit 0, `pnpm test` **960 passed / 13 skipped**, exit 0 (baseline 914 + 46 new). |
+
+Not verified: no live probe was run against Render Postgres to reproduce the
+socket drop, and the fixes were not exercised on hosted infra. `keepAlive` is
+argued from `pg`'s default and the topology, not from a captured packet trace.
+
+---
+
+## Pain-point clustering produced zero clusters from 700+ real evidence rows (2026-08-16)
+
+`research.cluster_pain_points` returned `{"clusters":0,"opportunitiesCreated":0}`
+on every call, so no opportunity could ever be discovered and the whole loop
+stalled at `discover`. Two independent defects, both proved against the live
+corpus rather than argued.
+
+| Fact | Evidence |
+|---|---|
+| The read filter sat above the confidence the collector writes | `ResearchClusterService.cluster` passed `minConfidence: 0.5`; `braveHitToDraft` (`packages/services/src/research/collect.ts:604`) writes `0.4` for every non-news web hit. Live distribution at the time: 213 rows total, **27** at ≥ 0.5, 180 Brave rows at 0.4. Running the shipped `clusterEvidence` against the live rows: 55 rows visible → **0 clusters**; all 246 rows → 2 clusters. |
+| Grouping required two items to share a domain | `groupByDomainOverlap` skipped any candidate whose `source_domain` differed from the seed's, so every cluster had `independent_source_count = 1` and the `< 2` gate in the same file made `opportunitiesCreated` structurally unreachable. The one live run that did form clusters recorded `{"clusters":2,"opportunitiesCreated":0}`. |
+| Labels were page titles, so the labelled path only grouped literal re-collections | `firstLabel` grouped on an exact `pain_point_labels[0]` match, and the collector stores `title.slice(0, 80)` there. The two live `pain_points` rows carried a truncated URL and a truncated title as their `statement`. |
+| `evidence_count` was 0 with three rows linked | Not a clustering bug: `recomputeStats` aborted with `42702 column reference "independent_source_count" is ambiguous` (fixed in `f8926d2`), leaving the column at its default after `linkEvidence` had already committed. Verbatim in `agent_messages` at `00:00:23` and `00:00:29`. |
+| `evidence_count` could also over-count | `recomputeStats` aggregated across a `LEFT JOIN LATERAL unnest(competitors_mentioned)`, counting an item once per competitor it mentions. The aggregate now runs over a `linked` CTE with the competitor unnest isolated in its own CTE. |
+| Fix: clustering is now on subject matter, across domains | IDF-weighted star clustering (`packages/services/src/research/cluster.ts`). Items link when the terms they share carry ≥ 65% of the rarer item's specificity (Σ idf²), or when ≥ 60% of the shorter item's words appear in the other. Clusters are built around the highest-degree item, so a peripheral item cannot claim two neighbours, fail `minClusterSize` and take the real cluster down with it. Each item lands in one cluster, so `evidence_count` stays a true count. |
+| Fix: the read floor now agrees with the producer | `CLUSTERABLE_EVIDENCE_MIN_CONFIDENCE = 0.35` — above the `0.3` that `refetch` and `research.update_confidence` clamp unverifiable evidence to, below the `0.4` the search path writes. |
+| Fix: statements are verbatim evidence | The statement is the highest-scoring real sentence in the cluster — published text over page title, complaint language over vocabulary match, never a bare URL or a search-engine "we cannot provide a description" placeholder. Labels are built only from words the evidence used, shown in the most common surface form the corpus wrote them in. |
+| Live run, real service, real repositories, 708 rows | `ResearchClusterService.cluster` → `{"clusters":19,"opportunitiesCreated":16,"evidenceConsidered":708}` in 36s. 19 pain points written, **16 with `independent_source_count` > 1**, max 37 distinct domains, 229 evidence rows linked. Top rows: `[ev=53 indep=37]` property maintenance software; `[ev=38 indep=25]` tenant maintenance requests; `[ev=30 indep=11]` late payments/invoices; `[ev=8 indep=7]` lien waivers; `[ev=10 indep=6]` multi-channel inventory sync. |
+| Tests | `packages/services/test/research-cluster.test.ts` — 18 tests over fixtures shaped like real collector output (`<strong>` highlighting, `&#x27;` entities, titles in `pain_point_labels`, bare-URL summaries). Pins clusters > 0, cross-domain membership, statement is never a URL and never invented, label words all occur in the evidence, one item per cluster, determinism, placeholder rows never cluster, and that the service reads at a floor ≤ 0.4 but > 0.3. |
+| Suite | `pnpm build` exit 0; `pnpm test` **1042 passed / 13 skipped**, exit 0; `pnpm lint` 0 errors (the two known warnings). |
+
+Not fixed, and still true: `median_severity` is 0 on every pain point because
+`severity` is 0 on every evidence row — the collector never classifies severity,
+purchase intent or sentiment, and deriving them from a search snippet without a
+grounded extraction pass would be invention. `DimensionScore.grounded` already
+makes that visible to scoring rather than hiding it.
+
+Live derived state written by the old code path was deleted so the loop restarts
+clean: 72 pain points, 90 `pain_point_evidence` links, 72 `graph_nodes`, and one
+fabricated `opportunities` row (`title: "probe"`, `pain_point_ids: ["__invalid_probe__"]`)
+that would have completed the `discover` gate on nothing. `evidence_items` (733
+rows) was not touched.

@@ -58,7 +58,7 @@ export interface DodoRefundData {
   readonly amountMinor: number;
 }
 
-const DIGITAL_MOR: 'payments.checkout.digital_mor' = 'payments.checkout.digital_mor';
+const DIGITAL_MOR = 'payments.checkout.digital_mor' as const;
 
 export class DodoCommerceService {
   constructor(private readonly deps: ServiceDeps) {}

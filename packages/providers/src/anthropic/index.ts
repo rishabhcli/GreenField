@@ -492,6 +492,18 @@ export class AnthropicAdapter extends ProviderAdapter {
     maxIterations?: number;
     maxTokens?: number;
     effort?: Effort;
+    /**
+     * Consulted before every request. Returning a non-null reason ends the loop
+     * with `stopReason: 'stopped_early'` and whatever usage has accrued, instead
+     * of spending another turn.
+     *
+     * The hook exists because the caller — not this adapter — owns the reasons a
+     * run should stop: a wall-clock deadline, a loop that has stopped making
+     * progress, a budget. The adapter's own `maxIterations` cap only counts
+     * turns, and counting turns says nothing about whether the next one is worth
+     * making.
+     */
+    stopBeforeIteration?: (info: { iteration: number }) => string | null;
     onStep?: (step: {
       iteration: number;
       assistant: readonly ContentBlock[];
@@ -516,6 +528,19 @@ export class AnthropicAdapter extends ProviderAdapter {
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       if (input.signal?.aborted) {
         throw new TimeoutError('agent tool loop', 0);
+      }
+
+      // Checked before the request, so the decision to stop costs nothing and
+      // everything already persisted stays the run's result.
+      if (input.stopBeforeIteration?.({ iteration })) {
+        return {
+          finalText: '',
+          stopReason: 'stopped_early',
+          refusal: null,
+          iterations: iteration - 1,
+          usage: total,
+          messages,
+        };
       }
 
       const result = await this.complete({

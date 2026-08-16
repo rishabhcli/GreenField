@@ -96,24 +96,32 @@
           </ul>
         </div>
 
+        <!-- A DIAGRAM, NOT A DASHBOARD.
+             This panel shows the *shape* of the operating ledger — the order
+             state machine, the audit row layout, the probe strip. It has never
+             been connected to the API, so it must not carry values that could
+             be read as output: no hashes, no margins, no CAC, no verdicts. The
+             label is on the panel itself (and in the accessible name), not
+             only in the caption below it, because a screenshot crops captions.
+             Live figures live one click away at ./console.html. -->
         <figure class="hero-visual" data-reveal style="--rd:200ms">
           <div class="console-wrap" id="consoleWrap">
             <div class="console-shadow-pane" aria-hidden="true"></div>
-            <div class="console" id="console">
+            <div class="console is-illustration" id="console" role="img" aria-label="Diagram of the operator console layout. Illustration — not live data.">
               <div class="console-bar">
-                <span class="console-title mono">yellofield — operating ledger</span>
-                <span class="chip chip-verified">chain verified</span>
+                <span class="console-title mono">yellofield — operating ledger (layout diagram)</span>
+                <span class="chip chip-illus">illustration · not live</span>
               </div>
               <div class="console-body">
                 <div class="ledger-card">
                   <div class="ledger-head">
-                    <span class="ledger-label mono">CEO · DECISION 0147</span>
+                    <span class="ledger-label mono">CEO · DECISION</span>
                     <span class="chip chip-approve">approve</span>
                   </div>
-                  <p class="ledger-title">Opportunity #14 — private-label sourcing cleared</p>
+                  <p class="ledger-title">What a cleared opportunity looks like once sourcing returns a real quote</p>
                   <div class="ledger-meta mono">
-                    <span>grounded margin 61.2%</span>
-                    <span>break-even CAC $18.40</span>
+                    <span>grounded margin</span>
+                    <span>break-even CAC</span>
                     <span>budget cap enforced</span>
                   </div>
                 </div>
@@ -128,31 +136,34 @@
                   <span class="state mono">SHIPPED</span>
                 </div>
 
-                <div class="audit" aria-label="Audit hash chain">
+                <!-- Columns, not values. A plausible-looking hash is the single
+                     most deceptive thing this panel could render, so the hash
+                     column shows its own name instead of a fabricated digest. -->
+                <div class="audit" aria-label="Audit chain row layout">
                   <div class="audit-row mono">
-                    <span class="audit-pos">#0421</span>
-                    <span class="audit-hash">a7f3…c21</span>
+                    <span class="audit-pos">position</span>
+                    <span class="audit-hash">sha256</span>
                     <span class="audit-action">order.paid</span>
-                    <span class="audit-note">webhook signature verified</span>
+                    <span class="audit-note">chained to the previous event</span>
                   </div>
                   <div class="audit-row mono">
-                    <span class="audit-pos">#0422</span>
-                    <span class="audit-hash">b19e…884</span>
+                    <span class="audit-pos">position</span>
+                    <span class="audit-hash">sha256</span>
                     <span class="audit-action">budget.reserve</span>
-                    <span class="audit-note">policy: approved</span>
+                    <span class="audit-note">actor, authority, outcome</span>
                   </div>
                   <div class="audit-row mono">
-                    <span class="audit-pos">#0423</span>
-                    <span class="audit-hash">c02d…5a9</span>
+                    <span class="audit-pos">position</span>
+                    <span class="audit-hash">sha256</span>
                     <span class="audit-action">rfq.sent</span>
-                    <span class="audit-note">awaiting quotes</span>
+                    <span class="audit-note">append-only, UPDATE refused</span>
                   </div>
                 </div>
 
-                <div class="probe-row mono" aria-label="Integration probes">
-                  <span class="probe"><span class="sq sq-live" aria-hidden="true"></span>stripe</span>
-                  <span class="probe"><span class="sq sq-live" aria-hidden="true"></span>render</span>
-                  <span class="probe"><span class="sq sq-live" aria-hidden="true"></span>terac</span>
+                <div class="probe-row mono" aria-label="Integration probe layout">
+                  <span class="probe"><span class="sq sq-wired" aria-hidden="true"></span>stripe</span>
+                  <span class="probe"><span class="sq sq-wired" aria-hidden="true"></span>render</span>
+                  <span class="probe"><span class="sq sq-wired" aria-hidden="true"></span>terac</span>
                   <span class="probe"><span class="sq sq-wired" aria-hidden="true"></span>replay gate</span>
                 </div>
               </div>
@@ -160,15 +171,16 @@
           </div>
           <div class="float-card float-card-a" aria-hidden="true">
             <span class="float-card-k mono">replay qa</span>
-            <span class="float-card-v">gate passed · 0 critical</span>
+            <span class="float-card-v">holds the release gate</span>
           </div>
           <div class="float-card float-card-b" aria-hidden="true">
             <span class="float-card-k mono">unit contribution</span>
-            <span class="float-card-v"><span class="float-card-neon">$21.40</span> · grounded</span>
+            <span class="float-card-v"><span class="float-card-neon">quoted</span> · never assumed</span>
           </div>
           <figcaption class="hero-caption mono">
-            Illustrative operating view — the state machine, ledger, and audit chain are implemented and tested.
-            <a href="./console.html">Open the live console →</a>
+            Illustrative operating view — a layout diagram, not system output. No number above was produced by a
+            run. The state machine, ledger and audit chain are implemented and tested; the live values are in the
+            console. <a href="./console.html">Open the live console →</a>
           </figcaption>
         </figure>
       </div>

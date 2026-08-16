@@ -10,6 +10,13 @@
  * caller cannot list pending approvals, inspect budgets, or approve a purchase.
  * Client-supplied actor names (`decidedBy` / `engagedBy` / `releasedBy`) are
  * ignored; the audit actor is the authenticated operator.
+ *
+ * The `*Label` fields are the one concession to a shared token: several people
+ * can hold one `OPERATOR_API_TOKEN`, so the console lets a human type who they
+ * are. That string is recorded **inside `detail`, as an annotation** — it never
+ * becomes `actor_id`. The authenticated identity stays authoritative, and the
+ * label is exactly as trustworthy as whoever holds the token, which is what a
+ * reviewer needs to know.
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -18,15 +25,25 @@ import { KillSwitchScope, ValidationError, type BudgetScope } from '@foundry/cor
 import { getLogger } from '@foundry/obs';
 import type { AppContext } from '@foundry/runtime';
 import { requireOperator } from '../auth.js';
+import { registerAgentActivityRoute } from './agent-activity.js';
+
+/** An unverified, self-declared name. Bounded so it cannot be used as storage. */
+const OperatorLabel = z.string().trim().min(3).max(120).optional();
 
 const DecideApproval = z.object({
   decision: z.enum(['approved', 'rejected']),
   rationale: z.string().min(3),
+  decidedByLabel: OperatorLabel,
 });
 
 const EngageKillSwitch = z.object({
   scope: KillSwitchScope,
   reason: z.string().min(3),
+  engagedByLabel: OperatorLabel,
+});
+
+const ReleaseKillSwitch = z.object({
+  releasedByLabel: OperatorLabel,
 });
 
 const AuditListQuery = z.object({
@@ -101,7 +118,11 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
       subjectType: 'approval',
       subjectRefId: approval.id,
       outcome: 'success',
-      detail: { authority: approval.authority, rationale: body.rationale },
+      detail: {
+        authority: approval.authority,
+        rationale: body.rationale,
+        ...(body.decidedByLabel ? { operatorLabel: body.decidedByLabel } : {}),
+      },
       amountMinor: approval.amount_minor,
       currency: approval.currency,
     });
@@ -147,7 +168,11 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
       subjectType: 'kill_switch',
       subjectRefId: engaged.id,
       outcome: 'success',
-      detail: { scope: body.scope, reason: body.reason },
+      detail: {
+        scope: body.scope,
+        reason: body.reason,
+        ...(body.engagedByLabel ? { operatorLabel: body.engagedByLabel } : {}),
+      },
     });
 
     log.warn({ scope: body.scope, by: actorId }, 'kill switch engaged');
@@ -157,6 +182,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
   app.post<{ Params: { scope: string }; Body: unknown }>('/api/kill-switches/:scope/release', async (request, reply) => {
     const actorId = await operator(request as never);
     const scope = KillSwitchScope.parse(request.params.scope);
+    const body = ReleaseKillSwitch.parse(request.body ?? {});
     const companyId = await company();
 
     await ctx.repos.governance.killSwitches.release(companyId, scope, actorId);
@@ -169,7 +195,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
       subjectType: 'kill_switch',
       subjectRefId: scope,
       outcome: 'success',
-      detail: { scope },
+      detail: { scope, ...(body.releasedByLabel ? { operatorLabel: body.releasedByLabel } : {}) },
     });
 
     log.info({ scope, by: actorId }, 'kill switch released');
@@ -336,4 +362,12 @@ export async function registerGovernanceRoutes(app: FastifyInstance, ctx: AppCon
       children: children.map((c) => ({ id: c.id, roleKey: c.role_key, status: c.status })),
     };
   });
+
+  /**
+   * The message-level interaction feed. Registered here rather than from the
+   * app entrypoint so it inherits this file's rule without restating it: the
+   * operator token gates the read, and it lives beside the run listing it
+   * expands on.
+   */
+  await registerAgentActivityRoute(app, ctx);
 }

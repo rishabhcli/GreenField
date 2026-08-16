@@ -71,6 +71,24 @@
       </div>
     </div>
 
+    <!-- Not-signed-in banner. Distinct from the offline banner on purpose: the
+         API answering 403 is a working API refusing an anonymous read, which is
+         a different problem with a different fix. -->
+    <div class="cnsl-locked" id="authBanner" role="status">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0">
+        <rect x="4" y="10.5" width="16" height="10.5" rx="2.5" />
+        <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+      </svg>
+      <div>
+        <span class="cnsl-locked-title">Not signed in.</span>
+        The API is reachable and answered <code>403</code>. Every read on this control plane is
+        authenticated — approvals, budgets, orders, the audit chain and provider status all require
+        <code>OPERATOR_API_TOKEN</code>. The panels below are empty because this browser has no token,
+        not because the company has no data.
+      </div>
+      <button class="cnsl-act" id="authBannerBtn" type="button">Enter token</button>
+    </div>
+
     <!-- ====================================================================
          HEADLINE
     ===================================================================== -->
@@ -185,6 +203,18 @@
         </div>
         <div class="cnsl-panel-body is-flush is-scroll" id="auditBody"></div>
       </section>
+
+      <!-- Agent interaction feed ------------------------------------------->
+      <section class="cnsl-panel cnsl-panel-12" data-c-reveal style="--rd:360ms" aria-label="Agent interaction feed">
+        <div class="cnsl-panel-head">
+          <span class="cnsl-panel-title">Agent interactions</span>
+          <span class="cnsl-panel-count" id="feedCount">—</span>
+          <span class="cnsl-panel-head-spacer"></span>
+          <span class="cnsl-pill" id="feedNote">awaiting first read</span>
+          <span class="cnsl-pill" style="font-size:10px">thinking signatures and binary are withheld by the API</span>
+        </div>
+        <div class="cnsl-panel-body is-flush is-scroll" id="feedBody"></div>
+      </section>
     </div>
 
     <footer class="cnsl-foot">
@@ -203,7 +233,9 @@
       <h2 id="tokenModalTitle">Operator token</h2>
       <p class="cnsl-modal-sub">
         Governance routes compare a bearer token against <code>OPERATOR_API_TOKEN</code> in constant time and fail closed.
-        Reads work without it; approving, denying and kill switches do not.
+        <strong>Reads are gated too</strong> — approvals, budgets, orders, the audit chain, provider status,
+        agent runs and the interaction feed all answer <code>403</code> without it. Without a token this
+        console can show you nothing at all.
       </p>
       <div class="cnsl-field">
         <label for="tokenInput">Bearer token</label>
@@ -211,7 +243,7 @@
       </div>
       <div class="cnsl-field">
         <label for="operatorInput">Decide as</label>
-        <input class="cnsl-input" id="operatorInput" type="text" autocomplete="off" spellcheck="false" placeholder="your name — recorded in the audit chain" />
+        <input class="cnsl-input" id="operatorInput" type="text" autocomplete="off" spellcheck="false" placeholder="your name — attached to the event as an unverified label" />
       </div>
       <div class="cnsl-modal-actions">
         <button class="cnsl-act" id="tokenClearBtn" type="button">Clear</button>
@@ -219,8 +251,10 @@
         <button class="btn btn-primary btn-sm" id="tokenSaveBtn" type="button">Save</button>
       </div>
       <p class="cnsl-modal-note">
-        Stored in <code class="mono">sessionStorage</code> for this tab only. Your name is written to the append-only
-        audit chain as the deciding actor, so use something a reviewer would recognise.
+        Stored in <code class="mono">sessionStorage</code> for this tab only. The audit chain's verified actor is
+        <code class="mono">operator</code> — the token is the only identity the server checked. Your name is stored
+        beside it as <code class="mono">detail.operatorLabel</code>, an unverified annotation for whoever reads the log
+        later. Anyone holding the token can type any name, so it is a courtesy, not proof.
       </p>
     </div>
   </div>
@@ -241,7 +275,8 @@
         <button class="btn btn-primary btn-sm" id="decideConfirmBtn" type="button">Confirm</button>
       </div>
       <p class="cnsl-modal-note" id="decideNote">
-        This decision is irreversible and is appended to the hash-chained audit log.
+        This decision is irreversible and is appended to the hash-chained audit log under the authenticated
+        actor <code class="mono">operator</code>.
       </p>
     </div>
   </div>

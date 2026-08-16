@@ -29,6 +29,19 @@ export type SupplierKind = z.infer<typeof SupplierKind>;
 export const Incoterm = z.enum(['EXW', 'FCA', 'FOB', 'CFR', 'CIF', 'CPT', 'CIP', 'DAP', 'DPU', 'DDP']);
 export type Incoterm = z.infer<typeof Incoterm>;
 
+/**
+ * Delivery terms on a landed-cost model.
+ *
+ * Incoterms describe who bears freight, insurance and customs on a physical
+ * shipment. A digital product has no shipment, so every Incoterm code is a
+ * false statement about it — `not_applicable` says so explicitly rather than
+ * picking the least-wrong code and letting a reader infer a shipment that does
+ * not exist. RFQs and supplier quotes still take a real `Incoterm`, because
+ * those only ever describe goods.
+ */
+export const LandedCostTerm = z.union([Incoterm, z.literal('not_applicable')]);
+export type LandedCostTerm = z.infer<typeof LandedCostTerm>;
+
 export const SupplierContactChannel = z.enum(['email', 'platform_message', 'phone', 'web_form', 'whatsapp', 'wechat']);
 export type SupplierContactChannel = z.infer<typeof SupplierContactChannel>;
 
@@ -226,9 +239,16 @@ export const COST_COMPONENT_KINDS = [
   'destination_freight',
   'fulfilment_receiving',
   'damage_loss_allowance',
+  /* Digital lines: the marginal cost of delivering one more unit. There is no
+     manufacturing, freight or duty, so those kinds simply never appear. */
+  'inference_compute',
+  'hosting_delivery',
 ] as const;
 export const CostComponentKind = z.enum(COST_COMPONENT_KINDS);
 export type CostComponentKind = z.infer<typeof CostComponentKind>;
+
+/** Cost kinds that describe delivering a digital unit rather than making a physical one. */
+export const DIGITAL_COST_COMPONENT_KINDS = ['inference_compute', 'hosting_delivery'] as const;
 
 export const CostComponent = z.object({
   kind: CostComponentKind,
@@ -252,7 +272,8 @@ export const LandedCostModel = z.object({
   currency: z.string().length(3),
   components: z.array(CostComponent).min(1),
   destinationCountry: z.string().length(2),
-  incoterm: Incoterm,
+  /** `not_applicable` on a digital line: nothing is shipped, so no Incoterm applies. */
+  incoterm: LandedCostTerm,
   /** HS code used for the duty rate, when one was determined. */
   hsCode: z.string().nullable(),
   computedAt: z.string().datetime(),

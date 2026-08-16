@@ -18,6 +18,23 @@ export const LegalEntityType = z.enum([
 ]);
 export type LegalEntityType = z.infer<typeof LegalEntityType>;
 
+/**
+ * What kind of thing the company sells.
+ *
+ * This is structure, not a label. A physical line has a supplier, an RFQ and a
+ * quote, so the loop's `source` phase has a concrete artefact to wait for and
+ * the landed cost is goods + freight + duty. A digital line has none of those:
+ * there is no supplier to contact, so waiting for a supplier quote is waiting
+ * for something that can never arrive, and the real marginal cost is compute,
+ * delivery and payment processing instead.
+ *
+ * Defaulting to `physical` is deliberate — every config written before this
+ * field existed described a physical business, and reading one must not
+ * silently change what the loop does.
+ */
+export const ProductLine = z.enum(['physical', 'digital']);
+export type ProductLine = z.infer<typeof ProductLine>;
+
 export const CompanyConfig = z.object({
   /** Legal owner of the business. Agents act inside permissions this person granted. */
   owner: z.object({
@@ -51,6 +68,8 @@ export const CompanyConfig = z.object({
     physicalAddressDisclosed: z.boolean().default(false),
   }),
   commerce: z.object({
+    /** Physical or digital. Drives sourcing, the cost model and the payment route. */
+    productLine: ProductLine.default('physical'),
     baseCurrency: z.string().length(3),
     sellsTo: z.array(z.string().length(2)).min(1),
     shipsFrom: z.array(z.string().length(2)).min(1),
@@ -97,6 +116,25 @@ export const CompanyConfig = z.object({
     .optional(),
 });
 export type CompanyConfig = z.infer<typeof CompanyConfig>;
+
+/**
+ * The product line of a stored config, read without demanding the whole config parse.
+ *
+ * Callers in the operating loop need this one field to decide whether a phase
+ * has anything to wait for, and they must keep working against a config that
+ * has drifted somewhere unrelated — a stale `messaging` block should not stop
+ * the loop from knowing what the company sells. An unreadable or absent field
+ * resolves to `physical`, which is the conservative answer: the physical branch
+ * waits for a real supplier quote, so a misread can only ever make the loop
+ * more cautious, never less.
+ */
+export function productLineOf(config: unknown): ProductLine {
+  if (config === null || typeof config !== 'object') return 'physical';
+  const commerce = (config as { commerce?: unknown }).commerce;
+  if (commerce === null || typeof commerce !== 'object') return 'physical';
+  const parsed = ProductLine.safeParse((commerce as { productLine?: unknown }).productLine);
+  return parsed.success ? parsed.data : 'physical';
+}
 
 /** Fields each generated legal document depends on. Missing → cannot generate. */
 export const LEGAL_DOCUMENT_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = {

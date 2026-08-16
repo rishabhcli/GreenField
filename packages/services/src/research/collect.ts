@@ -119,6 +119,13 @@ const NEWS_DOMAINS = [
   'ft.com',
 ] as const;
 
+/**
+ * What a search engine returns when it has no description for a page. It is a
+ * statement about the index, not about the page, so it is not a summary.
+ */
+const SEARCH_PLACEHOLDER_DESCRIPTION =
+  /^(we (cannot|can't) provide a description for this page( right now)?|no description( is)? available|description not available)\.?$/i;
+
 const COMPLAINT_LANGUAGE =
   /\b(hate|hates|annoying|frustrated|frustrating|broken|broke|doesn't work|does not work|won't work|useless|terrible|awful|worst|sucks|painful|problem|problems|issue|issues|complaint|leaking|leak|disappointed|cheaply made|poor quality|can't stand|cannot stand)\b/i;
 
@@ -554,7 +561,11 @@ function braveHitToDraft(hit: WebSearchHit): EvidenceDraftType | undefined {
   }
   if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return undefined;
 
-  const description = (hit.description ?? '').trim();
+  // "We cannot provide a description for this page right now" is the search
+  // engine saying it has nothing, not text the page published. Stored as a
+  // summary it becomes evidence of a pain that no source ever stated.
+  const rawDescription = (hit.description ?? '').trim();
+  const description = SEARCH_PLACEHOLDER_DESCRIPTION.test(rawDescription) ? '' : rawDescription;
   const extra = (hit.extraSnippets ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
   const title = (hit.title ?? '').trim();
   const summary = [description, ...extra].filter((s) => s.length > 0).join('\n') || title;

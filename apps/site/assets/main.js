@@ -722,6 +722,108 @@
     "https://foundry-api-8ih0.onrender.com"
   ).replace(/\/$/, "");
 
+  /* -------------------------------------------------------------------------
+     Live provider status on the system page.
+
+     This table used to hand-type twelve green "probe verified" chips with a
+     frozen date. That is precisely the claim the capability registry exists to
+     make impossible: nothing may assert an integration works — it may only ask
+     the API, which answers `live_verified` only when the secrets are present
+     AND a dated live probe succeeded.
+
+     So the status column is read from `/readiness/providers`. That route is
+     authenticated like every other read, and this is a public marketing page,
+     so the honest default is "not read". If the visitor has already signed in
+     to the console (same origin, sessionStorage), their token is reused and the
+     column fills with the real states — including the failures. It never
+     degrades to a green chip.
+  ------------------------------------------------------------------------- */
+  var integHost = document.getElementById("integLive");
+  if (integHost) {
+    (function () {
+      var foot = document.getElementById("integFoot");
+      var token = null;
+      try {
+        token = window.sessionStorage.getItem("yf.token");
+      } catch (e) {
+        /* private mode — stay on the honest default */
+      }
+      if (!token) return;
+
+      function setFoot(text) {
+        if (foot) foot.textContent = text;
+      }
+
+      /* Verbatim from the API. `live_verified` is the only state that earns a
+         verified chip, and it is never constructed here. */
+      function chipFor(state) {
+        if (state === "live_verified") return { cls: "chip-verified", text: "probe verified" };
+        if (state === "verification_failed") return { cls: "chip-fail", text: "probe failed" };
+        if (state === "degraded") return { cls: "chip-wired", text: "degraded" };
+        if (typeof state === "string" && state.indexOf("blocked_") === 0) {
+          return { cls: "chip-wired", text: String(state).replace(/_/g, " ") };
+        }
+        return { cls: "chip-wired", text: String(state || "unknown").replace(/_/g, " ") };
+      }
+
+      setFoot("Reading provider status from the API…");
+      fetch(apiBase + "/readiness/providers", {
+        headers: { Accept: "application/json", Authorization: "Bearer " + token },
+        mode: "cors",
+      })
+        .then(function (res) {
+          if (res.status === 401 || res.status === 403) {
+            setFoot(
+              "Provider status is not asserted on this page and the stored operator token was refused. " +
+                "Read it in the operator console.",
+            );
+            return null;
+          }
+          if (!res.ok) {
+            setFoot("Could not read provider status from the API (HTTP " + res.status + "). Nothing is claimed here.");
+            return null;
+          }
+          return res.json();
+        })
+        .then(function (data) {
+          if (!data || !data.providers) return;
+          var byId = {};
+          for (var i = 0; i < data.providers.length; i++) byId[data.providers[i].id] = data.providers[i];
+
+          var rows = integHost.querySelectorAll("[data-provider]");
+          var verified = 0;
+          var shown = 0;
+          rows.forEach(function (row) {
+            var cell = row.querySelector(".integ-status");
+            if (!cell) return;
+            var p = byId[row.getAttribute("data-provider")];
+            if (!p) {
+              cell.textContent = "not reported by the API";
+              return;
+            }
+            shown++;
+            if (p.state === "live_verified") verified++;
+            var chip = chipFor(p.state);
+            cell.className = "chip integ-status " + chip.cls;
+            cell.textContent = chip.text;
+            cell.title = p.lastVerifiedAt ? "last probe " + p.lastVerifiedAt : "no dated probe recorded";
+          });
+
+          setFoot(
+            verified +
+              " of " +
+              shown +
+              " report live_verified, read from /readiness/providers just now (" +
+              data.providers.length +
+              " manifests in total). Open the console for the full matrix.",
+          );
+        })
+        .catch(function () {
+          setFoot("Could not reach the API to read provider status. Nothing is claimed here.");
+        });
+    })();
+  }
+
   document.addEventListener("click", function (event) {
     var target = event.target;
     if (!target || !target.closest) return;

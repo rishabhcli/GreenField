@@ -110,10 +110,92 @@ describe('landing site', () => {
   it('keeps the honest-status claims intact on their pages', () => {
     expect(index).toContain('test suite executed — the count lives in CI, not here');
     expect(index).not.toContain('356');
-    expect(system).toContain('probe verified');
-    expect(system).toContain('surface built');
     expect(pricing).toContain('NOT COMPLETE');
     expect(index).toContain('Illustrative operating view');
+  });
+
+  /**
+   * The integration table used to hand-type twelve `probe verified` chips and
+   * a frozen date. Nothing in this system may assert that an integration
+   * works — it may only ask the capability registry, which requires both the
+   * secrets and a dated successful probe. So the status column is read from
+   * `/readiness/providers` at runtime and otherwise says it has not been read.
+   *
+   * The chip text still exists — in `main.js`, where it is only ever produced
+   * from a `live_verified` the API returned.
+   */
+  describe('provider status is asked for, never asserted', () => {
+    it('ships no hand-typed verdict in the static system page', () => {
+      expect(system).not.toContain('probe verified');
+      expect(system).not.toContain('chip-verified');
+      expect(system).not.toContain('surface built');
+      // The frozen "24 verification rows, dated" footer is gone with it.
+      expect(system).not.toMatch(/\d+ verification rows/);
+    });
+
+    it('marks every status cell as unread and points at the live source', () => {
+      expect(system).toContain('id="integLive"');
+      expect(system).toContain('id="integFoot"');
+      const rows = system.match(/data-provider="/g) ?? [];
+      expect(rows.length).toBe(12);
+      const cells = system.match(/class="chip integ-status">status not read</g) ?? [];
+      expect(cells.length).toBe(rows.length);
+      expect(system).toContain('./console.html');
+    });
+
+    it('renders the live matrix only from what the API returned', () => {
+      expect(js).toContain('/readiness/providers');
+      expect(js).toContain('probe verified');
+      // The verified chip is produced by comparing against the API's state,
+      // never by assigning it.
+      expect(js).toContain('state === "live_verified"');
+      expect(js).not.toMatch(/(?<![=!<>])=\s*['"]live_verified['"]/);
+      // Failures are rendered, not swallowed.
+      expect(js).toContain('probe failed');
+      expect(css).toContain('.chip-fail');
+    });
+
+    it('degrades to an honest statement, never to a green chip', () => {
+      const block = js.slice(js.indexOf('var integHost'), js.indexOf('document.addEventListener("click"'));
+      expect(block).toContain('res.status === 401 || res.status === 403');
+      expect(block).toContain('Nothing is claimed here.');
+      // No token means no request and no claim.
+      expect(block).toContain('if (!token) return;');
+    });
+  });
+
+  /**
+   * The hero panel is a layout diagram. It previously carried invented audit
+   * hashes, invented margins and a "chain verified" chip, disclosed only by a
+   * figcaption a screenshot would crop. It must now be marked as an
+   * illustration in the markup and the styling, and must carry no figure that
+   * could be read as system output.
+   */
+  describe('the hero panel cannot be mistaken for live output', () => {
+    it('carries no fabricated figure, hash or verdict', () => {
+      const hero = index.slice(index.indexOf('<figure class="hero-visual"'), index.indexOf('</figure>'));
+      expect(hero).not.toMatch(/\$\d/);
+      expect(hero).not.toMatch(/\d+(\.\d+)?%/);
+      // A plausible truncated digest is the most deceptive thing here.
+      expect(hero).not.toMatch(/[0-9a-f]{3,}…[0-9a-f]{3,}/);
+      expect(hero).not.toContain('chain verified');
+      expect(hero).not.toContain('gate passed');
+      expect(hero).not.toContain('sq-live');
+    });
+
+    it('is labelled as an illustration in the markup, not only in the caption', () => {
+      expect(index).toContain('is-illustration');
+      expect(index).toContain('illustration · not live');
+      expect(index).toContain('role="img"');
+      expect(index).toMatch(/aria-label="[^"]*not live data/i);
+      expect(css).toContain('.console.is-illustration');
+      expect(css).toContain('.chip-illus');
+    });
+
+    it('sends the reader to the live console for real values', () => {
+      expect(index).toContain('a layout diagram, not system output');
+      expect(index).toContain('./console.html');
+    });
   });
 
   /**

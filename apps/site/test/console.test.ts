@@ -99,12 +99,12 @@ describe('operator console', () => {
   }
 
   it('calls only API paths that the API actually registers', () => {
-    const registered = ['commerce.ts', 'company.ts', 'governance.ts', 'readiness.ts']
+    const registered = ['agent-activity.ts', 'commerce.ts', 'company.ts', 'governance.ts', 'readiness.ts']
       .map((f) => read(join('apps', 'api', 'src', 'routes', f), repoRoot))
       .join('\n');
 
     const called = calledPaths(js);
-    expect(called.length).toBeGreaterThanOrEqual(9);
+    expect(called.length).toBeGreaterThanOrEqual(10);
 
     for (const path of called) {
       const pattern = path
@@ -183,13 +183,168 @@ describe('operator console', () => {
     expect(js).toContain('function renderUnreachable');
 
     const fn = js.slice(js.indexOf('function renderUnreachable'));
-    const bodyIds = ['approvalsBody', 'switchBody', 'budgetBody', 'runsBody', 'providerBody', 'orderBody', 'auditBody'];
+    const bodyIds = [
+      'approvalsBody',
+      'switchBody',
+      'budgetBody',
+      'runsBody',
+      'providerBody',
+      'orderBody',
+      'auditBody',
+      'feedBody',
+    ];
     const covered = fn.slice(0, fn.indexOf('/* ---'));
     for (const id of bodyIds) {
       expect(covered.includes(id), `renderUnreachable does not clear ${id}`).toBe(true);
     }
     expect(covered).toContain("emptyState(text, 'danger'");
     expect(js).toContain('renderUnreachable(');
+  });
+
+  /**
+   * The defect this pins: `configured` was derived from the response body
+   * before `res.ok` was checked, so a 403 (no operator token) rendered six
+   * panels as "No company configured yet." — a false statement about a running
+   * company. Unauthenticated, unconfigured, failed and unreachable must be
+   * four different renders.
+   */
+  describe('unauthenticated is not "no company"', () => {
+    it('classifies 401/403 as locked, distinct from absent and failed', () => {
+      expect(js).toContain('function readState');
+      const fn = js.slice(js.indexOf('function readState'), js.indexOf('function panelState'));
+      expect(fn).toContain("res.status === 401 || res.status === 403");
+      expect(fn).toContain("return 'locked'");
+      expect(fn).toContain("configured === false");
+      expect(fn).toContain("return 'absent'");
+      expect(fn).toContain("return 'unreachable'");
+      expect(fn).toContain("return 'failed'");
+      // The status check must precede the body check, which is exactly the
+      // ordering the original bug got wrong.
+      expect(fn.indexOf("res.status === 401")).toBeLessThan(fn.indexOf('configured === false'));
+    });
+
+    it('never derives company state from the body without checking the status', () => {
+      expect(js).not.toContain('companyRes.ok && companyRes.data && companyRes.data.configured');
+      expect(js).not.toContain('var configured =');
+    });
+
+    it('routes every panel through one gate so none can invent its own 403 copy', () => {
+      expect(js).toContain('function gateHtml');
+      expect(js).toContain('function panelState');
+      for (const fn of [
+        'renderApprovals',
+        'renderSwitches',
+        'renderBudgets',
+        'renderRuns',
+        'renderOrders',
+        'renderAudit',
+        'renderFeed',
+      ]) {
+        const body = js.slice(js.indexOf(`function ${fn}(`), js.indexOf(`function ${fn}(`) + 700);
+        expect(body.includes('gateHtml('), `${fn} does not use the shared gate`).toBe(true);
+      }
+      // The "no company" copy must be emitted from exactly one place — the
+      // gate — so it can never be reached by a panel that only saw a 403.
+      const emitted = js.split("'No company configured yet.").length - 1;
+      expect(emitted).toBe(1);
+    });
+
+    it('points a locked operator at the token control instead of at Render', () => {
+      expect(html).toContain('id="authBanner"');
+      expect(html).toContain('id="authBannerBtn"');
+      expect(js).toContain("$('authBanner')");
+      expect(js).toContain("conn.set('locked'");
+      expect(css).toContain('.cnsl-locked');
+      expect(css).toContain(".cnsl-conn[data-state='locked']");
+      // A 403 must not be reported as an unreachable API: the locked branch
+      // has to reach `conn.set('locked')` before any `down` fallback.
+      const poll = js.slice(js.indexOf('function poll('), js.indexOf('Actions'));
+      expect(poll).toContain('var locked =');
+      const lockedBranch = poll.slice(poll.indexOf('} else if (locked) {'));
+      expect(lockedBranch.slice(0, lockedBranch.indexOf('conn.set(') + 24)).toContain("conn.set('locked'");
+    });
+
+    it('says in the copy that reads are gated, not that they work without a token', () => {
+      expect(html).toContain('Reads are gated too');
+      expect(html).not.toContain('Reads work without it');
+    });
+  });
+
+  /**
+   * The console used to promise the operator's typed name was written to the
+   * audit chain as the deciding actor. It is not: the audit actor is the
+   * authenticated `operator`. The name now rides along as an annotation and
+   * the copy must say exactly that.
+   */
+  describe('decision attribution', () => {
+    it('sends the typed name as a label, never as the actor', () => {
+      expect(js).toContain('decidedByLabel: auth.operator');
+      expect(js).toContain('releasedByLabel: auth.operator');
+      expect(js).not.toContain('decidedBy: auth.operator');
+      expect(js).not.toContain('releasedBy: auth.operator');
+    });
+
+    it('describes the label as unverified rather than as the deciding actor', () => {
+      expect(js).toContain('an unverified label, not a verified identity');
+      expect(html).toContain('operatorLabel');
+      expect(html).not.toContain('audit chain as the deciding actor');
+    });
+
+    it('is backed by a route that records it in detail, not in actor_id', () => {
+      const route = read(join('apps', 'api', 'src', 'routes', 'governance.ts'), repoRoot);
+      expect(route).toContain('decidedByLabel');
+      expect(route).toContain('operatorLabel: body.decidedByLabel');
+      // actorId stays the authenticated operator on every mutating route.
+      expect(route).not.toMatch(/actorId:\s*body\./);
+    });
+  });
+
+  /**
+   * The agent interaction feed. Its whole value is that an observer can watch
+   * the company act, so the two things it must never do are dump a model's
+   * `thinking` signature blob and render a secret.
+   */
+  describe('agent interaction feed', () => {
+    it('renders a feed panel wired to a bounded, authed endpoint', () => {
+      expect(html).toContain('id="feedBody"');
+      expect(html).toContain('id="feedCount"');
+      expect(html).toContain('id="feedNote"');
+      expect(js).toContain('function renderFeed');
+      expect(js).toContain('/api/agent-activity?limit=');
+      expect(js).toMatch(/var FEED_LIMIT = \d+/);
+      expect(js).toMatch(/var FEED_RUNS = \d+/);
+      expect(css).toContain('.cnsl-step');
+    });
+
+    it('renders every step kind the API can emit', () => {
+      const route = read(join('apps', 'api', 'src', 'routes', 'agent-activity.ts'), repoRoot);
+      const kinds = [...route.matchAll(/'(system|prompt|thinking|assistant_text|tool_call|tool_result|tool_error)'/g)]
+        .map((m) => m[1] ?? '');
+      const label = js.slice(js.indexOf('var STEP_LABEL'), js.indexOf('var STEP_TONE'));
+      for (const kind of new Set(kinds)) {
+        expect(label.includes(kind), `console has no label for step kind ${kind}`).toBe(true);
+      }
+    });
+
+    it('escapes every field it renders and never trusts a raw signature', () => {
+      const fn = js.slice(js.indexOf('function renderFeed'), js.indexOf('function renderUnreachable'));
+      // Every interpolated step field goes through esc().
+      const interpolated = [...fn.matchAll(/\+\s*(st\.[A-Za-z]+)\s*\+/g)].map((m) => m[1]);
+      expect(interpolated, 'unescaped step field interpolated into HTML').toEqual([]);
+      expect(fn).toContain('esc(');
+      expect(js).not.toContain('signature');
+    });
+
+    it('is bounded so a polling console cannot ask for the whole table', () => {
+      const route = read(join('apps', 'api', 'src', 'routes', 'agent-activity.ts'), repoRoot);
+      expect(route).toContain('.max(200)');
+      expect(route).toContain('.max(25)');
+      const repo = read(join('packages', 'db', 'src', 'repositories', 'agents.ts'), repoRoot);
+      expect(repo).toContain('recentForCompany');
+      expect(repo).toContain('LIMIT');
+      // No ad-hoc SQL in the route — the repository owns the query.
+      expect(route).not.toMatch(/SELECT\s/i);
+    });
   });
 
   it('never reassures on a value it did not read', () => {

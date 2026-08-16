@@ -47,8 +47,25 @@ const MessageRow = z.object({
   created_at: z.date(),
 });
 
+/**
+ * A message joined to the run that produced it.
+ *
+ * The operator feed needs the role and status of the run beside every step —
+ * "the research manager called research_run_collection" is the readable unit,
+ * not "run_01M03… emitted sequence 7". Joining here keeps the route from
+ * issuing an N+1 lookup per message.
+ */
+const ActivityRow = MessageRow.extend({
+  role_key: z.string(),
+  run_status: z.string(),
+  objective: z.string(),
+  model: z.string(),
+  run_started_at: z.date().nullable(),
+});
+
 export type AgentRunRow = z.infer<typeof RunRow>;
 export type AgentMessageRow = z.infer<typeof MessageRow>;
+export type AgentActivityRow = z.infer<typeof ActivityRow>;
 
 const RUN_COLUMNS = `id, company_id, role_key, parent_run_id, objective, input_refs, status, model, output,
   error, tool_call_count, input_tokens, output_tokens, cost_minor_usd, coordination_room_id, sandbox_id,
@@ -192,6 +209,34 @@ export class AgentRunRepository {
     );
   }
 
+  /**
+   * Inference actually charged to this company over a window.
+   *
+   * Counts only runs that recorded a non-zero cost. A queued run that never
+   * called the model is real, but averaging it in would understate what one
+   * unit of agent work costs — and the caller of this method is a unit-economics
+   * model, where an optimistic denominator is the same failure as an invented
+   * number. Returns zeroes when nothing has been charged yet; the caller must
+   * decide what to do with that rather than being handed a fabricated rate.
+   */
+  async observedInferenceCost(
+    companyId: string,
+    since: Date,
+  ): Promise<{ readonly pricedRuns: number; readonly costMinorUsd: number }> {
+    const row = await qOne(
+      this.db,
+      `SELECT COUNT(*)::int AS priced_runs,
+              COALESCE(SUM(cost_minor_usd), 0)::bigint AS cost_minor_usd
+         FROM agent_runs
+        WHERE company_id = $1 AND created_at >= $2 AND cost_minor_usd > 0`,
+      [companyId, since],
+      z.object({ priced_runs: z.number(), cost_minor_usd: z.number() }),
+      'agent_run_inference_cost',
+      companyId,
+    );
+    return { pricedRuns: row.priced_runs, costMinorUsd: row.cost_minor_usd };
+  }
+
   /** Cost and volume per role over a window, for the finance report. */
   async usageByRole(
     companyId: string,
@@ -262,6 +307,47 @@ export class AgentMessageRepository {
 
   async forRun(runId: string): Promise<readonly AgentMessageRow[]> {
     return q(this.db, `SELECT ${MESSAGE_COLUMNS} FROM agent_messages WHERE run_id=$1 ORDER BY sequence`, [runId], MessageRow);
+  }
+
+  /**
+   * The company's recent message-level activity, newest first.
+   *
+   * Bounded twice on purpose. `agent_messages` has an index on
+   * `(run_id, sequence)` and none on `created_at`, so the run set is narrowed
+   * first — through `agent_runs_company_status_idx` — and only then are the
+   * messages of those runs read. A console polling every few seconds must not
+   * be able to ask for a scan of the whole table.
+   *
+   * Returns raw rows. Redaction and truncation are the caller's job: this
+   * layer must not silently reshape what the agent actually said.
+   */
+  async recentForCompany(
+    companyId: string,
+    opts: { limit?: number; runLimit?: number; runId?: string } = {},
+  ): Promise<readonly AgentActivityRow[]> {
+    const limit = opts.limit ?? 60;
+    const runLimit = opts.runLimit ?? 6;
+    return q(
+      this.db,
+      `WITH recent_runs AS (
+         SELECT id, role_key, status, objective, model, started_at
+           FROM agent_runs
+          WHERE company_id = $1
+            AND ($4::text IS NULL OR id = $4)
+          ORDER BY created_at DESC
+          LIMIT $3
+       )
+       SELECT m.id, m.run_id, m.sequence, m.role, m.content, m.tool_name, m.tool_use_id,
+              m.is_error, m.created_at,
+              r.role_key, r.status AS run_status, r.objective, r.model,
+              r.started_at AS run_started_at
+         FROM agent_messages m
+         JOIN recent_runs r ON r.id = m.run_id
+        ORDER BY m.created_at DESC, m.sequence DESC
+        LIMIT $2`,
+      [companyId, limit, runLimit, opts.runId ?? null],
+      ActivityRow,
+    );
   }
 
   async nextSequence(runId: string): Promise<number> {

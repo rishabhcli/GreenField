@@ -155,7 +155,11 @@ services:
   - type: worker
     name: foundry-agents
     runtime: node
-    plan: standard
+    # `starter`, not `standard`: this matches the plan foundry-worker actually
+    # runs on. The service is deliberately single-instance (it is the only
+    # process that calls installSchedules), so the larger plan would buy
+    # headroom for one process rather than parallelism.
+    plan: starter
     region: oregon
     rootDir: .
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm run build
@@ -355,6 +359,36 @@ services:
         source: /health
         destination: https://foundry-api-8ih0.onrender.com/health
 
+  # ---------------------------------------------------------------------------
+  # Storefront — the deploy target for the site the operating loop generates.
+  #
+  # This exists as its own service for one reason: `RENDER_STOREFRONT_SERVICE_ID`
+  # is handed straight to `triggerDeploy()` and `rollbackDeploy()` in
+  # packages/services/src/site/deploy.ts, and it is persisted onto
+  # `sites.hosting_service_id` on first use. Whatever it names, the loop will
+  # redeploy and can roll back. It previously named foundry-api, which meant the
+  # launch phase would have redeployed — and could have rolled back — the live
+  # control plane serving /webhooks/stripe. It must never name foundry-api, and
+  # it must not be repointed at foundry-site either: that is the marketing site
+  # and operator console, not the generated store.
+  #
+  # `apps/storefront` currently holds a placeholder that states plainly that no
+  # storefront has been generated. The generator (Lovable) is blocked on
+  # LOVABLE_OAUTH_ACCESS_TOKEN, so nothing has replaced it yet. Static hosting is
+  # the right shape: the generated storefront is a client-rendered app that calls
+  # the commerce API on foundry-api, which is why this origin is listed in
+  # CORS_ALLOWED_ORIGINS below — production CORS is fail-closed.
+  # ---------------------------------------------------------------------------
+  - type: static
+    name: foundry-storefront
+    plan: free
+    region: oregon
+    rootDir: .
+    buildCommand: echo static-no-build
+    publishPath: apps/storefront
+    autoDeployTrigger: commit
+    pullRequestPreviewsEnabled: false
+
 # -----------------------------------------------------------------------------
 # Environment groups.
 #
@@ -374,7 +408,7 @@ envVarGroups:
       # of PUBLIC_BASE_URL is always allowed. Production refuses unknown origins,
       # so a storefront on a different host must be listed here.
       - key: CORS_ALLOWED_ORIGINS
-        value: https://foundry-site-ye1g.onrender.com
+        value: https://foundry-site-ye1g.onrender.com,https://foundry-storefront.onrender.com
       - key: OWNER_EMAIL
         sync: false
       - key: ALERT_WEBHOOK_URL

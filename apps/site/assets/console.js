@@ -15,6 +15,11 @@
        looks healthy is worse than one that admits it is blind.
      * `live_verified` is echoed from the API verbatim. The console never
        upgrades a status, and never infers "working" from the presence of a key.
+     * "Not signed in" is not "nothing exists". Every read on this API is
+       authenticated, so a 403 means the browser lacks a token — not that the
+       company is unconfigured. Those render as different states (see
+       `readState`), because telling an operator their company is missing when
+       it is merely locked is the same class of lie as a fabricated metric.
 ============================================================================ */
 (function () {
   'use strict';
@@ -25,6 +30,10 @@
 
   var POLL_MS = 15000;
   var AUDIT_LIMIT = 25;
+  /* The interaction feed is the only panel whose volume grows without bound,
+     so both bounds are stated here and echoed back by the API. */
+  var FEED_LIMIT = 80;
+  var FEED_RUNS = 6;
 
   /**
    * API base resolution, most explicit wins:
@@ -217,6 +226,70 @@
     '<svg class="cnsl-empty-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
   var ICON_WARN =
     '<svg class="cnsl-empty-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>';
+  var ICON_LOCK =
+    '<svg class="cnsl-empty-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>';
+
+  /* ------------------------------------------------------------------------
+     Read state
+
+     A panel with nothing in it has four possible causes and they are not
+     interchangeable:
+
+       locked      the API answered 401/403 — this browser has no operator
+                   token. The company exists; we are not allowed to look.
+       absent      the API answered 200 with `configured:false` — there really
+                   is no company yet.
+       failed      the API answered, but not with success.
+       unreachable the request never completed.
+
+     Reporting `locked` as `absent` is the specific bug this block exists to
+     prevent: it renders "No company configured yet" over a running company.
+  ------------------------------------------------------------------------ */
+
+  function readState(res) {
+    if (!res) return 'failed';
+    if (res.status === 401 || res.status === 403) return 'locked';
+    if (res.status === 0) return 'unreachable';
+    if (!res.ok) return 'failed';
+    if (res.data && res.data.configured === false) return 'absent';
+    return 'ready';
+  }
+
+  /**
+   * Resolves one panel's state. Its own response wins — a panel that was
+   * individually refused must say so — with the company read as the fallback
+   * for `absent`, which only `/readiness/company` can establish.
+   */
+  function panelState(res, companyState) {
+    var own = readState(res);
+    if (own === 'locked' || own === 'unreachable') return own;
+    if (companyState === 'absent') return 'absent';
+    if (own === 'failed') return 'failed';
+    return 'ready';
+  }
+
+  var LOCKED_TEXT =
+    'Operator token required. Every read on this API is authenticated, so this is not an empty company — ' +
+    'it is an unauthenticated browser. Open the lock in the top bar and paste OPERATOR_API_TOKEN.';
+
+  /**
+   * The blocking render for a panel, or null when the panel should draw data.
+   * Centralised so no panel can invent its own wording for "403".
+   */
+  function gateHtml(state, res, what) {
+    if (state === 'locked') return emptyState(LOCKED_TEXT, 'warn', ICON_LOCK);
+    if (state === 'absent') {
+      return emptyState('No company configured yet. POST /api/companies to create one.', '', ICON_WARN);
+    }
+    if (state === 'unreachable') return emptyState('Cannot reach the API — ' + errText(res) + '.', 'danger', ICON_WARN);
+    if (state === 'failed') return emptyState('Could not load ' + what + ' — ' + errText(res), 'danger', ICON_WARN);
+    return null;
+  }
+
+  /** `absent` is a real zero; every other blocked state is "not read" (null). */
+  function gateCount(state) {
+    return state === 'absent' ? 0 : null;
+  }
 
   /* ------------------------------------------------------------------------
      Fetch
@@ -451,17 +524,14 @@
       );
   }
 
-  function renderApprovals(res, configured) {
+  function renderApprovals(res, companyState) {
     var body = $('approvalsBody');
-    if (!configured) {
-      body.innerHTML = emptyState('No company configured yet. POST /api/companies to create one.', '', ICON_WARN);
-      setCount('approvalsCount', null);
-      return 0;
-    }
-    if (!res.ok) {
-      body.innerHTML = emptyState('Could not load approvals — ' + errText(res), 'danger', ICON_WARN);
-      setCount('approvalsCount', null);
-      return null;
+    var state = panelState(res, companyState);
+    var gate = gateHtml(state, res, 'approvals');
+    if (gate) {
+      body.innerHTML = gate;
+      setCount('approvalsCount', gateCount(state));
+      return gateCount(state);
     }
     var pending = (res.data && res.data.pending) || [];
     setCount('approvalsCount', pending.length, pending.length > 0 ? 'warn' : null);
@@ -518,17 +588,14 @@
     return pending.length;
   }
 
-  function renderSwitches(res, configured) {
+  function renderSwitches(res, companyState) {
     var body = $('switchBody');
-    if (!configured) {
-      body.innerHTML = emptyState('No company configured yet.', '', ICON_WARN);
-      setCount('switchCount', null);
-      return 0;
-    }
-    if (!res.ok) {
-      body.innerHTML = emptyState('Could not load kill switches — ' + errText(res), 'danger', ICON_WARN);
-      setCount('switchCount', null);
-      return null;
+    var state = panelState(res, companyState);
+    var gate = gateHtml(state, res, 'kill switches');
+    if (gate) {
+      body.innerHTML = gate;
+      setCount('switchCount', gateCount(state));
+      return gateCount(state);
     }
     var engaged = (res.data && res.data.engaged) || [];
     var history = (res.data && res.data.history) || [];
@@ -574,14 +641,11 @@
     return engaged.length;
   }
 
-  function renderBudgets(res, configured) {
+  function renderBudgets(res, companyState) {
     var body = $('budgetBody');
-    if (!configured) {
-      body.innerHTML = emptyState('No company configured yet.', '', ICON_WARN);
-      return;
-    }
-    if (!res.ok) {
-      body.innerHTML = emptyState('Could not load budgets — ' + errText(res), 'danger', ICON_WARN);
+    var gate = gateHtml(panelState(res, companyState), res, 'budgets');
+    if (gate) {
+      body.innerHTML = gate;
       return;
     }
     var budgets = (res.data && res.data.budgets) || [];
@@ -631,19 +695,15 @@
     body.innerHTML = html;
   }
 
-  function renderRuns(res, configured) {
+  function renderRuns(res, companyState) {
     var body = $('runsBody');
-    if (!configured) {
-      body.innerHTML = emptyState('No company configured yet.', '', ICON_WARN);
-      setCount('runsCount', null);
+    var state = panelState(res, companyState);
+    var gate = gateHtml(state, res, 'agent runs');
+    if (gate) {
+      body.innerHTML = gate;
+      setCount('runsCount', gateCount(state));
       $('runsCost').textContent = '—';
-      return { active: 0, spend: null };
-    }
-    if (!res.ok) {
-      body.innerHTML = emptyState('Could not load agent runs — ' + errText(res), 'danger', ICON_WARN);
-      setCount('runsCount', null);
-      $('runsCost').textContent = '—';
-      return { active: null, spend: null };
+      return { active: gateCount(state), spend: null };
     }
 
     var active = (res.data && res.data.active) || [];
@@ -738,8 +798,11 @@
 
   function renderProviders(res) {
     var body = $('providerBody');
-    if (!res.ok) {
-      body.innerHTML = emptyState('Could not load providers — ' + errText(res), 'danger', ICON_WARN);
+    // Provider state is company-independent, so `absent` never applies here.
+    var state = readState(res);
+    var gate = state === 'ready' ? null : gateHtml(state, res, 'providers');
+    if (gate) {
+      body.innerHTML = gate;
       setCount('providerCount', null);
       return null;
     }
@@ -832,17 +895,14 @@
     return '';
   }
 
-  function renderOrders(res, configured) {
+  function renderOrders(res, companyState) {
     var body = $('orderBody');
-    if (!configured) {
-      body.innerHTML = emptyState('No company configured yet.', '', ICON_WARN);
-      setCount('orderCount', null);
-      return 0;
-    }
-    if (!res.ok) {
-      body.innerHTML = emptyState('Could not load orders — ' + errText(res), 'danger', ICON_WARN);
-      setCount('orderCount', null);
-      return null;
+    var state = panelState(res, companyState);
+    var gate = gateHtml(state, res, 'orders');
+    if (gate) {
+      body.innerHTML = gate;
+      setCount('orderCount', gateCount(state));
+      return gateCount(state);
     }
     var orders = (res.data && res.data.orders) || [];
     setCount('orderCount', orders.length);
@@ -886,16 +946,13 @@
     return orders.length;
   }
 
-  function renderAudit(res, configured) {
+  function renderAudit(res, companyState) {
     var body = $('auditBody');
-    if (!configured) {
-      body.innerHTML = emptyState('No company configured yet.', '', ICON_WARN);
-      setCount('auditCount', null);
-      return;
-    }
-    if (!res.ok) {
-      body.innerHTML = emptyState('Could not load the audit log — ' + errText(res), 'danger', ICON_WARN);
-      setCount('auditCount', null);
+    var state = panelState(res, companyState);
+    var gate = gateHtml(state, res, 'the audit log');
+    if (gate) {
+      body.innerHTML = gate;
+      setCount('auditCount', gateCount(state));
       return;
     }
     var events = (res.data && res.data.events) || [];
@@ -934,6 +991,103 @@
     body.innerHTML = html;
   }
 
+  /* ------------------------------------------------------------------------
+     Agent interaction feed
+
+     `/api/agent-runs` says which runs exist. This says what they are doing:
+     the prose an agent emitted, the tool it reached for, what came back, and
+     what failed. The server has already redacted and clipped every string —
+     the console renders exactly what it was handed and never re-expands it.
+  ------------------------------------------------------------------------ */
+
+  var STEP_LABEL = {
+    system: 'briefing',
+    prompt: 'objective',
+    thinking: 'thinking',
+    assistant_text: 'says',
+    tool_call: 'calls',
+    tool_result: 'result',
+    tool_error: 'error',
+  };
+
+  var STEP_TONE = {
+    tool_call: 'neon',
+    tool_result: 'info',
+    tool_error: 'danger',
+    thinking: 'muted',
+    system: 'muted',
+    prompt: 'muted',
+    assistant_text: '',
+  };
+
+  function renderFeed(res, companyState) {
+    var body = $('feedBody');
+    var state = panelState(res, companyState);
+    var gate = gateHtml(state, res, 'the agent feed');
+    if (gate) {
+      body.innerHTML = gate;
+      setCount('feedCount', gateCount(state));
+      $('feedNote').textContent = state === 'locked' ? 'token required' : 'no steps read';
+      return;
+    }
+
+    var steps = (res.data && res.data.steps) || [];
+    var runs = (res.data && res.data.runs) || [];
+    // The count is steps; the window is messages. Saying "window full" off the
+    // step count would claim a ceiling the API never applied.
+    var read = res.data && typeof res.data.messagesRead === 'number' ? res.data.messagesRead : null;
+    var cap = res.data && typeof res.data.limit === 'number' ? res.data.limit : FEED_LIMIT;
+    setCount('feedCount', steps.length);
+    $('feedNote').textContent =
+      runs.length +
+      (runs.length === 1 ? ' run' : ' runs') +
+      ' · newest first' +
+      (read === null ? '' : ' · ' + read + ' of ' + cap + ' messages') +
+      (read !== null && read >= cap ? ' · older activity not shown' : '');
+
+    if (!steps.length) {
+      body.innerHTML = emptyState('No agent has spoken yet. Steps appear here as runs execute.', '', ICON_CHECK);
+      return;
+    }
+
+    var html = '';
+    var lastMessage = null;
+    for (var i = 0; i < steps.length; i++) {
+      var st = steps[i];
+      var kind = String(st.kind || '');
+      var newTurn = st.messageId !== lastMessage;
+      lastMessage = st.messageId;
+
+      html +=
+        '<div class="cnsl-step" data-kind="' +
+        esc(kind) +
+        '"' +
+        (newTurn ? ' data-turn="start"' : '') +
+        '>' +
+        '<span class="cnsl-step-kind" data-tone="' +
+        esc(STEP_TONE[kind] === undefined ? '' : STEP_TONE[kind]) +
+        '">' +
+        esc(STEP_LABEL[kind] || humanize(kind)) +
+        '</span>' +
+        '<div class="cnsl-step-main">' +
+        '<span class="cnsl-step-head">' +
+        '<span class="cnsl-step-role">' +
+        esc(st.roleKey || 'agent') +
+        '</span>' +
+        (st.toolName ? '<span class="cnsl-step-tool mono">' + esc(st.toolName) + '</span>' : '') +
+        (st.runStatus ? '<span class="cnsl-step-run">' + esc(humanize(st.runStatus)) + '</span>' : '') +
+        '<span class="cnsl-step-time">' +
+        esc(relTime(st.occurredAt) || '—') +
+        '</span>' +
+        '</span>' +
+        (st.text ? '<p class="cnsl-step-text">' + esc(st.text) + '</p>' : '') +
+        (st.note ? '<span class="cnsl-step-note">' + esc(st.note) + '</span>' : '') +
+        (st.truncated ? '<span class="cnsl-step-note">clipped by the API — open the run for the full text</span>' : '') +
+        '</div></div>';
+    }
+    body.innerHTML = html;
+  }
+
   /**
    * Collapses every panel to the same failure state. Called only when the API
    * is genuinely unreachable, so no panel can keep showing a stale value or a
@@ -949,17 +1103,28 @@
       'providerBody',
       'orderBody',
       'auditBody',
+      'feedBody',
     ].forEach(function (id) {
       $(id).innerHTML = emptyState(text, 'danger', ICON_WARN);
     });
 
-    ['approvalsCount', 'switchCount', 'runsCount', 'providerCount', 'orderCount', 'auditCount'].forEach(
-      function (id) {
-        setCount(id, null);
-      },
-    );
+    [
+      'approvalsCount',
+      'switchCount',
+      'runsCount',
+      'providerCount',
+      'orderCount',
+      'auditCount',
+      'feedCount',
+    ].forEach(function (id) {
+      setCount(id, null);
+    });
 
     $('runsCost').textContent = '—';
+    $('feedNote').textContent = 'no steps read';
+    // A stale "not signed in" beside "cannot reach the API" would name the
+    // wrong problem: we no longer know whether the token is the issue.
+    $('authBanner').classList.remove('is-visible');
     $('companyName').textContent = 'Operator console';
     $('stageValue').textContent = '—';
     $('updatedAt').textContent = 'no current data';
@@ -1004,31 +1169,46 @@
           return null;
         }
 
-        var configured = Boolean(companyRes.ok && companyRes.data && companyRes.data.configured);
+        var companyState = readState(companyRes);
+        var locked = companyState === 'locked';
+        $('authBanner').classList.toggle('is-visible', locked);
 
-        if (companyRes.ok) {
+        if (companyState === 'ready' || companyState === 'absent') {
           conn.set('ok', 'connected');
+        } else if (locked) {
+          // The API is up and answering correctly. Calling that "down" would
+          // send an operator to check Render when the real fix is a token.
+          conn.set('locked', 'not signed in');
         } else {
           conn.set('down', 'HTTP ' + companyRes.status);
           conn.detail('The API answered with HTTP ' + companyRes.status + '.');
         }
 
         // Headline + rail come straight from /readiness/company.
-        if (configured) {
+        if (companyState === 'ready') {
           var c = companyRes.data.company || {};
           $('companyName').textContent = c.name || 'Operator console';
           $('stageValue').textContent = c.stage ? humanize(c.stage) : '—';
           $('companySub').textContent =
             'Live state for ' + (c.name || 'this company') + '. Every figure is read from the running API.';
-        } else if (companyRes.ok) {
+        } else if (companyState === 'absent') {
           $('companyName').textContent = 'No company configured';
           $('stageValue').textContent = 'none';
           $('companySub').textContent =
             (companyRes.data && companyRes.data.message) ||
             'No company has been created yet. POST /api/companies to configure one.';
+        } else if (locked) {
+          $('companyName').textContent = 'Not signed in';
+          $('stageValue').textContent = 'locked';
+          $('companySub').textContent = LOCKED_TEXT;
+        } else {
+          $('companyName').textContent = 'Operator console';
+          $('stageValue').textContent = '—';
+          $('companySub').textContent =
+            'The API answered HTTP ' + companyRes.status + '. Nothing below could be read.';
         }
 
-        var cycles = (companyRes.ok && companyRes.data && companyRes.data.loop) || [];
+        var cycles = (companyState === 'ready' && companyRes.data && companyRes.data.loop) || [];
         renderRail(cycles.length ? cycles[0] : null);
 
         // Everything else, in parallel. A failure in one panel is contained
@@ -1042,14 +1222,16 @@
           api('/api/orders'),
           api('/api/audit?limit=' + AUDIT_LIMIT),
           api('/readiness/capabilities'),
+          api('/api/agent-activity?limit=' + FEED_LIMIT + '&runs=' + FEED_RUNS),
         ]).then(function (r) {
-          var approvals = renderApprovals(r[0], configured);
-          var switches = renderSwitches(r[1], configured);
-          renderBudgets(r[2], configured);
-          var runs = renderRuns(r[3], configured);
+          var approvals = renderApprovals(r[0], companyState);
+          var switches = renderSwitches(r[1], companyState);
+          renderBudgets(r[2], companyState);
+          var runs = renderRuns(r[3], companyState);
           var providers = renderProviders(r[4]);
-          var orders = renderOrders(r[5], configured);
-          renderAudit(r[6], configured);
+          var orders = renderOrders(r[5], companyState);
+          renderAudit(r[6], companyState);
+          renderFeed(r[8], companyState);
 
           var caps = null;
           var capsTone = 'muted';
@@ -1099,10 +1281,10 @@
       openToken();
       return;
     }
-    // The server requires `decidedBy` to be at least 3 characters. Checking it
-    // here turns a 400 into an instruction.
+    // The server requires `decidedByLabel` to be at least 3 characters when it
+    // is sent at all. Checking it here turns a 400 into an instruction.
     if (!auth.operator || auth.operator.length < 3) {
-      toast('Set a name of at least 3 characters — it is recorded as the deciding actor.', 'error');
+      toast('Set a name of at least 3 characters — it is attached to the audit event.', 'error');
       openToken();
       return;
     }
@@ -1111,8 +1293,14 @@
     $('decideSubject').textContent = request || id;
     $('decideConfirmBtn').textContent = decision === 'approved' ? 'Approve' : 'Deny';
     $('rationaleInput').value = '';
+    // Precise on purpose. The authenticated actor is `operator` — the token is
+    // the only identity the server verified. The typed name rides along inside
+    // the event's detail as an unverified annotation, and saying otherwise
+    // would overstate what the audit chain proves.
     $('decideNote').textContent =
-      'Recorded as ' + auth.operator + ' in the append-only audit chain. This cannot be undone.';
+      'Recorded with actor "operator" (the token), annotated "' +
+      auth.operator +
+      '" — an unverified label, not a verified identity. Appended to the audit chain; this cannot be undone.';
     $('decideModal').classList.add('is-open');
     setTimeout(function () {
       $('rationaleInput').focus();
@@ -1133,7 +1321,7 @@
     api('/api/approvals/' + encodeURIComponent(decideTarget.id) + '/decide', {
       method: 'POST',
       auth: true,
-      body: { decision: decideTarget.decision, decidedBy: auth.operator, rationale: rationale },
+      body: { decision: decideTarget.decision, decidedByLabel: auth.operator, rationale: rationale },
     }).then(function (res) {
       btn.disabled = false;
       btn.textContent = decideTarget && decideTarget.decision === 'approved' ? 'Approve' : 'Deny';
@@ -1156,7 +1344,7 @@
       return;
     }
     if (!auth.operator || auth.operator.length < 3) {
-      toast('Set a name of at least 3 characters — it is recorded as the releasing actor.', 'error');
+      toast('Set a name of at least 3 characters — it is attached to the audit event.', 'error');
       openToken();
       return;
     }
@@ -1165,7 +1353,7 @@
     api('/api/kill-switches/' + encodeURIComponent(scope) + '/release', {
       method: 'POST',
       auth: true,
-      body: { releasedBy: auth.operator },
+      body: { releasedByLabel: auth.operator },
     }).then(function (res) {
       if (res.ok) {
         toast('Released ' + scope + '.', 'ok');
@@ -1223,7 +1411,7 @@
       pill.textContent = 'deciding as ' + (auth.operator || 'unnamed');
       pill.setAttribute('data-tone', 'neon');
     } else {
-      pill.textContent = 'token required to decide';
+      pill.textContent = 'token required to read or decide';
       pill.removeAttribute('data-tone');
     }
   }
@@ -1256,6 +1444,7 @@
   });
   $('verifyChainBtn').addEventListener('click', verifyChain);
   $('tokenBtn').addEventListener('click', openToken);
+  $('authBannerBtn').addEventListener('click', openToken);
 
   $('tokenSaveBtn').addEventListener('click', function () {
     auth.save($('tokenInput').value.trim(), $('operatorInput').value.trim());
@@ -1338,11 +1527,18 @@
   syncTokenButton();
 
   // Skeletons, so the first paint reads as "not yet known" rather than "empty".
-  ['approvalsBody', 'switchBody', 'budgetBody', 'runsBody', 'providerBody', 'orderBody', 'auditBody'].forEach(
-    function (id) {
-      $(id).innerHTML = skeleton(3);
-    },
-  );
+  [
+    'approvalsBody',
+    'switchBody',
+    'budgetBody',
+    'runsBody',
+    'providerBody',
+    'orderBody',
+    'auditBody',
+    'feedBody',
+  ].forEach(function (id) {
+    $(id).innerHTML = skeleton(3);
+  });
   renderRail(null);
 
   poll();

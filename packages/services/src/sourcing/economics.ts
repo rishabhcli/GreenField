@@ -7,6 +7,15 @@
  * presented as a supplier quote. Incomplete economics (no selling price) or a
  * failed margin gate refuse the build rather than returning a model that looks
  * like a pass.
+ *
+ * A digital line has no supplier and therefore no quote, but it still has real
+ * marginal cost, and `buildDigital` models it under exactly the same rules:
+ * inference comes from inference actually charged to this company
+ * (`observed_actual`), per-unit hosting is tagged `assumption` because no
+ * measured per-unit rate exists, and the payment fee is Stripe's published
+ * schedule (`contract_rate`). Nothing is promoted to a grounded basis it did
+ * not earn, and a digital model with no measured inference refuses to build
+ * rather than guessing a compute cost.
  */
 
 import {
@@ -45,6 +54,28 @@ export const STRIPE_US_CARD_FEE_SCHEDULE = {
   basis: 'contract_rate' as const,
   note: '2.9% + $0.30 — Stripe published US card-not-present fee schedule',
 };
+
+/**
+ * Window over which inference already charged to the company is measured.
+ *
+ * 30 days is long enough that a handful of runs produce a stable mean and short
+ * enough that a model or prompt change from last quarter is not still setting
+ * today's unit cost. The number is a measurement window, not a cost estimate —
+ * nothing is invented if the window turns out to be empty; the build refuses.
+ */
+export const DIGITAL_INFERENCE_WINDOW_DAYS = 30;
+
+/**
+ * Per-unit hosting/bandwidth on a digital line.
+ *
+ * Render bills per service per month, not per download, and nothing in this
+ * system measures bytes served per order — so there is no honest per-unit rate
+ * to state. The component is carried at zero and tagged `assumption` for the
+ * same reason freight is on the physical path: omitting it entirely would make
+ * the model look fully grounded on a cost nobody has actually measured.
+ */
+export const DIGITAL_HOSTING_UNMEASURED_NOTE =
+  'no measured per-unit hosting or bandwidth rate; the hosting plan is billed per month, not per delivered unit';
 
 export interface EconomicsGateInput {
   readonly groundedRatio: number;
@@ -196,6 +227,21 @@ export interface LandedCostBuildInput {
   readonly assumedComponents?: readonly CostComponent[];
 }
 
+export interface DigitalUnitCostBuildInput {
+  readonly companyId: string;
+  readonly opportunityId: string;
+  /** Base currency of the business. The fee schedule only applies to USD. */
+  readonly currency: string;
+  /** Where the buyer is, for the record. No duty is computed — nothing crosses a border. */
+  readonly destinationCountry: string;
+  /** Stated selling price in minor units. Absent means contribution cannot be modelled. */
+  readonly sellingPriceMinor?: number | null;
+  /** Caller-supplied assumptions. Must already be tagged non-quoted. */
+  readonly assumedComponents?: readonly CostComponent[];
+  /** Measurement window for recorded inference spend. */
+  readonly inferenceWindowDays?: number;
+}
+
 export interface LandedCostBuildResult {
   readonly landedCost: LandedCostRow;
   readonly landed: LandedCostResult;
@@ -221,6 +267,162 @@ export class LandedCostService {
 
   async buildFromQuote(input: LandedCostBuildInput): Promise<LandedCostBuildResult> {
     return this.build(input);
+  }
+
+  /**
+   * Unit economics for a digital product line.
+   *
+   * There is no supplier, no RFQ and no quote — so this does not go looking for
+   * one, and it does not manufacture one either. The cost of delivering one more
+   * unit is built from two lines and nothing else:
+   *
+   *   - `inference_compute`, from inference this company has actually been
+   *     charged (`agent_runs.cost_minor_usd`). That is `observed_actual` in the
+   *     sense the basis enum already means it — measured from our own history,
+   *     the same footing as an observed return rate on the physical path. The
+   *     note states exactly what was measured and over what window, including
+   *     the one modelling step (one delivered unit is modelled as one agent
+   *     run), so nobody reads the number as a per-unit meter reading.
+   *   - `hosting_delivery`, carried at zero and tagged `assumption`, because no
+   *     per-unit hosting rate is measured anywhere in this system.
+   *
+   * With no priced runs on record there is no measurement, so this refuses
+   * rather than estimating compute — an invented COGS is exactly the failure
+   * mode the basis enum exists to prevent. Payment processing is added at the
+   * contribution layer from Stripe's published schedule; Dodo is not used, and
+   * a digital line routed through Stripe direct needs no MoR assumption here.
+   */
+  async buildDigital(input: DigitalUnitCostBuildInput): Promise<LandedCostBuildResult> {
+    const log = getLogger();
+    const currency = input.currency.toUpperCase();
+    const windowDays = input.inferenceWindowDays ?? DIGITAL_INFERENCE_WINDOW_DAYS;
+    const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
+    const observed = await this.deps.repos.agents.runs.observedInferenceCost(input.companyId, since);
+    if (observed.pricedRuns === 0 || observed.costMinorUsd <= 0) {
+      throw new ValidationError(
+        `No inference cost has been recorded for this company in the last ${windowDays} days, so the ` +
+          `marginal cost of delivering a digital unit cannot be measured. Refusing to estimate one.`,
+        { companyId: input.companyId, windowDays },
+      );
+    }
+    if (currency !== 'USD') {
+      // agent_runs.cost_minor_usd is USD by construction. Converting it without
+      // a real FX rate would state a cost in a currency nobody quoted.
+      throw new ValidationError(
+        `Recorded inference cost is denominated in USD; modelling a ${currency} digital unit cost would ` +
+          `require an FX rate this system does not hold. Refusing to convert.`,
+        { companyId: input.companyId, currency },
+      );
+    }
+
+    // Rescale before dividing: at transactional scale 219¢ over 6 runs rounds to
+    // 36¢, quietly discarding half a cent per unit. Modelling scale keeps the
+    // 36.5¢ the runs actually cost.
+    const perUnitInference = Money.fromMinor(observed.costMinorUsd, 'USD')
+      .rescale(MODELLING_SCALE)
+      .divideBy(observed.pricedRuns);
+
+    const components: CostComponent[] = [
+      {
+        kind: 'inference_compute',
+        amount: perUnitInference.toString(),
+        currency: 'USD',
+        basis: 'observed_actual',
+        sourceRef: 'agent_runs.cost_minor_usd',
+        note:
+          `mean of ${observed.costMinorUsd} minor USD actually charged across ${observed.pricedRuns} priced ` +
+          `agent runs since ${since.toISOString()}; one delivered unit is modelled as one agent run`,
+      },
+      {
+        kind: 'hosting_delivery',
+        amount: '0.000000',
+        currency: 'USD',
+        basis: 'assumption',
+        sourceRef: null,
+        note: DIGITAL_HOSTING_UNMEASURED_NOTE,
+      },
+    ];
+
+    const adopted = adoptAssumedComponents(input.assumedComponents ?? [], null);
+    components.push(...adopted);
+    assertHonestCostComponents(components);
+
+    const landed = computeLandedCost({
+      id: 'cost_draft',
+      companyId: input.companyId,
+      opportunityId: input.opportunityId,
+      quoteId: null,
+      // One unit. There is no MOQ and no production run to allocate setup over,
+      // so a larger quantity would only scale both sides of the same number.
+      orderQuantity: 1,
+      currency: 'USD',
+      components,
+      destinationCountry: input.destinationCountry,
+      incoterm: 'not_applicable',
+      hsCode: null,
+      computedAt: new Date().toISOString(),
+    });
+
+    const sellingPricePresent = input.sellingPriceMinor != null && input.sellingPriceMinor > 0;
+    const contribution = sellingPricePresent
+      ? contributionFrom(landed, input.sellingPriceMinor as number, 'USD', 'agent_runs.cost_minor_usd')
+      : null;
+    const gate = evaluateEconomicsGate({
+      groundedRatio: landed.groundedRatio,
+      contributionMarginRatio: contribution?.contributionMarginRatio ?? null,
+      sellingPricePresent,
+    });
+
+    if (!gate.complete || !gate.passesMarginGate) {
+      throw new ValidationError(gate.reason, {
+        opportunityId: input.opportunityId,
+        productLine: 'digital',
+        complete: gate.complete,
+        passesMarginGate: gate.passesMarginGate,
+      });
+    }
+
+    const persisted = await this.deps.repos.sourcing.landedCosts.write({
+      companyId: input.companyId,
+      opportunityId: input.opportunityId,
+      quoteId: null,
+      orderQuantity: 1,
+      currency: 'USD',
+      components,
+      destinationCountry: input.destinationCountry,
+      incoterm: 'not_applicable',
+      hsCode: null,
+    });
+
+    const notes = [
+      `inference measured from ${observed.pricedRuns} priced agent runs over the last ${windowDays} days`,
+      `hosting per unit is assumed, not measured: ${DIGITAL_HOSTING_UNMEASURED_NOTE}`,
+      'no supplier quote exists or is required: a digital product has no supplier',
+    ];
+
+    log.info(
+      {
+        opportunityId: input.opportunityId,
+        productLine: 'digital',
+        groundedRatio: landed.groundedRatio,
+        passesMarginGate: gate.passesMarginGate,
+        assumedComponents: landed.assumedComponents,
+      },
+      'digital unit-cost model built',
+    );
+
+    return {
+      landedCost: persisted,
+      landed,
+      contribution,
+      groundedRatio: landed.groundedRatio,
+      contributionMarginRatio: contribution?.contributionMarginRatio ?? null,
+      passesMarginGate: gate.passesMarginGate,
+      complete: gate.complete,
+      assumedComponents: landed.assumedComponents,
+      notes,
+    };
   }
 
   async build(input: LandedCostBuildInput): Promise<LandedCostBuildResult> {
@@ -312,8 +514,10 @@ export class LandedCostService {
       computedAt: new Date().toISOString(),
     });
 
-    const contribution = this.#contribution(input, landed, quote.currency);
     const sellingPricePresent = input.sellingPriceMinor != null && input.sellingPriceMinor > 0;
+    const contribution = sellingPricePresent
+      ? contributionFrom(landed, input.sellingPriceMinor as number, quote.currency, input.quoteId)
+      : null;
     const gate = evaluateEconomicsGate({
       groundedRatio: landed.groundedRatio,
       contributionMarginRatio: contribution?.contributionMarginRatio ?? null,
@@ -364,51 +568,60 @@ export class LandedCostService {
     };
   }
 
-  #contribution(
-    input: LandedCostBuildInput,
-    landed: LandedCostResult,
-    currency: string,
-  ): ContributionResult | null {
-    if (input.sellingPriceMinor == null || input.sellingPriceMinor <= 0) return null;
+}
 
-    const netSellingPrice = Money.fromMinor(input.sellingPriceMinor, currency).rescale(MODELLING_SCALE);
+/**
+ * Contribution from a freshly computed landed cost and a stated selling price.
+ *
+ * Shared by the quoted (physical) and measured (digital) paths so both carry
+ * the same payment-fee treatment and the same basis demotion: if any landed
+ * component was assumed, the whole landed line is `assumption` at the
+ * contribution layer. `sourceRef` is the quote id on a physical model and the
+ * measurement source on a digital one; it is never invented.
+ */
+function contributionFrom(
+  landed: LandedCostResult,
+  sellingPriceMinor: number,
+  currency: string,
+  sourceRef: string | null,
+): ContributionResult | null {
+  if (sellingPriceMinor <= 0) return null;
 
-    const landedBasis = landedCostContributionBasis(landed);
-    const components: {
-      kind: 'landed_unit_cost' | 'payment_processing_fee';
-      amount: string;
-      basis: CostComponent['basis'];
-      sourceRef: string | null;
-      note: string | null;
-    }[] = [
-      {
-        kind: 'landed_unit_cost',
-        amount: landed.landedUnitCost.toString(),
-        basis: landedBasis,
-        sourceRef: input.quoteId,
-        note: landed.assumedComponents.length > 0 ? `includes assumed: ${landed.assumedComponents.join(', ')}` : null,
-      },
-    ];
+  const netSellingPrice = Money.fromMinor(sellingPriceMinor, currency).rescale(MODELLING_SCALE);
+  const components: {
+    kind: 'landed_unit_cost' | 'payment_processing_fee';
+    amount: string;
+    basis: CostComponent['basis'];
+    sourceRef: string | null;
+    note: string | null;
+  }[] = [
+    {
+      kind: 'landed_unit_cost',
+      amount: landed.landedUnitCost.toString(),
+      basis: landedCostContributionBasis(landed),
+      sourceRef,
+      note: landed.assumedComponents.length > 0 ? `includes assumed: ${landed.assumedComponents.join(', ')}` : null,
+    },
+  ];
 
-    if (netSellingPrice.currency === 'USD') {
-      const percent = netSellingPrice.multiplyByDecimal(STRIPE_US_CARD_FEE_SCHEDULE.rate);
-      const flat = Money.of(STRIPE_US_CARD_FEE_SCHEDULE.flat, 'USD', MODELLING_SCALE);
-      const fee = percent.add(flat).rescale(MODELLING_SCALE);
-      components.push({
-        kind: 'payment_processing_fee',
-        amount: fee.toString(),
-        basis: STRIPE_US_CARD_FEE_SCHEDULE.basis,
-        sourceRef: STRIPE_US_CARD_FEE_SCHEDULE.sourceRef,
-        note: STRIPE_US_CARD_FEE_SCHEDULE.note,
-      });
-    }
-
-    return computeContribution({
-      netSellingPrice: netSellingPrice.toString(),
-      currency: netSellingPrice.currency,
-      components,
+  if (netSellingPrice.currency === 'USD') {
+    const percent = netSellingPrice.multiplyByDecimal(STRIPE_US_CARD_FEE_SCHEDULE.rate);
+    const flat = Money.of(STRIPE_US_CARD_FEE_SCHEDULE.flat, 'USD', MODELLING_SCALE);
+    const fee = percent.add(flat).rescale(MODELLING_SCALE);
+    components.push({
+      kind: 'payment_processing_fee',
+      amount: fee.toString(),
+      basis: STRIPE_US_CARD_FEE_SCHEDULE.basis,
+      sourceRef: STRIPE_US_CARD_FEE_SCHEDULE.sourceRef,
+      note: STRIPE_US_CARD_FEE_SCHEDULE.note,
     });
   }
+
+  return computeContribution({
+    netSellingPrice: netSellingPrice.toString(),
+    currency: netSellingPrice.currency,
+    components,
+  });
 }
 
 function perUnitFromMinor(
@@ -427,7 +640,7 @@ function perUnitFromMinor(
   };
 }
 
-function adoptAssumedComponents(caller: readonly CostComponent[], quoteId: string): CostComponent[] {
+function adoptAssumedComponents(caller: readonly CostComponent[], quoteId: string | null): CostComponent[] {
   const out: CostComponent[] = [];
   for (const component of caller) {
     if (component.kind === 'unit_manufacturing') {

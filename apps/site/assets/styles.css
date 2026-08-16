@@ -297,6 +297,28 @@ h3 {
   color: var(--text-2);
 }
 
+/* A failed probe is shown, not hidden. A status column that can only render
+   green is a status column that means nothing. */
+.chip-fail {
+  color: var(--danger, #ff453a);
+  border-color: rgba(255, 69, 58, 0.28);
+  background: rgba(255, 69, 58, 0.07);
+}
+
+/* The default for a status the page has not read. Deliberately colourless. */
+.integ-status {
+  font-family: var(--font-mono);
+}
+
+/* Marks a figure as an illustration wherever one appears, so the label travels
+   with the element instead of living only in a caption underneath it. */
+.chip-illus {
+  color: var(--text-3);
+  border-style: dashed;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .chip-approve {
   color: var(--text);
   border-color: rgba(255, 255, 255, 0.25);
@@ -553,6 +575,36 @@ h3 {
     0 30px 80px rgba(0, 0, 0, 0.55),
     inset 0 1px 0 rgba(255, 255, 255, 0.09);
   overflow: hidden;
+}
+
+/**
+ * Illustration marking.
+ *
+ * The hero panel is a layout diagram that has never been wired to the API, so
+ * it carries the label in three places that survive a screenshot: a dashed
+ * border, a repeating watermark across the body, and a chip in its own title
+ * bar. A figcaption alone is not enough — captions get cropped, and a panel
+ * that looks like a dashboard will be read as one.
+ */
+.console.is-illustration {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.console.is-illustration .console-body {
+  position: relative;
+}
+
+.console.is-illustration .console-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 22px,
+    rgba(255, 255, 255, 0.022) 22px 44px
+  );
 }
 
 /* Specular top edge — the Liquid-Glass detail, kept to a single hairline. */

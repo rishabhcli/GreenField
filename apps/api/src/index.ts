@@ -136,7 +136,18 @@ async function main(): Promise<void> {
   /* ---------------------------------------------------------------------- */
 
   await registerReadinessRoutes(app, ctx);
-  await registerWebhookRoutes(app, ctx);
+  // Webhooks MUST be encapsulated in their own plugin scope. They install a
+  // raw-buffer parser for `application/json` because every signature scheme
+  // signs the exact bytes, and `addContentTypeParser` applies to whatever
+  // instance it is called on. Called directly on the root app it hijacked the
+  // JSON body of every other route in the API — `request.body` arrived as a
+  // Buffer, so `SetBudget.parse` and friends saw an object with no fields, and
+  // PUT /api/budgets, the approve/deny writes, the kill-switch release and
+  // POST /api/checkout all failed validation. Registering as a plugin confines
+  // the parser to the webhook routes.
+  await app.register(async (instance) => {
+    await registerWebhookRoutes(instance, ctx);
+  });
   await registerGovernanceRoutes(app, ctx);
   await registerCommerceRoutes(app, ctx);
   await registerCompanyRoutes(app, ctx, services);

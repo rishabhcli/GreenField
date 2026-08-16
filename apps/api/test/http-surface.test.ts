@@ -175,6 +175,7 @@ function operatorCtx(token: string | undefined = OPERATOR): AppContext {
     releasedBy?: string;
     auditActor?: string;
     auditLimit?: number;
+    auditDetail?: Record<string, unknown>;
   } = {};
   const ctx = {
     captured,
@@ -274,8 +275,9 @@ function operatorCtx(token: string | undefined = OPERATOR): AppContext {
           captured.auditLimit = query.limit;
           return [];
         },
-        append: async (event: { actorId: string }) => {
+        append: async (event: { actorId: string; detail?: Record<string, unknown> }) => {
           captured.auditActor = event.actorId;
+          captured.auditDetail = event.detail;
         },
         verifyChain: mustNotRun('audit.verifyChain'),
       },
@@ -325,8 +327,9 @@ function capturedOf(ctx: AppContext): {
   releasedBy?: string;
   auditActor?: string;
   auditLimit?: number;
+  auditDetail?: Record<string, unknown>;
 } {
-  return (ctx as unknown as { captured: Record<string, string | number | undefined> }).captured;
+  return (ctx as unknown as { captured: Record<string, never> }).captured;
 }
 
 async function appWithGates(token?: string) {
@@ -421,6 +424,7 @@ describe('governance routes require the operator token', () => {
     { method: 'GET', url: '/api/audit/verify' },
     { method: 'GET', url: '/api/agent-runs' },
     { method: 'GET', url: '/api/agent-runs/run_1' },
+    { method: 'GET', url: '/api/agent-activity' },
   ];
 
   it.each(routes)('$method $url is 403 without a bearer token', async ({ method, url, payload }) => {
@@ -462,6 +466,70 @@ describe('governance routes require the operator token', () => {
     });
     expect(released.statusCode).toBe(200);
     expect(capturedOf(ctx).releasedBy).toBe('operator');
+    await app.close();
+  });
+
+  /**
+   * A shared `OPERATOR_API_TOKEN` cannot distinguish two humans, so the console
+   * lets one type their name. That name is an *annotation*: it goes into the
+   * event's `detail`, never into `actor_id`. Promoting it would let anyone
+   * holding the token write an arbitrary identity into the audit chain, which
+   * is the thing the chain exists to prevent.
+   */
+  it('records a self-declared operator name as an annotation, never as the actor', async () => {
+    const { app, ctx } = await appWithGates(OPERATOR);
+    const headers = { authorization: `Bearer ${OPERATOR}` };
+
+    const decided = await app.inject({
+      method: 'POST',
+      url: '/api/approvals/apr_1/decide',
+      headers,
+      payload: {
+        decision: 'approved',
+        rationale: 'reviewed',
+        decidedBy: 'attacker',
+        decidedByLabel: 'Rishabh Bansal',
+      },
+    });
+    expect(decided.statusCode).toBe(200);
+    expect(capturedOf(ctx).auditActor).toBe('operator');
+    expect(capturedOf(ctx).decidedBy).toBe('operator');
+    expect(capturedOf(ctx).auditDetail?.operatorLabel).toBe('Rishabh Bansal');
+
+    const released = await app.inject({
+      method: 'POST',
+      url: '/api/kill-switches/ad_spend/release',
+      headers,
+      payload: { releasedBy: 'attacker', releasedByLabel: 'Rishabh Bansal' },
+    });
+    expect(released.statusCode).toBe(200);
+    expect(capturedOf(ctx).releasedBy).toBe('operator');
+    expect(capturedOf(ctx).auditDetail?.operatorLabel).toBe('Rishabh Bansal');
+    await app.close();
+  });
+
+  it('omits the annotation entirely when no name is supplied', async () => {
+    const { app, ctx } = await appWithGates(OPERATOR);
+    const decided = await app.inject({
+      method: 'POST',
+      url: '/api/approvals/apr_1/decide',
+      headers: { authorization: `Bearer ${OPERATOR}` },
+      payload: { decision: 'approved', rationale: 'reviewed' },
+    });
+    expect(decided.statusCode).toBe(200);
+    expect(capturedOf(ctx).auditDetail).not.toHaveProperty('operatorLabel');
+    await app.close();
+  });
+
+  it('rejects an unusable label rather than silently dropping it', async () => {
+    const { app } = await appWithGates(OPERATOR);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/approvals/apr_1/decide',
+      headers: { authorization: `Bearer ${OPERATOR}` },
+      payload: { decision: 'approved', rationale: 'reviewed', decidedByLabel: 'x' },
+    });
+    expect(response.statusCode).toBe(400);
     await app.close();
   });
 

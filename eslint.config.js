@@ -68,6 +68,11 @@ module.exports = tseslint.config(
       '**/coverage/**',
       'apps/site/assets/**',
       'apps/site/*.js',
+      // Ephemeral driver/inspection scripts run against live infra by hand.
+      // They are gitignored and never built, so linting them only produces
+      // no-undef noise for Node globals the TS config does not declare.
+      '**/*.tmp.mjs',
+      '**/_*.mjs',
     ],
   },
 

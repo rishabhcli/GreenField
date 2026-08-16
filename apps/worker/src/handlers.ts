@@ -112,6 +112,10 @@ export function buildHandlers(ctx: AppContext, services: Services): HandlerMap {
         roleKey: payload.roleKey,
         objective: payload.objective,
         inputRefs: payload.inputRefs,
+        // The run's own budget, not the job's. Without it the only wall-clock
+        // bound is the queue's 15-minute abort, which kills the run mid-request
+        // and leaves the work it had already done unreported.
+        deadlineAt: payload.deadlineAt,
         signal: jobCtx.signal,
       });
       return {

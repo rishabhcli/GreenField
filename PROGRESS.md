@@ -300,3 +300,53 @@ Unit-tested path only. **Not** `live_verified`. Org credit remains **$0**; an un
 | Tools `expert.request_review` / `expert.poll` | **PARTIAL** | `expert.request_review` is already in the catalog (PolicyGate `expert.engage_paid`). `expert.poll` tool + webhook-processor + handler `expertJobOutcome` splice: `PATCH.md`. |
 
 Prize method `terac_launch_draft_opportunity` / REST launch: **NOT COMPLETE** (live `$0` credit). Do not treat `GET /projects` as a pass.
+
+---
+
+## Digital product line (this pass)
+
+`co_01M03F7RQW2M6540BY2GZHCFBW` is switched from physical goods to a digital
+product line. The physical path could not complete: `#assessSource` gates on a
+grounded supplier quote, and the live matrix reports `sourcing.rfq_submit` /
+`sourcing.supplier_profile` as `unverifiable_no_public_api` and
+`sourcing.quote_retrieve` as `unsupported_by_provider`, so no quote can ever
+arrive. `risk.maxSupplierPurchaseWithoutHumanMinor` stays `0` — that boundary
+was not relaxed, it was made irrelevant by not buying goods.
+
+| Step | Status | Evidence |
+|---|---|---|
+| `commerce.productLine: 'physical' \| 'digital'`, defaulting to `physical` | **DONE** | `packages/core/test/company.test.ts`: default applies to a config written before the field existed; `productLineOf` falls back to `physical` on an absent/drifted/unreadable config. JSONB column, no migration. |
+| `source` completes on a digital line with the reason recorded | **DONE** | `packages/services/test/loop-digital-line.test.ts`: `performed: false`, reason names the product line, `groundedQuoteCount` reports the real count. No supplier, RFQ or quote row is written. |
+| Physical `source` behaviour unchanged | **DONE** | Same file: still waits for the first quote, still blocks on `sourcing.supplier_search`, still completes on real grounded quotes; a config with no `productLine` is treated as physical. |
+| Digital unit economics from measured cost | **DONE** | `packages/services/test/digital-economics.test.ts`: `inference_compute` is `observed_actual` from `agent_runs.cost_minor_usd`; `hosting_delivery` stays `assumption`; Stripe's published schedule is `contract_rate`; `quote_id` is NULL and `incoterm` is `not_applicable`. |
+| Refusals rather than invented numbers | **DONE** | Same file: no recorded inference → refuse; no selling price → refuse; margin below gate → refuse; non-USD → refuse to convert without an FX rate; caller component claiming `supplier_quote` → refuse. Nothing is persisted in any refusal. |
+| Live row flipped | **DONE** | `productLine: "digital"` written through `CompanyRepository.updateConfig` (so it passes `CompanyConfig` on write); mission first clause rewritten, honesty sentence verbatim; every other config field byte-identical. `LoopOrchestrator.assess` run read-only against the live DB returns `complete: true` for `source` with the recorded reason. |
+
+Deliberately marked `assumption`: **per-unit hosting/bandwidth**. Hosting is
+billed per month, not per delivered unit, and nothing measures bytes served per
+order — so it is carried at zero and tagged, exactly as unquoted freight is on
+the physical path. At the contribution layer this demotes the whole landed line
+to `assumption`, which is correct: a digital model must not read as fully
+grounded on the strength of the one input that was measured.
+
+Fixed on the way: `LandedCostRepository.listForCompany` ordered by a
+`created_at` column `landed_cost_models` does not have, so `model_economics`
+threw instead of assessing.
+
+## Research clustering: 0 clusters from 700+ evidence rows (2026-08-16)
+
+| Step | Status | Evidence |
+|---|---|---|
+| Diagnose why `research.cluster_pain_points` always returned `{"clusters":0}` | **DONE** | Two structural defects, both reproduced by running the shipped `clusterEvidence` against the live corpus: a `minConfidence: 0.5` read floor above the `0.4` the collector writes (180 of 213 rows invisible), and a same-`source_domain` requirement that made `independent_source_count` structurally 1 and `opportunitiesCreated` unreachable. |
+| Cluster on subject matter across domains | **DONE** | IDF-weighted star clustering in `packages/services/src/research/cluster.ts`; live run `{"clusters":19,"opportunitiesCreated":16,"evidenceConsidered":708}`, 16 pain points with more than one independent source, max 37 distinct domains. |
+| Read floor agrees with the collector | **DONE** | `CLUSTERABLE_EVIDENCE_MIN_CONFIDENCE = 0.35`: above the 0.3 that marks unverifiable evidence, below the 0.4 the search path writes. |
+| Pain points state a pain in the evidence's own words | **DONE** | Statement is the best real sentence in the cluster (published text over page title, complaint language over vocabulary match); never a URL, never a search-engine placeholder. Labels use only words the evidence used. |
+| `evidence_count` / `independent_source_count` are true | **DONE** | One item per cluster; `recomputeStats` no longer aggregates across the competitor `unnest`, which counted an item once per competitor named. |
+| Regression tests | **DONE** | `packages/services/test/research-cluster.test.ts`, 18 tests on fixtures shaped like real collector output. `pnpm test` 1042 passed / 13 skipped. |
+| Stale derived state removed from the live DB | **DONE** | 72 pain points, 90 links, 72 graph nodes and one fabricated `probe` opportunity deleted; `evidence_items` (733 rows) untouched. |
+
+Still NOT COMPLETE: evidence carries no severity, purchase intent or sentiment —
+the collector writes the schema defaults — so `median_severity` is 0 on every
+pain point and the `pain_severity` score dimension stays ungrounded. Fixing that
+needs a grounded extraction pass over the stored summary/excerpt; inferring it
+from a search snippet would be invention.

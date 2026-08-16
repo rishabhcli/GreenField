@@ -9,3 +9,9 @@ coverage/
 *.log
 .vitest/
 hackathon-sponsor-credentials.md
+
+# Ephemeral driver/inspection scripts. These talk to live infra with real
+# credentials and are never part of a build; keeping them untracked stops a
+# debugging session from leaking into the repo.
+*.tmp.mjs
+**/_*.mjs
