@@ -602,7 +602,7 @@ export class QaRepository {
   async openDefects(companyId: string, siteId?: string | null): Promise<readonly DefectRow[]> {
     return q(
       this.pool,
-      `SELECT ${DEFECT_COLUMNS.split(', ').map((c) => `d.${c.trim()}`).join(', ')}
+      `SELECT ${DEFECT_COLUMNS.split(',').map((c) => `d.${c.trim()}`).join(', ')}
          FROM defects d
          JOIN qa_runs r ON r.id = d.qa_run_id
         WHERE d.company_id=$1

@@ -288,7 +288,7 @@ export class PainPointRepository {
               last_observed_at         = stats.last_observed_at
          FROM stats
         WHERE p.id = $1
-        RETURNING ${PAIN_COLUMNS.split(', ').map((c) => `p.${c.trim()}`).join(', ')}`,
+        RETURNING ${PAIN_COLUMNS.split(',').map((c) => `p.${c.trim()}`).join(', ')}`,
       [painPointId],
       PainPointRow,
       'pain_point',

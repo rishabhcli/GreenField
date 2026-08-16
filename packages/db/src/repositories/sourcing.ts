@@ -352,7 +352,7 @@ export class QuoteRepository {
   async forOpportunity(opportunityId: string): Promise<readonly QuoteRow[]> {
     return q(
       this.db,
-      `SELECT ${QUOTE_COLUMNS.split(', ').map((c) => `sq.${c.trim()}`).join(', ')}
+      `SELECT ${QUOTE_COLUMNS.split(',').map((c) => `sq.${c.trim()}`).join(', ')}
          FROM supplier_quotes sq
          JOIN rfqs r ON r.id = sq.rfq_id
         WHERE r.opportunity_id = $1

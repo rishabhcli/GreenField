@@ -1,0 +1,11 @@
+import pg from 'pg';
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+await c.connect();
+const runs = await c.query(`select id, role_key, status, started_at, finished_at, iterations, tokens_in, tokens_out, cost_minor_usd, substring(coalesce(error,'') for 200) as err from agent_runs order by started_at desc limit 6`);
+for (const r of runs.rows) console.log(JSON.stringify(r));
+const msgs = await c.query(`select run_id, count(*)::int as n, max(created_at) as latest from agent_messages group by run_id order by latest desc limit 5`);
+console.log('--- messages');
+for (const r of msgs.rows) console.log(JSON.stringify(r));
+const ev = await c.query(`select count(*)::int as n from evidence_items`);
+console.log('evidence_items:', ev.rows[0].n);
+await c.end();
