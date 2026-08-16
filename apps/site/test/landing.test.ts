@@ -275,6 +275,10 @@ describe('landing site', () => {
     expect(rest, 'REST constant missing').not.toBeNull();
     expect(Number(rest?.[1])).toBeGreaterThanOrEqual(0.1);
 
+    const size = js.match(/var SIZE = ([0-9.]+)/);
+    expect(size, 'SIZE constant missing').not.toBeNull();
+    expect(Number(size?.[1])).toBeGreaterThanOrEqual(4);
+
     const copyFloor = js.match(/measure\("\.hero-copy",\s*rect,\s*\d+,\s*([0-9.]+)/);
     expect(copyFloor, 'hero-copy damp floor missing').not.toBeNull();
     expect(Number(copyFloor?.[1])).toBeGreaterThanOrEqual(0.7);

@@ -162,8 +162,8 @@
   var heroSection = document.querySelector(".hero");
 
   if (ledCtx && heroSection) {
-    var PITCH = 17; /* grid spacing, CSS px — dense enough to read as a panel */
-    var SIZE = 3.2; /* emitter edge length */
+    var PITCH = 14; /* grid spacing, CSS px — dense enough to read as a panel */
+    var SIZE = 4.4; /* emitter edge length */
     var LENS = 4.6; /* diode package: the dark lens the emitter sits inside */
     var LEVELS = 16; /* brightness buckets */
     var HOT = 0.32; /* above this an LED also gets additive bloom sprites */
