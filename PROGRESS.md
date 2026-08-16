@@ -177,6 +177,9 @@ Linq is the customer-communications path (PLAN.md §11). Owned files only: `pack
 | `marketing.outreach` / `linq.outreach` empty audience blocked; `sendLink` not Agent Pay | **DONE** (unit) | `packages/services/test/linq-inbound.test.ts`. Queue / handler / catalog / market-phase enqueue — `PATCH.md`. Recipients are never invented. |
 | Linq link/open iMessage App | **`live_verified`** (do not regress) | HTTP 202 chat `de316f38-5ead-4ded-8ca9-27a5c4851987`. Stripe Payment Link is `params.url`, **not** `agentpay` `checkout_url`. |
 | Agent Pay `POST /v3/payment_requests` | **NOT COMPLETE** (honest leftover) | Live **2011** no connected payment account. Classified as non-retryable `ValidationError` (`LINQ_AGENT_PAY_ERROR_2011` / `LINQ_AGENT_PAY_BLOCKER`). `packages/providers/test/linq-agentpay.test.ts`. Connect a Stripe account in the Linq dashboard; do not substitute Payment Link. |
+| Text Linq number → converse → Stripe hosted invoice | **DONE** (unit) | Inbound buy/invoice intent is `product_question`. `commerce.issue_invoice` creates a catalogue-priced Stripe Invoice and sends `hosted_invoice_url` on the Linq thread (`LINQ_FROM_NUMBER` is the default `from`). `invoice.paid` is the money event. `packages/services/test/sms-invoice.test.ts`, `packages/providers/test/stripe-events.test.ts`, `packages/providers/test/linq-agentpay.test.ts`. |
+| Linq thread is the primary consumer store | **DONE** (unit) | First inbound dropship text is greeted as the store, not escalated. Ideas match catalogue tokens or get an honest "we will source it" — no invented price. `GET /api/store` publishes the assigned line or says unpublished. Landing/console CTA is "Text the store". `packages/core/test/support.test.ts`, `packages/services/test/support-inbox.test.ts`, `apps/api/test/commerce-physical.test.ts`, `apps/site/test/landing.test.ts`. |
+| Unmatched dropship idea starts research | **DONE** (unit) | A new idea (e.g. custom dog costumes) queues `research.collect` and never invents a price or storefront URL. Landing `#store` posts `POST /api/store/ideas`. `packages/services/test/store-intake.test.ts`, `packages/services/test/support-inbox.test.ts`, `apps/site/test/landing.test.ts`. |
 
 ---
 
@@ -296,10 +299,29 @@ Unit-tested path only. **Not** `live_verified`. Org credit remains **$0**; an un
 | `POST /webhooks/terac` HMAC + dedupe | **DONE** (unit) | `apps/api/test/terac-webhook.test.ts`: 503 if secret missing, 400 on bad sig, 200 `{duplicate:true}` on redelivery. HMAC is timestamp concatenated with raw body (no separator). |
 | Submissions → `ExpertReview` only when complete | **DONE** (unit) | `toExpertReview` throws without critique / expert id / timestamp. Service `poll` / `ingestWebhook` skip incomplete rows rather than fabricating them. |
 | `summariseReview` reject-one → `rejected` | **DONE** (unit) | Existing core test plus `expert-review.test.ts` poll/ingest: a single approved reject sets verdict `rejected`. |
-| `assessForLoop` re-derives from the artefact | **DONE** (unit) | Completed reject artefact → `verdict: 'rejected'` (not an invented pass). Priced/$0 review → phase incomplete + `blockedOn`. Loop `#assessExpertValidate` splice is in `PATCH.md`. |
+| `assessForLoop` re-derives from the artefact | **DONE** (unit) | Completed reject artefact → `verdict: 'rejected'` (not an invented pass). Priced/$0 review → phase incomplete + `blockedOn`. The `PATCH.md` `#assessExpertValidate` splice is superseded by the deadlock fix below. |
 | Tools `expert.request_review` / `expert.poll` | **PARTIAL** | `expert.request_review` is already in the catalog (PolicyGate `expert.engage_paid`). `expert.poll` tool + webhook-processor + handler `expertJobOutcome` splice: `PATCH.md`. |
 
 Prize method `terac_launch_draft_opportunity` / REST launch: **NOT COMPLETE** (live `$0` credit). Do not treat `GET /projects` as a pass.
+
+---
+
+## Loop deadlock at expert_validate (this pass)
+
+Live symptom: cycle pinned at `expert_validate`, all 16 opportunities at stage
+`expert_review_requested`, all 16 reviews `pricing_pending` for ~1h with no
+Terac response, zero agent runs. Fixed in
+`packages/services/src/loop/orchestrator.ts`. No review row is cancelled and
+no verdict is fabricated: the rows stay open so the `*/15` `expert.poll` cron
+can still complete them if Terac funds or answers later; the cycle records
+`performed: false` with the exact reason and the unvalidated-selection caveat.
+
+| Step | Status | Evidence |
+|---|---|---|
+| `#assessExpertValidate` no longer keys on stage `scored` alone | **DONE** (unit) | `packages/services/test/loop-assess-expert-select.test.ts`: candidates at `expert_review_requested` are seen (no eternal `nothing to validate`); a completed review (stage `expert_reviewed`) takes precedence with `performed: true` even while other reviews are open. |
+| All-`priced` open reviews stop pinning the phase | **DONE** (unit) | Same file: completes with `performed: false`, `reason` = exact `TERAC_STUDY_BLOCKER` (priced = proven unfunded by a live Terac response), caveat recorded on the cycle. Mixed priced + stale also names the funding blocker. |
+| Unanswered pricing requests time out | **DONE** (unit) | `EXPERT_PRICING_DEADLINE_MS` (60 min, from `requested_at` falling back to `created_at`): fresher stays incomplete; older completes `performed: false` with a no-response reason. `launched` / `in_progress` / `submissions_received` never time out; a review with no readable timestamp keeps waiting. |
+| `#assessSelect` accepts `expert_review_requested` | **DONE** (unit) | Same file: `awaiting the CEO selection decision`, not `no opportunity passed`. No opportunity-stage transition table exists (`opportunities.setStage` is an unconstrained UPDATE), so no table change was needed; stages are deliberately NOT reset to `scored`, which would make a re-entered `expert_validate` drive step re-request (and re-pay for) the same reviews. Selection stays CEO-driven via `opportunity.select` and its gates are untouched. |
 
 ---
 

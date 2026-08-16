@@ -9,6 +9,7 @@
  */
 
 import { z } from 'zod';
+import type { ProductLine } from './company.js';
 
 /* -------------------------------------------------------------------------- */
 /* Sources                                                                     */
@@ -492,10 +493,26 @@ function round2(n: number): number {
 /**
  * Hard gates applied before an opportunity may reach `selected`, regardless of
  * composite score. A 92 that fails a safety gate is still a no.
+ *
+ * Three outcomes, and collapsing any two of them would be a lie:
+ *
+ * - a gate in `failures` was evaluated and not satisfied;
+ * - a gate absent from both lists was evaluated and satisfied;
+ * - a gate in `notApplicable` was **not evaluated**, because the artefact it
+ *   asks for cannot exist for this company. That is neither a pass nor a
+ *   waiver, and it is reported separately precisely so a reader can never
+ *   mistake "there was nothing to check" for "we checked and it was fine".
  */
 export interface SelectionGateResult {
   readonly passed: boolean;
   readonly failures: readonly { gate: string; detail: string }[];
+  /**
+   * Gates skipped as structurally meaningless for this product line, each with
+   * the reason it does not apply. Deliberately a different field with a
+   * different key name (`reason`, not `detail`) so a caller cannot merge the
+   * two lists and silently present a skipped gate as a satisfied one.
+   */
+  readonly notApplicable: readonly { gate: string; reason: string }[];
 }
 
 export interface SelectionGateInputs {
@@ -508,7 +525,28 @@ export interface SelectionGateInputs {
   readonly ipRisk: number;
   readonly adPolicyRisk: number;
   readonly expertReviewCompleted: boolean;
+  /**
+   * What the company sells. Only the supplier-quote gate reads it: a line with
+   * no supplier has no quote to obtain, so demanding one would block selection
+   * on an artefact that can never arrive.
+   *
+   * Optional, defaulting to `physical`, for the same reason `productLineOf`
+   * does: every caller written before this field existed described a physical
+   * business, and the physical branch is the strict one. An omitted or drifted
+   * value can therefore only make selection harder, never easier.
+   */
+  readonly productLine?: ProductLine;
 }
+
+/**
+ * Product lines that have a supplier to quote.
+ *
+ * A line outside this set makes the supplier-quote gate *not applicable* — the
+ * gate is skipped and recorded as skipped, never marked satisfied. Membership
+ * is data rather than an `if` so adding a product line forces an explicit
+ * decision about sourcing rather than defaulting into silence.
+ */
+export const SUPPLIER_SOURCED_PRODUCT_LINES: ReadonlySet<ProductLine> = new Set<ProductLine>(['physical']);
 
 export const DEFAULT_SELECTION_GATES = {
   minIndependentSources: 5,
@@ -525,6 +563,8 @@ export function evaluateSelectionGates(
   gates: typeof DEFAULT_SELECTION_GATES = DEFAULT_SELECTION_GATES,
 ): SelectionGateResult {
   const failures: { gate: string; detail: string }[] = [];
+  const notApplicable: { gate: string; reason: string }[] = [];
+  const productLine: ProductLine = input.productLine ?? 'physical';
 
   if (input.independentSourceCount < gates.minIndependentSources) {
     failures.push({
@@ -546,7 +586,19 @@ export function evaluateSelectionGates(
         `data (need ${(gates.minGroundedWeightRatio * 100).toFixed(0)}%) — the score is mostly model estimate`,
     });
   }
-  if (!input.hasSupplierQuote) {
+  if (!SUPPLIER_SOURCED_PRODUCT_LINES.has(productLine)) {
+    // Not a pass and not a waiver: there is no supplier, so there is no quote
+    // to obtain and nothing was checked. The reason states the observed quote
+    // count as well, so nobody can read this entry as "a quote was found".
+    notApplicable.push({
+      gate: 'supplier_quote',
+      reason:
+        `the "${productLine}" product line has no supplier, so a supplier quote is not an artefact that can ` +
+        `ever exist for it; this gate was skipped, not satisfied ` +
+        `(supplier quote on record: ${input.hasSupplierQuote ? 'yes' : 'no'}). Unit economics for this line ` +
+        `must come from measured marginal delivery cost, which the contribution-margin gate still enforces.`,
+    });
+  } else if (!input.hasSupplierQuote) {
     failures.push({
       gate: 'supplier_quote',
       detail: 'no supplier quote on record; landed cost would be an assumption, not a price',
@@ -581,5 +633,5 @@ export function evaluateSelectionGates(
     failures.push({ gate: 'human_expert_review', detail: 'no completed human expert review on record' });
   }
 
-  return { passed: failures.length === 0, failures };
+  return { passed: failures.length === 0, failures, notApplicable };
 }

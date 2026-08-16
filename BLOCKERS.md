@@ -133,4 +133,4 @@ Live launch is still blocked. Unit path is ready; splices in `PATCH.md` are not 
 | `live_verified` | **No.** `apps/verifier` has not written a launch row after a real funded launch. `GET /projects` is a probe, not a pass. |
 | Unfunded draft | Must not be treated as panel results. Service keeps status `priced` and returns `blockedOn`. |
 | Webhook secret | `TERAC_WEBHOOK_SECRET` still required for `POST /webhooks/terac`. Missing secret → **503** (provider retries). Route exists; processor ingest splice is in `PATCH.md`. |
-| Loop assessment | `ExpertReviewService.assessForLoop` re-derives from the review artefact. `LoopOrchestrator.#assessExpertValidate` still skips when the capability is unusable — splice in `PATCH.md`. |
+| Loop assessment | `LoopOrchestrator.#assessExpertValidate` no longer pins the cycle on reviews that cannot progress: all-`priced` (proven $0) or unanswered past `EXPERT_PRICING_DEADLINE_MS` completes the phase with `performed: false` + exact reason, leaving the rows open for `expert.poll`. The `PATCH.md` splice is superseded. Live launch itself remains blocked on the $0 credit above. |

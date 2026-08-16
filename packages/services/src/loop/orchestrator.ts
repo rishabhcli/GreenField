@@ -42,6 +42,7 @@ import {
 import { companyConfig, tryAdvisoryLock } from '@foundry/db';
 import { getLogger } from '@foundry/obs';
 import type { ServiceDeps } from '../deps.js';
+import { TERAC_STUDY_BLOCKER } from '../org/prize-tracks.js';
 import { ExpertReviewService } from '../research/expert.js';
 import { LandedCostService } from '../sourcing/economics.js';
 
@@ -104,6 +105,37 @@ const BUILD_EVIDENCE_STATUSES = new Set([
 ]);
 
 const BUILD_NOT_YET_GENERATED = new Set(['spec_drafted', 'generating', 'building', 'build_failed']);
+
+/**
+ * How long `expert_validate` waits for Terac to price a feasibility request
+ * before the cycle proceeds without expert validation. This guards a quality
+ * gate, not a money path: nothing has been spent on an unpriced study, no
+ * verdict is fabricated by moving on, and the review rows are left open so the
+ * 15-minute `expert.poll` cron can still complete them whenever Terac answers.
+ */
+const EXPERT_PRICING_DEADLINE_MS = 60 * 60 * 1000;
+
+/** Review statuses proving a live Terac study: launched or already collecting submissions. */
+const ENGAGED_REVIEW_STATUSES = new Set(['launched', 'in_progress', 'submissions_received']);
+
+/**
+ * Whether an open expert review can still complete `expert_validate` on its
+ * own. `priced` cannot — it is a live Terac response proving the study is
+ * unfunded (see `TERAC_STUDY_BLOCKER`) — and an unengaged request older than
+ * the pricing deadline has shown no evidence Terac will ever answer. A review
+ * with no readable request timestamp counts as still progressing, because its
+ * staleness cannot be proven.
+ */
+function reviewCanStillProgress(
+  review: { readonly status: string; readonly requested_at?: Date | null; readonly created_at?: Date | null },
+  nowMs: number,
+): boolean {
+  if (review.status === 'priced') return false;
+  if (ENGAGED_REVIEW_STATUSES.has(review.status)) return true;
+  const requestedAt = review.requested_at ?? review.created_at;
+  if (!requestedAt) return true;
+  return nowMs - requestedAt.getTime() < EXPERT_PRICING_DEADLINE_MS;
+}
 
 function parseForcePhase(raw: string): LoopPhase {
   if ((LOOP_PHASE_ORDER as readonly string[]).includes(raw)) {
@@ -437,8 +469,26 @@ export class LoopOrchestrator {
   }
 
   async #assessExpertValidate(companyId: string): Promise<PhaseAssessment> {
-    const scored = await this.deps.repos.research.opportunities.list(companyId, ['scored']);
-    if (scored.length === 0) return { complete: false, detail: 'nothing to validate' };
+    // A real completed review beats every caveat path below, even while other
+    // reviews are still open: the phase promised a review artefact and one
+    // exists.
+    const reviewed = await this.deps.repos.research.opportunities.list(companyId, ['expert_reviewed']);
+    if (reviewed.length > 0) {
+      return {
+        complete: true,
+        detail: `${reviewed.length} opportunities carry a completed expert review`,
+        outputs: { expert_validate: { performed: true, reviewedOpportunities: reviewed.length } },
+      };
+    }
+
+    // Requesting a review moves an opportunity to `expert_review_requested`,
+    // so an assessment keyed on `scored` alone goes blind the moment the drive
+    // step runs and pins the cycle here forever.
+    const candidates = await this.deps.repos.research.opportunities.list(companyId, [
+      'scored',
+      'expert_review_requested',
+    ]);
+    if (candidates.length === 0) return { complete: false, detail: 'nothing to validate' };
 
     const status = this.#capabilityStatus('expert.structured_review');
     if (!status.usable) {
@@ -460,17 +510,41 @@ export class LoopOrchestrator {
     }
 
     const open = await this.deps.repos.research.expertReviews.listOpen(companyId);
-    if (open.length > 0) {
-      return { complete: false, detail: `${open.length} expert reviews still open` };
+    if (open.length === 0) {
+      return { complete: false, detail: 'no expert review has been requested yet' };
     }
-    const reviewed = await this.deps.repos.research.opportunities.list(companyId, ['expert_reviewed']);
+
+    const now = Date.now();
+    const progressing = open.filter((review) => reviewCanStillProgress(review, now));
+    if (progressing.length > 0) {
+      return { complete: false, detail: `${progressing.length} of ${open.length} expert reviews still open` };
+    }
+
+    // None of the open reviews can complete this phase on their own: `priced`
+    // is a live Terac response proving the study is unfunded, and the rest
+    // have outlived the pricing deadline with no engagement. The same escape
+    // as the unusable-capability branch above applies — the review rows are
+    // deliberately NOT cancelled, so the `expert.poll` cron can still complete
+    // them if Terac funds or answers later, but they must not pin the cycle.
+    const unfunded = open.filter((review) => review.status === 'priced').length;
+    const reason =
+      unfunded > 0
+        ? TERAC_STUDY_BLOCKER
+        : `Terac did not respond to ${open.length} feasibility pricing request(s) within ` +
+          `${EXPERT_PRICING_DEADLINE_MS / 60_000} minutes. The review rows stay open and the expert.poll ` +
+          `cron will still complete them if Terac answers later.`;
     return {
-      complete: reviewed.length > 0,
+      complete: true,
       detail:
-        reviewed.length > 0
-          ? `${reviewed.length} opportunities carry a completed expert review`
-          : 'no expert review has been requested yet',
-      outputs: { expert_validate: { performed: true, reviewedOpportunities: reviewed.length } },
+        `proceeding without expert validation: ${open.length} expert reviews are open but none can progress ` +
+        `(${unfunded} unfunded, ${open.length - unfunded} unanswered past the pricing deadline)`,
+      outputs: {
+        expert_validate: {
+          performed: false,
+          reason,
+          caveat: 'opportunity selection is unvalidated by human experts',
+        },
+      },
     };
   }
 
@@ -483,7 +557,19 @@ export class LoopOrchestrator {
         outputs: { select: { opportunityId: company.selected_opportunity_id } },
       };
     }
-    const passed = await this.deps.repos.research.opportunities.list(companyId, ['scored', 'expert_reviewed', 'ceo_review']);
+    // `expert_review_requested` belongs here because `expert_validate` can
+    // complete with `performed: false` while the requests are still open at
+    // Terac; the caveat travels on the cycle outputs and no stage rule forbids
+    // selecting such a candidate. The stage is not reset to `scored`, both
+    // because it is the truth (the requests remain open and pollable) and
+    // because a `scored` row would make the next expert_validate drive step
+    // re-request — and re-pay for — the same review.
+    const passed = await this.deps.repos.research.opportunities.list(companyId, [
+      'scored',
+      'expert_review_requested',
+      'expert_reviewed',
+      'ceo_review',
+    ]);
     if (passed.length === 0) {
       return { complete: false, detail: 'no opportunity passed the selection gates' };
     }
