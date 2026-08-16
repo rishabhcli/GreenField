@@ -252,7 +252,18 @@ describe('landing site', () => {
    * (an identifier the draw path reads but never declares) leaves a frozen
    * first frame, which is what shipped. This harness is the regression
    * gate: two frames must complete without throwing.
+   *
+   * Hiding the canvas (`display: none` on `.hero-leds`) measures a zero
+   * rect, so the loop never starts in a real browser. That is how the
+   * field disappeared from production; do not reintroduce the hide.
    */
+  it('keeps the LED field visible on the landing hero', () => {
+    expect(index).toContain('id="heroLeds"');
+    expect(index).toContain('class="hero-leds"');
+    expect(css).not.toMatch(/\.hero-leds\s*\{[^}]*display\s*:\s*none/);
+    expect(css).not.toMatch(/body\.lp\s+\.hero-leds\s*\{[^}]*display\s*:\s*none/);
+  });
+
   it('keeps the LED field looping after the first paint', () => {
     const empty = {
       length: 0,

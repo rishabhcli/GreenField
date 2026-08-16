@@ -2236,10 +2236,11 @@ h3 {
    next-page strip) the multi-page structure needs.
 =========================================================================== */
 
-/* --- The LED field retires on the landing pages. The element and its loop
-       remain in place (and under test); hiding it means layout() measures a
-       zero rect, so the rAF loop never starts and costs nothing. --------- */
-body.lp .hero-leds {
+/* --- The LED field is the landing hero signature. display:none zeros the
+       canvas rect, so layout() never starts the rAF loop — do not hide it.
+       The monochrome ambient wash was a stand-in; with the diodes back it
+       would just flatten the yellow. ------------------------------------ */
+body.lp .hero-ambient {
   display: none;
 }
 
