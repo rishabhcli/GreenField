@@ -1479,6 +1479,7 @@
     if (ev.key === 'Escape') {
       $('tokenModal').classList.remove('is-open');
       $('decideModal').classList.remove('is-open');
+      closeStorefront();
     }
     // `r` refreshes, unless the operator is typing.
     if (ev.key === 'r' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) poll();
@@ -1521,6 +1522,31 @@
   /* ------------------------------------------------------------------------
      Boot
   ------------------------------------------------------------------------ */
+
+  function closeStorefront() {
+    $('storefrontStage').classList.remove('is-open');
+    $('storefrontFrame').removeAttribute('src');
+  }
+
+  function openStorefront(card) {
+    var href = card.getAttribute('href') || '';
+    $('storefrontFrame').src = href;
+    $('storefrontUrl').textContent = card.getAttribute('data-host') || href;
+    $('storefrontTitle').textContent = card.getAttribute('data-title') || 'Storefront';
+    $('storefrontOpen').setAttribute('href', href);
+    $('storefrontStage').classList.add('is-open');
+  }
+
+  document.querySelectorAll('[data-sf]').forEach(function (card) {
+    card.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      openStorefront(card);
+    });
+  });
+  $('storefrontClose').addEventListener('click', closeStorefront);
+  $('storefrontStage').addEventListener('click', function (ev) {
+    if (ev.target === $('storefrontStage')) closeStorefront();
+  });
 
   $('apiBaseLabel').textContent = API;
   $('pollLabel').textContent = String(POLL_MS / 1000);

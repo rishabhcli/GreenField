@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kite House — Washed linen</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Nunito+Sans:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root { --clay:#f3e4d7; --ink:#2c3a42; --coral:#d4684a; --sky:#7ea4b3; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html,body { background:var(--clay); color:var(--ink); font-family:"Nunito Sans",sans-serif; }
+    a { color:inherit; text-decoration:none; }
+    img { display:block; width:100%; height:100%; object-fit:cover; }
+    nav { padding:22px 32px; display:flex; justify-content:space-between; align-items:center; }
+    .logo { font-family:"Bricolage Grotesque",sans-serif; font-weight:700; font-size:22px; }
+    .logo span { color:var(--coral); }
+    .shop { font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--sky); }
+    .stage { padding:8px 32px 20px; display:grid; grid-template-columns:1.15fr .85fr; gap:18px; align-items:end; }
+    h1 { font-family:"Bricolage Grotesque",sans-serif; font-size:clamp(42px,7vw,84px); line-height:.92; letter-spacing:-.04em; }
+    h1 em { font-style:italic; color:var(--coral); font-weight:500; }
+    .intro { font-size:18px; line-height:1.55; max-width:34ch; padding-bottom:10px; }
+    .collage { display:grid; grid-template-columns:1.3fr 1fr; grid-template-rows:280px 280px; gap:14px; padding:10px 32px 72px; }
+    .p1 { grid-row:1 / span 2; position:relative; overflow:hidden; border-radius:28px; }
+    .p2,.p3 { position:relative; overflow:hidden; border-radius:28px; }
+    .p1 img,.p2 img,.p3 img { position:absolute; inset:0; }
+    .chip { position:absolute; left:16px; bottom:16px; background:rgba(243,228,215,.92); padding:10px 14px; border-radius:999px; font-family:"Bricolage Grotesque",sans-serif; font-size:14px; }
+    .strip { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; padding:0 32px 80px; }
+    .sku h3 { font-family:"Bricolage Grotesque",sans-serif; font-size:20px; margin-top:12px; }
+    .sku p { color:#5b6a72; }
+    .sku figure { aspect-ratio:4/3; overflow:hidden; border-radius:20px; }
+    @media (max-width:800px) {
+      .stage,.collage,.strip { grid-template-columns:1fr; }
+      .collage { grid-template-rows:auto; }
+      .p1 { grid-row:auto; min-height:320px; }
+      .p2,.p3 { min-height:220px; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="logo" href="./kite.html">Kite <span>House</span></a>
+    <span class="shop">Linen, washed once already</span>
+  </nav>
+  <section class="stage">
+    <h1>Beds that<br />look <em>lived in</em><br />on purpose.</h1>
+    <p class="intro">European flax, garment-washed until it slumps the way a good shirt does. Colors named after the hour they catch the window.</p>
+  </section>
+  <section class="collage">
+    <figure class="p1">
+      <img src="../assets/storefronts/kite-1.jpg" alt="Rumpled linen bed in morning light" />
+      <figcaption class="chip">Morning flax set</figcaption>
+    </figure>
+    <figure class="p2">
+      <img src="../assets/storefronts/kite-2.jpg" alt="White pillows" />
+      <figcaption class="chip">Cloud sham</figcaption>
+    </figure>
+    <figure class="p3">
+      <img src="../assets/storefronts/kite-3.jpg" alt="Living room with linen sofa" />
+      <figcaption class="chip">Sunday throw</figcaption>
+    </figure>
+  </section>
+  <section class="strip">
+    <article class="sku">
+      <figure><img src="../assets/storefronts/kite-1.jpg" alt="Linen duvet" /></figure>
+      <h3>Duvet, late clay</h3>
+      <p>Queen · 180</p>
+    </article>
+    <article class="sku">
+      <figure><img src="../assets/storefronts/kite-2.jpg" alt="Pillow pair" /></figure>
+      <h3>Pillow pair</h3>
+      <p>Standard · 64</p>
+    </article>
+    <article class="sku">
+      <figure><img src="../assets/storefronts/kite-3.jpg" alt="Throw blanket" /></figure>
+      <h3>Window throw</h3>
+      <p>140 × 200 · 88</p>
+    </article>
+  </section>
+</body>
+</html>

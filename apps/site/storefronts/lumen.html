@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumen Lab — Clinical skin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    :root { --paper:#f4f1ea; --ink:#1a1f1c; --line:#d7d2c6; --celadon:#5b8a7a; --mist:#7a847c; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html,body { background:var(--paper); color:var(--ink); font-family:Figtree,sans-serif; }
+    a { color:inherit; text-decoration:none; }
+    img { display:block; width:100%; height:100%; object-fit:cover; }
+    nav { display:flex; justify-content:space-between; align-items:center; padding:28px 48px; border-bottom:1px solid var(--line); }
+    .word { font-family:"Instrument Serif",serif; font-size:28px; }
+    .word i { font-style:italic; color:var(--celadon); }
+    .nav-r { display:flex; gap:28px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--mist); }
+    .hero { display:grid; grid-template-columns:1fr 1fr; min-height:calc(100vh - 81px); }
+    .copy { padding:80px 64px; display:flex; flex-direction:column; justify-content:center; }
+    .ref { font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--celadon); }
+    h1 { font-family:"Instrument Serif",serif; font-size:clamp(44px,6vw,72px); line-height:1.02; font-weight:400; margin:18px 0 22px; }
+    h1 em { font-style:italic; }
+    .lede { max-width:38ch; font-size:17px; line-height:1.65; color:#3d4540; }
+    .notes { margin-top:40px; display:grid; gap:0; border-top:1px solid var(--line); }
+    .notes li { list-style:none; display:flex; justify-content:space-between; padding:14px 0; border-bottom:1px solid var(--line); font-size:14px; }
+    .notes span { color:var(--mist); }
+    .photo { position:relative; background:#e7e2d6; }
+    .photo img { position:absolute; inset:0; }
+    .lab { padding:72px 48px 96px; }
+    .lab h2 { font-family:"Instrument Serif",serif; font-size:36px; font-weight:400; margin-bottom:28px; }
+    .row { display:grid; grid-template-columns:repeat(3,1fr); gap:22px; }
+    .item figure { aspect-ratio:1; background:#ebe6da; overflow:hidden; }
+    .item h3 { margin-top:14px; font-size:16px; font-weight:600; }
+    .item p { color:var(--mist); font-size:14px; margin-top:4px; }
+    @media (max-width:860px) { .hero,.row { grid-template-columns:1fr; } .copy { padding:48px 24px; } nav { padding:20px; } }
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="word" href="./lumen.html">Lumen <i>Lab</i></a>
+    <div class="nav-r"><a href="#formula">Formula</a><a href="#cabinet">Cabinet</a></div>
+  </nav>
+  <section class="hero">
+    <div class="copy">
+      <p class="ref">Protocol 04 · overnight repair</p>
+      <h1>A serum that<br />behaves like <em>light.</em></h1>
+      <p class="lede">Vitamin C in a waterless base, buffered so it stays bright until the last drop. Made in 200-bottle lots for skin that has seen too much city.</p>
+      <ul class="notes" id="formula">
+        <li><b>Ascorbic acid</b><span>12%</span></li>
+        <li><b>Squalane</b><span>carrier</span></li>
+        <li><b>Ferulic</b><span>stabilize</span></li>
+        <li><b>pH</b><span>3.4</span></li>
+      </ul>
+    </div>
+    <div class="photo"><img src="../assets/storefronts/lumen-1.jpg" alt="Clay mask applied in the Lumen treatment room" /></div>
+  </section>
+  <section class="lab" id="cabinet">
+    <h2>The cabinet</h2>
+    <div class="row">
+      <article class="item">
+        <figure><img src="../assets/storefronts/lumen-2.jpg" alt="Overnight repair treatment" /></figure>
+        <h3>C-12 Concentrate</h3>
+        <p>30ml · 68</p>
+      </article>
+      <article class="item">
+        <figure><img src="../assets/storefronts/lumen-3.jpg" alt="Clinic light protocol" /></figure>
+        <h3>Barrier milk</h3>
+        <p>50ml · 42</p>
+      </article>
+      <article class="item">
+        <figure><img src="../assets/storefronts/lumen-1.jpg" alt="Clinic still life" /></figure>
+        <h3>Night occlusive</h3>
+        <p>30ml · 54</p>
+      </article>
+    </div>
+  </section>
+</body>
+</html>

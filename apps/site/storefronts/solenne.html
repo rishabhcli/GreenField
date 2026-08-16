@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Solenne — Thrown stoneware</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=Syne:wght@500;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root { --ink:#1c1916; --ash:#8a7d72; --bone:#e8dfd3; --clay:#c45c26; --soot:#0e0c0a; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html,body { background:var(--soot); color:var(--bone); font-family:"Source Serif 4",Georgia,serif; }
+    a { color:inherit; text-decoration:none; }
+    img { display:block; width:100%; height:100%; object-fit:cover; }
+    nav { position:fixed; inset:0 0 auto; z-index:8; display:flex; justify-content:space-between; align-items:center; padding:22px 32px; mix-blend-mode:difference; }
+    .mark { font-family:Syne,sans-serif; font-weight:800; letter-spacing:.18em; font-size:13px; }
+    .nav-links { display:flex; gap:28px; font-size:13px; letter-spacing:.04em; }
+    .hero { min-height:100vh; display:grid; grid-template-columns:1.15fr .85fr; }
+    .hero-photo { position:relative; min-height:100vh; }
+    .hero-photo img { position:absolute; inset:0; }
+    .hero-copy { padding:22vh 56px 64px; display:flex; flex-direction:column; justify-content:flex-end; background:
+      radial-gradient(80% 60% at 100% 0%, rgba(196,92,38,.18), transparent 55%), var(--soot); }
+    .eyebrow { font-family:Syne,sans-serif; font-size:11px; letter-spacing:.28em; text-transform:uppercase; color:var(--clay); margin-bottom:22px; }
+    h1 { font-family:Syne,sans-serif; font-weight:800; font-size:clamp(42px,6vw,78px); line-height:.92; letter-spacing:-.04em; }
+    h1 em { font-style:italic; font-weight:500; font-family:"Source Serif 4",serif; color:var(--ash); }
+    .lede { margin-top:28px; max-width:38ch; font-size:19px; line-height:1.55; color:#cfc4b6; }
+    .cta { margin-top:36px; display:inline-flex; align-items:center; gap:12px; font-family:Syne,sans-serif; font-size:12px; letter-spacing:.16em; text-transform:uppercase; border-bottom:1px solid var(--clay); padding-bottom:6px; width:max-content; }
+    .shelf { padding:80px 32px 100px; }
+    .shelf-head { display:flex; justify-content:space-between; align-items:end; margin-bottom:36px; padding-inline:8px; }
+    .shelf-head h2 { font-family:Syne,sans-serif; font-size:28px; letter-spacing:-.03em; }
+    .shelf-head span { color:var(--ash); font-size:14px; }
+    .grid { display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:18px; }
+    .card { background:#161310; }
+    .card figure { aspect-ratio:4/5; overflow:hidden; }
+    .card.wide figure { aspect-ratio:5/4; }
+    .card figcaption { padding:18px 18px 22px; display:flex; justify-content:space-between; gap:12px; }
+    .card h3 { font-family:Syne,sans-serif; font-size:15px; }
+    .card p { color:var(--ash); font-size:14px; }
+    footer { padding:28px 32px 40px; display:flex; justify-content:space-between; color:var(--ash); font-size:13px; border-top:1px solid #2a241f; }
+    @media (max-width:900px) {
+      .hero, .grid { grid-template-columns:1fr; }
+      .hero-copy { padding:48px 24px 64px; }
+      nav { mix-blend-mode:normal; background:rgba(14,12,10,.72); }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="mark" href="./solenne.html">SOLENNE</a>
+    <div class="nav-links"><a href="#kiln">The kiln</a><a href="#shelf">Tableware</a></div>
+  </nav>
+  <section class="hero">
+    <div class="hero-photo"><img src="../assets/storefronts/solenne-1.jpg" alt="Hand-thrown bowls cooling on a studio shelf" /></div>
+    <div class="hero-copy">
+      <p class="eyebrow">Ash glaze · afternoon firing</p>
+      <h1>Stoneware<br />for a <em>quieter</em><br />table.</h1>
+      <p class="lede">Thrown in small lots on the west bank of the river. Each bowl keeps the fingerprint of the afternoon it was pulled from the wheel.</p>
+      <a class="cta" href="#shelf">See the kiln shelf →</a>
+    </div>
+  </section>
+  <section class="shelf" id="shelf">
+    <div class="shelf-head">
+      <h2>From the latest firing</h2>
+      <span>Three forms, one clay body</span>
+    </div>
+    <div class="grid">
+      <article class="card wide">
+        <figure><img src="../assets/storefronts/solenne-2.jpg" alt="Wide serving bowl in iron speckle" /></figure>
+        <figcaption><div><h3>River bowl</h3><p>Iron speckle, 28cm</p></div><p>64</p></figcaption>
+      </article>
+      <article class="card">
+        <figure><img src="../assets/storefronts/solenne-3.jpg" alt="Stacked cups" /></figure>
+        <figcaption><div><h3>Thumb cup</h3><p>Set of four</p></div><p>48</p></figcaption>
+      </article>
+      <article class="card">
+        <figure><img src="../assets/storefronts/solenne-1.jpg" alt="Plate with raw rim" /></figure>
+        <figcaption><div><h3>Raw-rim plate</h3><p>Dinner, 24cm</p></div><p>36</p></figcaption>
+      </article>
+    </div>
+  </section>
+  <footer id="kiln"><span>Solenne Atelier · Portland</span><span>Fired twice a week</span></footer>
+</body>
+</html>

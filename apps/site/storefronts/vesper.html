@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vesper — Evening jewelry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Italiana&family=Jost:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root { --void:#070707; --gold:#f5e6c8; --mute:#8a8070; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html,body { background:var(--void); color:var(--gold); font-family:Jost,sans-serif; }
+    a { color:inherit; text-decoration:none; }
+    img { display:block; width:100%; height:100%; object-fit:cover; }
+    nav { position:fixed; inset:28px 40px auto; z-index:5; display:flex; justify-content:space-between; font-size:12px; letter-spacing:.28em; text-transform:uppercase; }
+    .word { font-family:Italiana,serif; font-size:22px; letter-spacing:.4em; }
+    .hero { min-height:100vh; display:grid; place-items:center; position:relative; overflow:hidden; }
+    .hero img { position:absolute; inset:0; opacity:.88; filter:contrast(1.08) saturate(.9); }
+    .veil { position:absolute; inset:0; background:radial-gradient(circle at 50% 40%, transparent 20%, rgba(7,7,7,.72) 72%); }
+    .title { position:relative; text-align:center; padding:40px; }
+    .title p { letter-spacing:.42em; font-size:11px; text-transform:uppercase; margin-bottom:18px; }
+    h1 { font-family:Italiana,serif; font-size:clamp(52px,10vw,110px); font-weight:400; letter-spacing:.08em; }
+    .line { width:48px; height:1px; background:var(--gold); margin:28px auto; opacity:.5; }
+    .title em { display:block; font-style:normal; font-weight:300; letter-spacing:.18em; font-size:13px; color:var(--mute); }
+    .tray { display:grid; grid-template-columns:repeat(3,1fr); }
+    .piece { position:relative; min-height:70vh; overflow:hidden; }
+    .piece img { position:absolute; inset:0; transition:transform 1.1s cubic-bezier(.16,1,.3,1); }
+    .piece:hover img { transform:scale(1.06); }
+    .piece figcaption { position:absolute; inset:auto 0 0; padding:28px; background:linear-gradient(transparent,rgba(7,7,7,.8)); }
+    .piece h2 { font-family:Italiana,serif; font-size:28px; letter-spacing:.08em; }
+    .piece span { display:block; margin-top:6px; color:var(--mute); font-size:13px; letter-spacing:.12em; }
+    @media (max-width:800px) { .tray { grid-template-columns:1fr; } .piece { min-height:50vh; } nav { inset:18px 18px auto; } }
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="word" href="./vesper.html">VESPER</a>
+    <span>After dark</span>
+  </nav>
+  <section class="hero">
+    <img src="../assets/storefronts/vesper-1.jpg" alt="Gold chain on black cloth" />
+    <div class="veil"></div>
+    <div class="title">
+      <p>The night collection</p>
+      <h1>Vesper</h1>
+      <div class="line"></div>
+      <em>Jewelry that keeps the light it was given</em>
+    </div>
+  </section>
+  <section class="tray">
+    <figure class="piece">
+      <img src="../assets/storefronts/vesper-2.jpg" alt="Gold ring" />
+      <figcaption><h2>Signet dusk</h2><span>18k · 1,240</span></figcaption>
+    </figure>
+    <figure class="piece">
+      <img src="../assets/storefronts/vesper-3.jpg" alt="Pearl and gold earring" />
+      <figcaption><h2>Drop at nine</h2><span>Pearl · 890</span></figcaption>
+    </figure>
+    <figure class="piece">
+      <img src="../assets/storefronts/vesper-1.jpg" alt="Fine chain" />
+      <figcaption><h2>Thread chain</h2><span>42cm · 640</span></figcaption>
+    </figure>
+  </section>
+</body>
+</html>

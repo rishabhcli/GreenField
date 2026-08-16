@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Northline — Alpine expedition kit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet" />
+  <style>
+    :root { --night:#0b1215; --ice:#d7e4ea; --mist:#8aa0ab; --rust:#d85a30; --steel:#1b2a31; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html,body { background:var(--night); color:var(--ice); font-family:Newsreader,Georgia,serif; }
+    a { color:inherit; text-decoration:none; }
+    img { display:block; width:100%; height:100%; object-fit:cover; }
+    .bar { position:fixed; inset:0 0 auto; z-index:6; display:flex; align-items:center; justify-content:space-between; padding:16px 28px; background:linear-gradient(180deg,rgba(11,18,21,.75),transparent); }
+    .logo { font-family:"Barlow Condensed",sans-serif; font-weight:800; letter-spacing:.22em; font-size:18px; }
+    .meta { font-family:"Barlow Condensed",sans-serif; letter-spacing:.14em; font-size:13px; color:var(--mist); }
+    .hero { position:relative; min-height:100vh; }
+    .hero img { position:absolute; inset:0; filter:saturate(.85) contrast(1.05); }
+    .hero::after { content:""; position:absolute; inset:0; background:linear-gradient(180deg,rgba(11,18,21,.15) 20%,rgba(11,18,21,.82)); }
+    .hero-copy { position:relative; z-index:1; min-height:100vh; display:flex; flex-direction:column; justify-content:flex-end; padding:0 40px 72px; }
+    .kicker { font-family:"Barlow Condensed",sans-serif; letter-spacing:.32em; font-size:13px; color:var(--rust); margin-bottom:16px; }
+    h1 { font-family:"Barlow Condensed",sans-serif; font-weight:800; font-size:clamp(56px,10vw,128px); line-height:.82; letter-spacing:-.02em; text-transform:uppercase; }
+    .sub { max-width:46ch; margin-top:18px; font-size:20px; line-height:1.45; color:#c5d5dc; }
+    .specs { margin-top:36px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; background:#2a3b43; max-width:720px; }
+    .specs div { background:var(--steel); padding:14px 16px; }
+    .specs b { display:block; font-family:"Barlow Condensed",sans-serif; font-size:22px; letter-spacing:.04em; }
+    .specs span { color:var(--mist); font-size:13px; }
+    .kit { padding:72px 40px 96px; }
+    .kit h2 { font-family:"Barlow Condensed",sans-serif; font-size:42px; letter-spacing:.04em; text-transform:uppercase; margin-bottom:28px; }
+    .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+    .card { background:var(--steel); }
+    .card figure { height:280px; overflow:hidden; }
+    .card body, .card .pad { padding:20px 20px 24px; }
+    .card h3 { font-family:"Barlow Condensed",sans-serif; font-size:26px; letter-spacing:.06em; text-transform:uppercase; }
+    .card p { color:var(--mist); margin-top:6px; }
+    .price { margin-top:16px; color:var(--rust); font-family:"Barlow Condensed",sans-serif; font-size:20px; letter-spacing:.08em; }
+    @media (max-width:800px) { .specs,.cards { grid-template-columns:1fr 1fr; } .hero-copy { padding:0 20px 48px; } }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <a class="logo" href="./northline.html">NORTHLINE</a>
+    <span class="meta">EXPEDITION / 62°N</span>
+  </header>
+  <section class="hero">
+    <img src="../assets/storefronts/northline-1.jpg" alt="High alpine ridge above the cloud line" />
+    <div class="hero-copy">
+      <p class="kicker">Built for the last weather window</p>
+      <h1>Hold the<br />ridge line.</h1>
+      <p class="sub">Packs, shells and stoves cut for long approaches and short summits. Field-tested above the tree line, then cut again.</p>
+      <div class="specs">
+        <div><b>1.8kg</b><span>base pack</span></div>
+        <div><b>−18°</b><span>sleep floor</span></div>
+        <div><b>3L</b><span>storm shell</span></div>
+        <div><b>14d</b><span>resupply</span></div>
+      </div>
+    </div>
+  </section>
+  <section class="kit">
+    <h2>This season’s line</h2>
+    <div class="cards">
+      <article class="card">
+        <figure><img src="../assets/storefronts/northline-2.jpg" alt="Sunlit alpine peak" /></figure>
+        <div class="pad"><h3>Korra 38</h3><p>Frameless alpine pack</p><div class="price">290</div></div>
+      </article>
+      <article class="card">
+        <figure><img src="../assets/storefronts/northline-3.jpg" alt="Climber on a granite face" /></figure>
+        <div class="pad"><h3>Scree shell</h3><p>3-layer, helmet-compatible</p><div class="price">420</div></div>
+      </article>
+      <article class="card">
+        <figure><img src="../assets/storefronts/northline-1.jpg" alt="Snow ridge" /></figure>
+        <div class="pad"><h3>Bivouac quilt</h3><p>800-fill, 14° floor</p><div class="price">360</div></div>
+      </article>
+    </div>
+  </section>
+</body>
+</html>

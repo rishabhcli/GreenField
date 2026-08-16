@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Marrow — Small-batch pantry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Karla:wght@400;600&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root { --walnut:#2a1f18; --bone:#f3e6d0; --copper:#b87333; --smoke:#8b7460; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html,body { background:var(--walnut); color:var(--bone); font-family:Karla,sans-serif; }
+    a { color:inherit; text-decoration:none; }
+    img { display:block; width:100%; height:100%; object-fit:cover; }
+    header { padding:26px 40px; display:flex; justify-content:space-between; align-items:baseline; border-bottom:1px solid #3d2f26; }
+    .brand { font-family:"Libre Baskerville",serif; font-size:30px; font-style:italic; }
+    .where { color:var(--smoke); font-size:13px; letter-spacing:.12em; text-transform:uppercase; }
+    .spread { display:grid; grid-template-columns:1.1fr .9fr; min-height:calc(100vh - 81px); }
+    .photo { position:relative; }
+    .photo img { position:absolute; inset:0; }
+    .col { padding:64px 48px; }
+    .issue { color:var(--copper); letter-spacing:.2em; font-size:11px; text-transform:uppercase; }
+    h1 { font-family:"Libre Baskerville",serif; font-size:clamp(36px,5vw,58px); line-height:1.12; margin:16px 0 20px; font-weight:400; }
+    .dek { font-size:18px; line-height:1.6; max-width:36ch; color:#e2d2b8; }
+    .menu { margin-top:48px; }
+    .menu h2 { font-family:"Libre Baskerville",serif; font-size:14px; letter-spacing:.16em; text-transform:uppercase; color:var(--copper); margin-bottom:8px; }
+    .row { display:grid; grid-template-columns:1fr auto auto; gap:16px; padding:16px 0; border-bottom:1px solid #3d2f26; align-items:baseline; }
+    .row b { font-family:"Libre Baskerville",serif; font-size:18px; font-weight:400; }
+    .row span { color:var(--smoke); font-size:14px; }
+    .more { padding:72px 40px 90px; display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .tile { position:relative; min-height:340px; overflow:hidden; }
+    .tile img { position:absolute; inset:0; }
+    .tile figcaption { position:absolute; inset:auto 0 0; padding:22px; background:linear-gradient(transparent,rgba(42,31,24,.85)); font-family:"Libre Baskerville",serif; font-size:22px; }
+    @media (max-width:860px) { .spread,.more { grid-template-columns:1fr; } .col { padding:40px 24px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="brand" href="./marrow.html">Marrow</a>
+    <span class="where">Hudson Valley pantry</span>
+  </header>
+  <section class="spread">
+    <div class="photo"><img src="../assets/storefronts/marrow-1.jpg" alt="A long table set for supper" /></div>
+    <div class="col">
+      <p class="issue">Saturday market · issue 41</p>
+      <h1>Oil, salt, and the last good loaf.</h1>
+      <p class="dek">We bottle what the valley actually grows. Harvest notes on every label. Nothing blended to taste the same in January as it did in August.</p>
+      <div class="menu">
+        <h2>On the counter</h2>
+        <div class="row"><b>Early-harvest olive oil</b><span>500ml</span><span>28</span></div>
+        <div class="row"><b>Rye &amp; honey loaf</b><span>Friday bake</span><span>9</span></div>
+        <div class="row"><b>Smoked sea salt</b><span>120g tin</span><span>14</span></div>
+        <div class="row"><b>Cherry mostarda</b><span>jar</span><span>16</span></div>
+      </div>
+    </div>
+  </section>
+  <section class="more">
+    <figure class="tile">
+      <img src="../assets/storefronts/marrow-2.jpg" alt="Citrus and greens" />
+      <figcaption>From this week’s crates</figcaption>
+    </figure>
+    <figure class="tile">
+      <img src="../assets/storefronts/marrow-3.jpg" alt="Kitchen counter with copper and bread" />
+      <figcaption>The Saturday kitchen</figcaption>
+    </figure>
+  </section>
+</body>
+</html>

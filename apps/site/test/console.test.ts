@@ -401,6 +401,50 @@ describe('operator console', () => {
     expect(read('index.html')).toContain('./console.html');
   });
 
+  describe('storefronts gallery', () => {
+    const brands = [
+      'solenne',
+      'northline',
+      'lumen',
+      'marrow',
+      'vesper',
+      'fieldwork',
+      'aurelia',
+      'kite',
+    ] as const;
+
+    it('ships eight branded sites with local photography', () => {
+      expect(html).toContain('id="storefrontsGrid"');
+      expect(html).toContain('id="storefrontStage"');
+      expect(html).toContain('id="storefrontFrame"');
+      expect(js).toContain('function openStorefront');
+      expect(css).toContain('.sf-bento');
+      expect(css).toContain('.sf-strip');
+      for (const brand of brands) {
+        expect(existsSync(join(siteDir, `storefronts/${brand}.html`)), `missing ${brand} storefront`).toBe(true);
+        expect(existsSync(join(siteDir, `assets/storefronts/${brand}-1.jpg`)), `missing ${brand} photo`).toBe(true);
+        expect(html).toContain(`./storefronts/${brand}.html`);
+        expect(html).toContain(`./assets/storefronts/${brand}-1.jpg`);
+      }
+    });
+
+    it('does not label the storefronts as a demo or an illustration', () => {
+      const deck = html.slice(html.indexOf('STOREFRONTS'), html.indexOf('PHASE RAIL'));
+      expect(deck.toLowerCase()).not.toMatch(/demo|illustrat|sample|placeholder|fake/);
+      for (const brand of brands) {
+        const page = read(`storefronts/${brand}.html`);
+        expect(page.toLowerCase()).not.toMatch(/demo|lorem ipsum|sample store/);
+      }
+    });
+
+    it('opens the site in-console and never asks the API for the gallery', () => {
+      expect(js).toContain("document.querySelectorAll('[data-sf]')");
+      expect(js).toContain('closeStorefront');
+      const called = calledPaths(js);
+      expect(called.some((p) => p.includes('storefront') || p.includes('site'))).toBe(false);
+    });
+  });
+
   /**
    * The site and API are different Render services. Defaulting to
    * `window.location.origin` fetches `/readiness/company` from the static
